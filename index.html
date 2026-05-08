@@ -1627,11 +1627,50 @@ function switchTopMode(mode) {
       _cb(Promise.all(ops).then(function(){ return {ok:true}; }), cb, errCb);
     },
     getInventoryFull: function(cb, errCb){
+      // inventory 表用英文欄位，但前端渲染需要中文 key → 在此做對照轉換
+      var INV_MAP = {category:'類別',model:'型號',productname:'品名規格',productName:'品名規格',
+        salesname:'銷貨品名',salesName:'銷貨品名',materialno:'材質編號',materialNo:'材質編號',
+        factory:'廠別',size:'尺寸',color:'顏色',colorcode:'色碼',colorCode:'色碼',
+        paint:'漆種',frontpaint:'正面漆種',frontPaint:'正面漆種',
+        backpaint:'背面漆種',backPaint:'背面漆種',
+        frontpaintthick:'正面漆膜厚',frontPaintThick:'正面漆膜厚',
+        backpaintthick:'背面漆膜厚',backPaintThick:'背面漆膜厚',
+        coating:'鍍層',strength:'強度',packagingmethod:'包裝方式',packagingMethod:'包裝方式',
+        unit:'單位',qty:'數量',total:'總數',remark:'備註'};
+      var STK_MAP = {model:'型號',warehouseno:'倉庫編號',warehouseNo:'倉庫編號',
+        qty:'數量',total:'總數',price:'進價',amount:'金額',
+        movedate:'異動日期',moveDate:'異動日期',remark:'備註'};
+      var BAT_MAP = {model:'型號',warehouseno:'倉庫編號',warehouseNo:'倉庫編號',
+        location:'儲位',batchno:'批號',batchNo:'批號',qty:'數量',total:'總數',
+        originalrollno:'原廠捲號',originalRollNo:'原廠捲號',vendor:'供應商',
+        thickness:'鋼捲厚度',width:'鋼捲寬度',density:'鋼捲比重',
+        lengthm:'長度M',lengthM:'長度M',innerring:'內圈',innerRing:'內圈',
+        coildirection:'鋼捲捲向',coilDirection:'鋼捲捲向',
+        price:'進價',detailremark:'細項備註',detailRemark:'細項備註'};
+      function _mapRow(row, map){
+        var out = {};
+        // 保留原 key
+        Object.keys(row).forEach(function(k){ out[k] = row[k]; });
+        // 再加中文別名
+        Object.keys(map).forEach(function(eng){
+          if(row[eng] !== undefined) out[map[eng]] = row[eng];
+        });
+        return out;
+      }
       _cb(Promise.all([
         _get('inventory',{'order':'model'}),
         _get('warehouse_stock',{'order':'model'}),
         _get('batch_detail',{'order':'model'}),
-      ]).then(function(r){ return {inventory:r[0],warehouseStock:r[1],batchDetail:r[2]}; }), cb, errCb);
+      ]).then(function(r){
+        return {
+          // loadAll 相容 key
+          inventory:r[0], warehouseStock:r[1], batchDetail:r[2],
+          // loadInventoryFromServer 需要的 key
+          masters: r[0].map(function(row){ return _mapRow(row, INV_MAP); }),
+          stocks:  r[1].map(function(row){ return _mapRow(row, STK_MAP); }),
+          batches: r[2].map(function(row){ return _mapRow(row, BAT_MAP); }),
+        };
+      }), cb, errCb);
     },
     savePurchase: function(payload, cb, errCb){
       if(!payload||!payload.purchase||!payload.purchase.id){ if(errCb) errCb(new Error('savePurchase 需要 purchase.id')); return; }
@@ -3546,7 +3585,7 @@ window.addEventListener('DOMContentLoaded', function(){
             };
             setState("儲存中...");
 
-            if (typeof google === 'undefined' || !google.script) {
+            if (!window.API) {
               setTimeout(() => setState("儲存完成!(離線)", true), 600);
               return;
             }
@@ -4019,8 +4058,8 @@ window.addEventListener('DOMContentLoaded', function(){
   window.consolidateCuttings = consolidateCuttings;
 
   function hasBackend(){
-    return (typeof google !== 'undefined' && google.script &&
-            window.API && typeof window.API.listOrderIds === 'function');
+    // Supabase 版：只要 window.API 存在就算有後端（不再依賴 google.script）
+    return !!(window.API && typeof window.API.listOrderIds === 'function');
   }
 
   function bootstrapOrderList(cb){
