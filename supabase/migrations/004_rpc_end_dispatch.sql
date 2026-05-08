@@ -204,6 +204,12 @@ BEGIN
         "updatedAt"  = v_now
   WHERE id = p_dispatch_id;
 
+  -- ── 5b. 回填 reporter sessions 的 returnId（供 ERP 回報人員 tab）────
+  UPDATE dispatch_return_reporters
+    SET "returnId" = v_return_id
+  WHERE "dispatchId" = p_dispatch_id
+    AND ("returnId" IS NULL OR "returnId" = '');
+
   -- ── 6. 回傳結果 ──────────────────────────────────────────
   RETURN jsonb_build_object(
     'ok',          true,

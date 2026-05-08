@@ -1940,6 +1940,8 @@ function switchTopMode(mode) {
         await _patch('dispatch_orders',{'id':'eq.'+dispatchId},
           {status:'closed',workHours:opts.workHours||'',finishTime:_nowLocal(),updatedAt:now});
         _written.statusPatched=true;
+        // 把 reporter sessions 的 returnId 回填（供 ERP 派工回單回報人員 tab 顯示）
+        await _patch('dispatch_return_reporters',{'dispatchId':'eq.'+dispatchId},{returnId}).catch(()=>{});
         return {ok:true,returnId,itemCount:0,deductCount};
       } catch(err){ await _rollback(err); throw err; }
     },
@@ -1949,11 +1951,28 @@ function switchTopMode(mode) {
         .then(function(rows){ return (rows||[]).map(function(r){ return r.id||r; }); }), cb, errCb);
     },
     getDispatchReturnFull: function(returnId, cb, errCb){
-      _cb(Promise.all([
-        _get('dispatch_returns',{'id':'eq.'+returnId,'limit':'1'}),
-        _get('dispatch_return_items',{'returnId':'eq.'+returnId}),
-        _get('dispatch_return_deduct',{'returnId':'eq.'+returnId}),
-      ]).then(function(r){ return {header:r[0][0]||null,items:r[1],deducts:r[2]}; }), cb, errCb);
+      _cb((async function(){
+        const [retRows, items, deduct] = await Promise.all([
+          _get('dispatch_returns',{'id':'eq.'+returnId,'limit':'1'}),
+          _get('dispatch_return_items',{'returnId':'eq.'+returnId}),
+          _get('dispatch_return_deduct',{'returnId':'eq.'+returnId}),
+        ]);
+        const header = retRows[0] || null;
+        // reporters：以 returnId 優先，fallback 用 dispatchId（endDispatch 可能尚未寫入 returnId）
+        let reporters = [];
+        if (header) {
+          const dispId = header.dispatchId || header.dispatchid || '';
+          reporters = await _get('dispatch_return_reporters',{
+            'or': '(returnId.eq.' + returnId + ',dispatchId.eq.' + dispId + ')',
+            'order': 'createdAt',
+          }).catch(function(){
+            // fallback：若 OR 語法不支援，改單獨查 dispatchId
+            return _get('dispatch_return_reporters',{'dispatchId':'eq.'+dispId,'order':'createdAt'});
+          });
+        }
+        // 統一 key：render 函式讀 full.deduct（無 s）、full.items、full.reporters
+        return { header, items, deduct, reporters };
+      })(), cb, errCb);
     },
     resetSimulationData: function(cb, errCb){
       _cb((async function(){
