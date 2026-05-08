@@ -1163,13 +1163,66 @@ function switchTopMode(mode) {
     }, extra || {});
   }
 
+  // camelCase 對照表（DB 小寫 → 前端 camelCase）
+  const _CAMEL_MAP = {
+    orderid:'orderId',itemno:'itemNo',bottommachine:'bottomMachine',
+    basematerialmodel:'baseMaterialModel',materialno:'materialNo',
+    totalfeet:'totalFeet',totalqty:'totalQty',standardprice:'standardPrice',
+    pricemodifier:'priceModifier',pricemodifytime:'priceModifyTime',
+    costbasis:'costBasis',deliverydate:'deliveryDate',
+    customercode:'customerCode',customername:'customerName',customershort:'customerShort',
+    contactphone:'contactPhone',salesno:'salesNo',doctype:'docType',taxtype:'taxType',
+    printcount:'printCount',articletext:'articleText',dispatchremark:'dispatchRemark',
+    totalamt:'totalAmt',grandtotal:'grandTotal',qtysum:'qtySum',totalsum:'totalSum',
+    weighno:'weighNo',dispatchid:'dispatchId',createdat:'createdAt',updatedat:'updatedAt',
+    orderitemno:'orderItemNo',lengthmm:'lengthMm',topunfinish:'topUnfinish',
+    topdone:'topDone',bottomunfinish:'bottomUnfinish',bottomdone:'bottomDone',
+    mesunfinish:'mesUnfinish',theoreticallenm:'theoreticalLenM',
+    starttime:'startTime',finishtime:'finishTime',reportedat:'reportedAt',
+    inlocation:'inLocation',inbatchno:'inBatchNo',unreturnedqty:'unreturnedQty',
+    unreturnedtotal:'unreturnedTotal',packagingmethod:'packagingMethod',
+    dispatchseq:'dispatchSeq',processno:'processNo',inboundno:'inboundNo',
+    warehouseno:'warehouseNo',batchno:'batchNo',originalrollno:'originalRollNo',
+    innerring:'innerRing',coildirection:'coilDirection',detailremark:'detailRemark',
+    lengthm:'lengthM',billingmonth:'billingMonth',vendorcode:'vendorCode',
+    vendorname:'vendorName',taxrate:'taxRate',paydate:'payDate',returnno:'returnNo',
+    accountvoucher:'accountVoucher',nevertransfer:'neverTransfer',invoiceno:'invoiceNo',
+    paidamt:'paidAmt',unpaidamt:'unpaidAmt',purchaseid:'purchaseId',
+    purchaseitemno:'purchaseItemNo',indate:'inDate',labelno:'labelNo',
+    totallen:'totalLen',totalweight:'totalWeight',createtime:'createTime',
+    endtime:'endTime',doccategory:'docCategory',partnercode:'partnerCode',
+    partnername:'partnerName',receivetime:'receiveTime',workhours:'workHours',
+    estimatedpickqty:'estimatedPickQty',estimatedinqty:'estimatedInQty',
+    estimatedremainqty:'estimatedRemainQty',totallength:'totalLength',
+    difflength:'diffLength',lossrate:'lossRate',toptotallen:'topTotalLen',
+    bottomtotallen:'bottomTotalLen',finishedtotallen:'finishedTotalLen',
+    dispatchid:'dispatchId',orderid:'orderId',
+    productname:'productName',salesname:'salesName',colorcode:'colorCode',
+    frontpaint:'frontPaint',backpaint:'backPaint',
+    frontpaintthick:'frontPaintThick',backpaintthick:'backPaintThick',
+    movedate:'moveDate',movetype:'moveType',reftype:'refType',refid:'refId',
+    unitweight:'unitWeight',
+  };
+  function _normRow(row){
+    const out={};
+    Object.keys(row).forEach(function(k){
+      const v=row[k];
+      out[k]=v;
+      const cc=_CAMEL_MAP[k];
+      if(cc&&out[cc]===undefined) out[cc]=v;
+    });
+    return out;
+  }
+
   // ── GET (query params 物件) ──
   async function _get(table, qs){
     const url = new URL(_base() + '/' + table);
     if(qs) Object.entries(qs).forEach(([k,v])=>{ if(v!=null) url.searchParams.set(k,String(v)); });
     const res = await fetch(url, { headers: _hdr() });
     if(!res.ok) throw new Error('[GET ' + table + '] ' + await res.text());
-    return res.json();
+    const data = await res.json();
+    // 自動 normalize：小寫欄位加 camelCase 別名（相容 003 執行前後）
+    return Array.isArray(data) ? data.map(_normRow) : data;
   }
 
   // ── UPSERT (onConflict=id by default) ──
@@ -1297,7 +1350,21 @@ function switchTopMode(mode) {
       ]).then(function(r){
         const orders=r[0], items=r[1], dispatches=r[2];
         const oMap={};
-        orders.forEach(function(o){ oMap[o.id]=o; });
+        orders.forEach(function(o){
+          // 欄位大小寫兼容（未執行 003_fix 時欄位是小寫）
+          const norm={};
+          Object.keys(o).forEach(function(k){ norm[k]=o[k]; });
+          // 常用 camelCase 別名
+          if(norm.customercode!==undefined&&norm.customerCode===undefined) norm.customerCode=norm.customercode;
+          if(norm.customershort!==undefined&&norm.customerShort===undefined) norm.customerShort=norm.customershort;
+          if(norm.customername!==undefined&&norm.customerName===undefined) norm.customerName=norm.customername;
+          if(norm.totalfeet!==undefined&&norm.totalFeet===undefined) norm.totalFeet=norm.totalfeet;
+          if(norm.totalqty!==undefined&&norm.totalQty===undefined) norm.totalQty=norm.totalqty;
+          if(norm.deliverydate!==undefined&&norm.deliveryDate===undefined) norm.deliveryDate=norm.deliverydate;
+          if(norm.weighno!==undefined&&norm.weighNo===undefined) norm.weighNo=norm.weighno;
+          if(norm.dispatchid!==undefined&&norm.dispatchId===undefined) norm.dispatchId=norm.dispatchid;
+          oMap[norm.id]=norm;
+        });
         const dMap={};
         dispatches.forEach(function(d){
           if(!d.orderId) return;
@@ -1438,7 +1505,9 @@ function switchTopMode(mode) {
       opts=opts||{};
       _cb((async function(){
         const orders=await _get('orders',{'id':'eq.'+orderId,'limit':'1'});
-        const oh=orders[0]||{};
+        const _oh=orders[0]||{};
+        // 欄位大小寫兼容（未執行 003_fix 時欄位是小寫）
+        const oh=new Proxy(_oh,{get:function(t,k){ return t[k]!==undefined?t[k]:t[String(k).toLowerCase()]; }});
         const allDisp=await _get('dispatch_orders',{'select':'id','order':'id.desc','limit':'1'});
         const d=new Date();
         const y=d.getFullYear()-1911;
@@ -1458,8 +1527,16 @@ function switchTopMode(mode) {
           remark:opts.remark||'',dispatchRemark:opts.dispatchRemark||''};
         await _upsert('dispatch_orders',disp);
         if(opts.linkCuttings!==false) await _patch('cutting_details',{'orderId':'eq.'+orderId},{dispatchId:newId});
-        await _patch('orders',{'id':'eq.'+orderId},{status:'已派工',dispatchId:newId,updatedAt:now});
-        return {ok:true,dispatchId:newId};
+        // patch orders：同時更新 camelCase 和 lowercase 欄位（確保相容）
+        try {
+          await _patch('orders',{'id':'eq.'+orderId},{status:'已派工',dispatchId:newId,updatedAt:now});
+        } catch(e1) {
+          // fallback：若欄位是小寫
+          await _patch('orders',{'id':'eq.'+orderId},{status:'已派工',dispatchid:newId,updatedat:now});
+        }
+        // 回傳 id（前端讀 res.id）+ dispatchId + phase + machine
+        return {ok:true, id:newId, dispatchId:newId,
+                phase: opts.phase||'BOTH', machine: opts.machine||''};
       })(), cb, errCb);
     },
     getDispatchHeader: function(dispatchId, cb, errCb){
