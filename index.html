@@ -1869,7 +1869,7 @@ function switchTopMode(mode) {
           partnerName:dh.partnerName||dh.partnername,
           operator:opts.operator||dh.operator,machine:dh.machine,
           finishTime:opts.finishTime||_nowLocal(),
-          totalIn,totalDeduct:totalDeductKg,actualUsed,lossRate,remark:opts.remark||'',
+          totalIn,totalDeduct:totalDeductKg,lossRate,remark:opts.remark||'',  // actualUsed 僅供本地計算，不寫入 DB
           dispatchRemark:opts.dispatchRemark||'',effectiveWorkHours:opts.workHours||'',
           status:'closed',createdAt:now,updatedAt:now});
         _written.returnCreated=true;
