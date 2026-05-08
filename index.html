@@ -1219,6 +1219,36 @@ function switchTopMode(mode) {
     frontpaintthick:'frontPaintThick',backpaintthick:'backPaintThick',
     movedate:'moveDate',movetype:'moveType',reftype:'refType',refid:'refId',
     unitweight:'unitWeight',
+    // dispatch_coil_moves
+    outbatchno:'outBatchNo',inbatchno:'inBatchNo',outwarehouse:'outWarehouse',
+    outlocation:'outLocation',inwarehouse:'inWarehouse',inlocation:'inLocation',
+    loadweight:'loadWeight',unloadweight:'unloadWeight',
+    categoryunreturned:'categoryUnreturned',costbasis:'costBasis',
+    materialprice:'materialPrice',factoryreturnedqty:'factoryReturnedQty',
+    salereturn:'saleReturn',salereturndate:'saleReturnDate',
+    usedtotalm:'usedTotalM',topweight:'topWeight',bottomweight:'bottomWeight',
+    fullyused:'fullyUsed',usedpart:'usedPart',createtime:'createTime',
+    weightadjustreason:'weightAdjustReason',originalrollno:'originalRollNo',
+    furnaceno:'furnaceNo',coilno:'coilNo',moveid:'moveId',
+    // dispatch_returns
+    totalin:'totalIn',totaldeduct:'totalDeduct',lossrate:'lossRate',
+    dispatchid:'dispatchId',returnid:'returnId',
+    finishtime:'finishTime',workhours:'workHours',
+    purchaseorderid:'purchaseOrderId',printcount:'printCount',
+    processamount:'processAmount',processtotal:'processTotal',
+    effectiveworkhours:'effectiveWorkHours',pausedhours:'pausedHours',
+    sessioncount:'sessionCount',remaintotal:'remainTotal',
+    // dispatch_production
+    theoreticallenm:'theoreticalLenM',customercode:'customerCode',
+    sitename:'siteName',topunfinish:'topUnfinish',topdone:'topDone',
+    bottomunfinish:'bottomUnfinish',bottomdone:'bottomDone',
+    mesunfinish:'mesUnfinish',unreturnedqty:'unreturnedQty',
+    unreturnedtotal:'unreturnedTotal',unitprice:'unitPrice',
+    pricebasis:'priceBasis',costprice:'costPrice',shipmethod:'shipMethod',
+    packagingmethod:'packagingMethod',processno:'processNo',
+    inboundno:'inboundNo',
+    // general
+    actualinqty:'actualInQty',dispatchseq:'dispatchSeq',
   };
   function _normRow(row){
     const out={};
@@ -1774,18 +1804,29 @@ function switchTopMode(mode) {
             await _patch('dispatch_coil_moves',{'id':'eq.'+moveId},{unloadWeight:unloadKg,qty:deductKg});
           }
         }
-        // 重新取最新的 moves（含更新後的 qty）
+        // 重新取最新的 moves（含更新後的 qty = loadWeight - unloadWeight）
         const moves2=await _get('dispatch_coil_moves',{'dispatchId':'eq.'+dispatchId});
-        const totalIn=moves2.reduce(function(s,m){ return s+(parseFloat(m.qty)||0); },0);
-        const unload=Number(opts.unloadWeight||0);
-        const lossRate=totalIn>0?+((Math.max(0,totalIn-unload))/totalIn*100).toFixed(2):0;
+        // totalIn  = 所有鋼捲上架磅重之和（實際投入量）
+        const totalIn=moves2.reduce(function(s,m){
+          return s+(parseFloat(m.loadWeight||m.total)||0);
+        },0);
+        // totalDeduct = 所有鋼捲下架磅重之和（餘料退回量）
+        const totalDeductKg=moves2.reduce(function(s,m){
+          return s+(parseFloat(m.unloadWeight)||0);
+        },0);
+        // 實際耗用 = totalIn - totalDeduct
+        const actualUsed=Math.max(0,totalIn-totalDeductKg);
+        // lossRate = (實際耗用 - 生產產出) / 投入 × 100
+        // 此處用 totalDeductKg 作為 totalDeduct 寫入 dispatch_returns
+        const lossRate=totalIn>0?+(totalDeductKg/totalIn*100).toFixed(2):0;
+        const unload=totalDeductKg;
         await _upsert('dispatch_returns',{id:returnId,dispatchId,
           date:new Date().toLocaleDateString('zh-TW'),docCategory:'回單',
           orderId:dh.orderId,partnerCode:dh.partnerCode||dh.partnercode,
           partnerName:dh.partnerName||dh.partnername,
           operator:opts.operator||dh.operator,machine:dh.machine,
           finishTime:opts.finishTime||_nowLocal(),
-          totalIn,totalDeduct:unload,lossRate,remark:opts.remark||'',
+          totalIn,totalDeduct:totalDeductKg,actualUsed,lossRate,remark:opts.remark||'',
           dispatchRemark:opts.dispatchRemark||'',effectiveWorkHours:opts.workHours||'',
           status:'closed',createdAt:now,updatedAt:now});
         let deductCount=0;
@@ -6733,90 +6774,78 @@ window.addEventListener('DOMContentLoaded', function(){
       //   3. 若失敗，顯示在 Phase E 紅卡 + 提供重試按鈕
       function finishWork() {
         if (!dispatchIds.length) return alert('尚未建立派工單');
-        if (finishing) return;   // loading 防重點
+        if (finishing) return;
+
         var uniqIds = [];
         var seenIds = {};
-        dispatchIds.forEach(function(id){ if (id && !seenIds[id]) { seenIds[id] = true; uniqIds.push(id); } });
+        dispatchIds.forEach(function(id){ if (id && !seenIds[id]) { seenIds[id]=true; uniqIds.push(id); } });
 
-        if (!window.confirm('確定完工結算？\n將為 ' + uniqIds.length + ' 張派工單產出派工回單 + 人員工時表。')) return;
+        if (!window.confirm('確定完工結算？\n將為 ' + uniqIds.length + ' 張派工單產出派工回單。')) return;
 
-        // 1) 從 finalUnloads + coils 建構 coilUnloadWeights 字典
+        // 建構 coilUnloadWeights 字典
         var coilUnloadWeights = {};
         coils.forEach(function(c, i){
-          var key = c.moveId || '';                       // 用 addCoilMove 回傳的 moveId 為 key
+          var key = c.moveId || '';
           if (!key) return;
           var u = finalUnloads[i];
           if (u == null || isNaN(u)) u = parseFloat(c.unloadWeight) || 0;
           coilUnloadWeights[key] = parseFloat(u) || 0;
         });
 
-        console.log('[FoldingWizard] finishWork start', {
-          dispatchIds: uniqIds,
-          finalUnloads: finalUnloads,
-          coilUnloadWeights: coilUnloadWeights
-        });
-
+        console.log('[FoldingWizard] finishWork Promise.allSettled', {uniqIds, coilUnloadWeights});
         setFinishing(true);
 
-        var results = [];
-        var idx = 0;
-        function _doEnd(did, weights){
-          console.log('[FoldingWizard] calling endDispatch', { dispatchId: did, coilUnloadWeights: weights });
-          window.API.endDispatch(did, {
-            coilUnloadWeights: weights,
-            operator: selectedOps.join(';')
-          }, function(res){
-            console.log('[FoldingWizard] endDispatch OK', res);
-            results.push(Object.assign({ dispatchId: did }, res || { ok: false }));
-            processNext();
-          }, function(err){
-            console.error('[FoldingWizard] endDispatch FAIL', err);
-            var errMsg = String(err && err.message || err);
-            results.push({ dispatchId: did, ok: false, error: errMsg });
-            alert('派工結束失敗 (派工單 ' + did + ')：\n' + errMsg);
-            processNext();
-          });
-        }
-        function processNext() {
-          if (idx >= uniqIds.length) {
-            console.log('[FoldingWizard] all done', results);
-            setCompletionResults(results);
-            setFinishing(false);
-            // Phase 已在 E，但仍呼叫 setPhase 防禦
-            setPhase('E');
-            var ok = results.filter(function(r){ return r.ok; }).length;
-            var fail = results.length - ok;
-            if (fail === 0) {
-              alert('✅ 完工結算成功！\n產出派工回單：' + results.map(function(r){return r.returnId;}).join(', '));
-            } else if (ok === 0) {
-              alert('❌ 全部派工結束失敗，請查看 Phase E 紅色錯誤訊息與瀏覽器 Console');
-            } else {
-              alert('⚠️ ' + ok + ' 張成功 / ' + fail + ' 張失敗，請查看 Phase E');
-            }
-            return;
-          }
-          var did = uniqIds[idx++];
-          // 若 coilUnloadWeights 沒有覆蓋到的 moveId，後端會 fallback 用扣庫已存的 unloadWeight
-          // 這裡額外 query 一次 moves 讓 unloadWeight 覆蓋更完整 (補強)
-          if (window.API && typeof window.API.getDispatchCoilMoves === 'function') {
+        // 用 Promise.allSettled 並發執行所有 endDispatch（互不阻塞）
+        Promise.allSettled(uniqIds.map(function(did){
+          return new Promise(function(resolve, reject){
+            // 先取最新 moves，補齊未含在 coilUnloadWeights 的鋼捲
             window.API.getDispatchCoilMoves(did, function(moves){
               var merged = Object.assign({}, coilUnloadWeights);
-              // 若使用者沒對齊到的 moveId 但 moves 中有，補上 0 (避免 endDispatch 用其他 default)
               (moves || []).forEach(function(m){
                 var k = m.id || m.moveId;
-                if (k && merged[k] === undefined) {
-                  merged[k] = parseFloat(m.unloadWeight || 0) || 0;
-                }
+                if (k && merged[k] === undefined) merged[k] = parseFloat(m.unloadWeight || 0) || 0;
               });
-              _doEnd(did, merged);
-            }, function(){ _doEnd(did, coilUnloadWeights); });
+              window.API.endDispatch(did, {
+                coilUnloadWeights: merged,
+                operator: selectedOps.join(';')
+              }, function(res){
+                console.log('[FoldingWizard] endDispatch OK', did, res);
+                resolve(Object.assign({ dispatchId: did }, res || { ok: false }));
+              }, function(err){
+                console.error('[FoldingWizard] endDispatch FAIL', did, err);
+                resolve({ dispatchId: did, ok: false,
+                          error: String(err && err.message || err) });
+              });
+            }, function(){
+              // 無法取 moves → 仍嘗試 endDispatch
+              window.API.endDispatch(did, {
+                coilUnloadWeights: coilUnloadWeights,
+                operator: selectedOps.join(';')
+              }, function(res){ resolve(Object.assign({ dispatchId: did }, res||{ok:false})); },
+                 function(err){ resolve({ dispatchId: did, ok: false,
+                                          error: String(err&&err.message||err) }); });
+            });
+          });
+        })).then(function(settlements){
+          var results = settlements.map(function(s){
+            return s.status === 'fulfilled' ? s.value : Object.assign({ ok: false }, s.reason);
+          });
+          console.log('[FoldingWizard] allSettled results', results);
+          setCompletionResults(results);
+          setFinishing(false);
+          setPhase('E');
+          var okCount   = results.filter(function(r){ return r && r.ok; }).length;
+          var failCount = results.length - okCount;
+          if (failCount === 0) {
+            alert('✅ 完工結算成功！\n' +
+                  results.map(function(r){ return '回單：' + (r.returnId||'—'); }).join('\n'));
+          } else if (okCount === 0) {
+            alert('❌ 全部派工結束失敗，請查看 Phase E 的錯誤訊息。');
           } else {
-            _doEnd(did, coilUnloadWeights);
+            alert('⚠️ ' + okCount + ' 張成功 / ' + failCount + ' 張失敗，請查看 Phase E。');
           }
-        }
-        processNext();
+        });
       }
-      // 切換到 派工回單 tab 並選中對應 returnId
       function viewDispatchReturn(returnId) {
         if (!returnId) return alert('此單尚未產出回單');
         // 切到 ERP → 派工回單 → 載入指定 returnId
