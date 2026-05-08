@@ -1,0 +1,21 @@
+# Supabase
+.branches
+.temp
+supabase/.env
+
+# 環境變數（絕對不要 commit 金鑰）
+.env
+.env.local
+.env.*.local
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp

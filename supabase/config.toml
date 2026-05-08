@@ -1,0 +1,13 @@
+# Supabase 本機開發設定
+# 執行 `supabase link --project-ref YOUR_PROJECT_REF` 後會自動填入
+
+[api]
+enabled = true
+port = 54321
+
+[db]
+port = 54322
+shadow_port = 54320
+
+[functions.erp-api]
+verify_jwt = false   # 開發階段關閉 JWT 驗證；正式上線請改 true

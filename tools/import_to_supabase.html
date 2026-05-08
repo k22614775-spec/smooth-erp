@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ERP 資料匯入工具 → Supabase</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Microsoft JhengHei", Arial, sans-serif; background: #1a1a2e; color: #e0e0e0; min-height: 100vh; padding: 20px; }
+  .container { max-width: 900px; margin: 0 auto; }
+  h1 { color: #4fc3f7; font-size: 22px; margin-bottom: 6px; }
+  .subtitle { color: #888; font-size: 13px; margin-bottom: 24px; }
+  .card { background: #16213e; border: 1px solid #0f3460; border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+  .card h2 { color: #4fc3f7; font-size: 15px; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .badge { background: #0f3460; color: #4fc3f7; border-radius: 50%; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; flex-shrink: 0; }
+  label { display: block; color: #aaa; font-size: 12px; margin-bottom: 4px; margin-top: 10px; }
+  input[type=text], input[type=password] { width: 100%; padding: 8px 12px; background: #0d1b2a; border: 1px solid #0f3460; border-radius: 6px; color: #e0e0e0; font-size: 13px; }
+  input[type=text]:focus, input[type=password]:focus { outline: none; border-color: #4fc3f7; }
+  .drop-zone { border: 2px dashed #0f3460; border-radius: 10px; padding: 40px 20px; text-align: center; cursor: pointer; transition: all .2s; margin-top: 10px; }
+  .drop-zone:hover, .drop-zone.drag-over { border-color: #4fc3f7; background: rgba(79,195,247,.05); }
+  .drop-zone .icon { font-size: 40px; margin-bottom: 10px; }
+  .drop-zone .hint { color: #888; font-size: 13px; }
+  .drop-zone.has-file { border-color: #4caf50; background: rgba(76,175,80,.05); }
+  .drop-zone.has-file .hint { color: #4caf50; }
+  .btn { padding: 10px 24px; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; font-weight: bold; transition: all .2s; }
+  .btn-primary { background: linear-gradient(135deg, #4fc3f7, #0288d1); color: #fff; width: 100%; margin-top: 14px; font-size: 15px; padding: 12px; }
+  .btn-primary:hover { opacity: .9; }
+  .btn-primary:disabled { background: #333; color: #666; cursor: not-allowed; }
+  .progress-wrap { margin-top: 16px; display: none; }
+  .progress-bar-bg { background: #0d1b2a; border-radius: 10px; height: 8px; overflow: hidden; margin-bottom: 8px; }
+  .progress-bar { height: 100%; background: linear-gradient(90deg, #4fc3f7, #0288d1); border-radius: 10px; transition: width .3s; width: 0%; }
+  .log-box { background: #0d1b2a; border: 1px solid #0f3460; border-radius: 6px; padding: 12px; max-height: 320px; overflow-y: auto; font-family: monospace; font-size: 12px; line-height: 1.7; margin-top: 10px; }
+  .log-ok   { color: #4caf50; }
+  .log-warn { color: #ff9800; }
+  .log-err  { color: #f44336; }
+  .log-info { color: #4fc3f7; }
+  .log-skip { color: #666; }
+  .summary-box { background: #0a2540; border: 1px solid #4caf50; border-radius: 8px; padding: 16px; margin-top: 14px; display: none; }
+  .summary-box h3 { color: #4caf50; margin-bottom: 8px; }
+  .summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px; }
+  .summary-item { background: #0d1b2a; border-radius: 6px; padding: 10px; text-align: center; }
+  .summary-item .num { font-size: 24px; font-weight: bold; color: #4fc3f7; }
+  .summary-item .lbl { font-size: 11px; color: #888; margin-top: 2px; }
+  .table-chip { display: inline-block; background: #0f3460; border-radius: 4px; padding: 2px 8px; font-size: 11px; margin: 2px; color: #4fc3f7; }
+  .step-hint { background: #0a2540; border-left: 3px solid #4fc3f7; padding: 10px 14px; border-radius: 0 6px 6px 0; font-size: 13px; color: #aaa; margin-top: 8px; line-height: 1.7; }
+  .step-hint code { background: #0d1b2a; padding: 1px 6px; border-radius: 3px; color: #4fc3f7; font-size: 12px; }
+  select { width: 100%; padding: 8px 12px; background: #0d1b2a; border: 1px solid #0f3460; border-radius: 6px; color: #e0e0e0; font-size: 13px; }
+  .mode-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .mode-tab { flex: 1; padding: 8px; border: 1px solid #0f3460; border-radius: 6px; background: #0d1b2a; color: #888; cursor: pointer; text-align: center; font-size: 13px; transition: all .2s; }
+  .mode-tab.active { border-color: #4fc3f7; background: rgba(79,195,247,.1); color: #4fc3f7; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🔄 ERP + MES 資料遷移工具</h1>
+  <p class="subtitle">Google Sheets → Supabase 全量資料匯入</p>
+
+  <!-- Step 1: Supabase 設定 -->
+  <div class="card">
+    <h2><span class="badge">1</span> Supabase 連線設定</h2>
+    <label>Project URL</label>
+    <input type="text" id="sb-url" placeholder="https://xxxxxxxxxxxxxxxx.supabase.co" value="">
+    <label>Service Role Key（比 anon key 有更高權限，可在 Settings → API Keys 取得）</label>
+    <input type="password" id="sb-key" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...">
+    <div style="margin-top:10px; display:flex; gap:10px;">
+      <button class="btn" style="background:#0f3460; color:#4fc3f7;" onclick="testConnection()">🔌 測試連線</button>
+      <span id="conn-status" style="font-size:13px; align-self:center;"></span>
+    </div>
+  </div>
+
+  <!-- Step 2: 選擇 JSON 檔案 -->
+  <div class="card">
+    <h2><span class="badge">2</span> 選擇匯出的 JSON 檔案</h2>
+    <div class="step-hint">
+      請先在 Google Apps Script 執行 <code>exportAllDataToJson()</code>，<br>
+      從 Google Drive 下載 <code>ERP_export_YYYYMMDD.json</code> 後，拖曳到下方。
+    </div>
+    <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
+      <div class="icon">📂</div>
+      <div class="hint" id="drop-hint">點此選擇或拖曳 JSON 檔案</div>
+    </div>
+    <input type="file" id="file-input" accept=".json" style="display:none" onchange="handleFile(this.files[0])">
+  </div>
+
+  <!-- Step 3: 匯入選項 -->
+  <div class="card">
+    <h2><span class="badge">3</span> 匯入選項</h2>
+    <label>匯入模式</label>
+    <div class="mode-tabs">
+      <div class="mode-tab active" id="tab-upsert" onclick="setMode('upsert')">🔄 Upsert（更新或新增，推薦）</div>
+      <div class="mode-tab" id="tab-insert" onclick="setMode('insert')">➕ Insert only（只新增，若有重複 id 會報錯）</div>
+      <div class="mode-tab" id="tab-replace" onclick="setMode('replace')">♻️ 清空再寫入（危險！會刪除現有資料）</div>
+    </div>
+    <label>批次大小（每次送出的筆數，太大可能超時）</label>
+    <select id="batch-size">
+      <option value="50">50 筆（保守）</option>
+      <option value="100" selected>100 筆（建議）</option>
+      <option value="200">200 筆（快速）</option>
+      <option value="500">500 筆（大量資料）</option>
+    </select>
+
+    <div style="margin-top:12px;">
+      <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+        <input type="checkbox" id="skip-empty" checked>
+        <span>略過空資料表（加快速度）</span>
+      </label>
+    </div>
+  </div>
+
+  <!-- 開始匯入按鈕 -->
+  <button class="btn btn-primary" id="import-btn" disabled onclick="startImport()">
+    🚀 開始匯入到 Supabase
+  </button>
+
+  <!-- 進度 -->
+  <div class="progress-wrap" id="progress-wrap">
+    <div style="display:flex; justify-content:space-between; font-size:13px; color:#aaa; margin-bottom:4px;">
+      <span id="progress-text">準備中...</span>
+      <span id="progress-pct">0%</span>
+    </div>
+    <div class="progress-bar-bg"><div class="progress-bar" id="progress-bar"></div></div>
+    <div class="log-box" id="log-box"></div>
+  </div>
+
+  <!-- 結果摘要 -->
+  <div class="summary-box" id="summary-box">
+    <h3>✅ 匯入完成</h3>
+    <div class="summary-grid">
+      <div class="summary-item"><div class="num" id="s-tables">0</div><div class="lbl">資料表</div></div>
+      <div class="summary-item"><div class="num" id="s-rows">0</div><div class="lbl">匯入筆數</div></div>
+      <div class="summary-item"><div class="num" id="s-errors">0</div><div class="lbl">錯誤</div></div>
+    </div>
+    <div id="s-details" style="margin-top:12px; font-size:12px;"></div>
+  </div>
+</div>
+
+<script>
+// ── 狀態 ──
+let jsonData = null;
+let importMode = 'upsert';
+
+// 匯入順序（符合外鍵相依性）
+const TABLE_ORDER = [
+  'machines',
+  'orders',
+  'order_items',
+  'cutting_details',
+  'inventory',
+  'warehouse_stock',
+  'batch_detail',
+  'purchases',
+  'purchase_items',
+  'purchase_batch',
+  'labels',
+  'dispatch_orders',
+  'dispatch_coil_moves',
+  'dispatch_production',
+  'dispatch_returns',
+  'dispatch_return_items',
+  'dispatch_return_deduct',
+  'dispatch_return_reporters',
+  'stock_moves',
+];
+
+// ── 連線測試 ──
+async function testConnection() {
+  const url = document.getElementById('sb-url').value.trim();
+  const key = document.getElementById('sb-key').value.trim();
+  const el  = document.getElementById('conn-status');
+  if (!url || !key) { el.textContent = '⚠️ 請填入 URL 和 Key'; el.style.color='#ff9800'; return; }
+  el.textContent = '測試中...'; el.style.color = '#aaa';
+  try {
+    const r = await fetch(`${url}/rest/v1/orders?select=id&limit=1`, {
+      headers: { 'apikey': key, 'Authorization': `Bearer ${key}` }
+    });
+    if (r.ok || r.status === 404) {
+      el.textContent = '✅ 連線成功'; el.style.color = '#4caf50';
+    } else {
+      el.textContent = `❌ 連線失敗 (${r.status})`; el.style.color = '#f44336';
+    }
+  } catch(e) {
+    el.textContent = '❌ ' + e.message; el.style.color = '#f44336';
+  }
+}
+
+// ── 模式切換 ──
+function setMode(m) {
+  importMode = m;
+  ['upsert','insert','replace'].forEach(function(t) {
+    document.getElementById('tab-'+t).classList.toggle('active', t===m);
+  });
+}
+
+// ── 拖曳上傳 ──
+const dropZone = document.getElementById('drop-zone');
+dropZone.addEventListener('dragover', function(e){ e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', function(){ dropZone.classList.remove('drag-over'); });
+dropZone.addEventListener('drop', function(e){ e.preventDefault(); dropZone.classList.remove('drag-over'); handleFile(e.dataTransfer.files[0]); });
+
+function handleFile(file) {
+  if (!file || !file.name.endsWith('.json')) {
+    alert('請選擇 .json 檔案'); return;
+  }
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      jsonData = JSON.parse(e.target.result);
+      const meta = jsonData.__meta || {};
+      const tables = Object.keys(jsonData).filter(k => k !== '__meta');
+      const rows   = tables.reduce(function(s,t){ return s + (jsonData[t]||[]).length; }, 0);
+      dropZone.classList.add('has-file');
+      document.getElementById('drop-hint').textContent =
+        `✅ ${file.name}  |  ${tables.length} 張資料表  |  ${rows.toLocaleString()} 筆資料  |  匯出時間：${meta.exportedAt||'未知'}`;
+      document.getElementById('import-btn').disabled = false;
+      // 顯示 chips
+      let chips = '<div style="margin-top:8px;">';
+      tables.forEach(function(t){ chips += `<span class="table-chip">${t} (${(jsonData[t]||[]).length})</span>`; });
+      chips += '</div>';
+      dropZone.insertAdjacentHTML('afterend', chips);
+    } catch(err) {
+      alert('JSON 解析失敗：' + err.message);
+    }
+  };
+  reader.readAsText(file, 'utf-8');
+}
+
+// ── 匯入主流程 ──
+async function startImport() {
+  const url     = document.getElementById('sb-url').value.trim();
+  const key     = document.getElementById('sb-key').value.trim();
+  const batchSz = parseInt(document.getElementById('batch-size').value);
+  const skipEmpty = document.getElementById('skip-empty').checked;
+
+  if (!url || !key) { alert('請填入 Supabase URL 和 Key'); return; }
+  if (!jsonData)    { alert('請先選擇 JSON 檔案'); return; }
+  if (importMode === 'replace' && !confirm('⚠️ 清空再寫入模式會刪除資料表現有資料！確定繼續？')) return;
+
+  document.getElementById('import-btn').disabled = true;
+  document.getElementById('progress-wrap').style.display = 'block';
+  document.getElementById('summary-box').style.display = 'none';
+
+  const logBox = document.getElementById('log-box');
+  logBox.innerHTML = '';
+
+  function log(msg, cls) {
+    const d = document.createElement('div');
+    d.className = cls || '';
+    d.textContent = msg;
+    logBox.appendChild(d);
+    logBox.scrollTop = logBox.scrollHeight;
+  }
+
+  const tables = TABLE_ORDER.filter(function(t){ return t in jsonData; });
+  const total  = tables.length;
+  let done = 0, totalImported = 0, totalErrors = 0;
+  const resultDetails = [];
+
+  for (const table of tables) {
+    const rows = jsonData[table] || [];
+    done++;
+    const pct = Math.round(done / total * 100);
+    document.getElementById('progress-bar').style.width = pct + '%';
+    document.getElementById('progress-pct').textContent = pct + '%';
+    document.getElementById('progress-text').textContent = `處理中：${table} (${done}/${total})`;
+
+    if (skipEmpty && rows.length === 0) {
+      log(`⬜ ${table}：空，略過`, 'log-skip');
+      resultDetails.push({ table, imported: 0, errors: 0 });
+      continue;
+    }
+
+    log(`⏳ ${table}：${rows.length} 筆...`, 'log-info');
+
+    // 清空（replace 模式）
+    if (importMode === 'replace') {
+      try {
+        const dr = await fetch(`${url}/rest/v1/${table}?id=neq.null`, {
+          method: 'DELETE',
+          headers: { 'apikey': key, 'Authorization': `Bearer ${key}`, 'Prefer': 'return=minimal' }
+        });
+        if (!dr.ok && dr.status !== 404) {
+          const errText = await dr.text();
+          log(`  ⚠️ 清空失敗 (${dr.status}): ${errText.substring(0,100)}`, 'log-warn');
+        }
+      } catch(e) {
+        log(`  ⚠️ 清空例外: ${e.message}`, 'log-warn');
+      }
+    }
+
+    // 分批寫入
+    let imported = 0, errors = 0;
+    for (let i = 0; i < rows.length; i += batchSz) {
+      const batch = rows.slice(i, i + batchSz);
+
+      // 清理 null 欄位（避免 not-null constraint 錯誤）
+      const cleaned = batch.map(function(r) {
+        const obj = {};
+        for (const [k, v] of Object.entries(r)) {
+          if (v !== null && v !== undefined && v !== '') obj[k] = v;
+        }
+        return obj;
+      });
+
+      try {
+        let method = 'POST';
+        let prefer = 'return=minimal';
+        let endpoint = `${url}/rest/v1/${table}`;
+
+        if (importMode === 'upsert') {
+          prefer = 'resolution=merge-duplicates,return=minimal';
+        }
+
+        const res = await fetch(endpoint, {
+          method,
+          headers: {
+            'apikey': key,
+            'Authorization': `Bearer ${key}`,
+            'Content-Type': 'application/json',
+            'Prefer': prefer,
+          },
+          body: JSON.stringify(cleaned),
+        });
+
+        if (res.ok) {
+          imported += batch.length;
+        } else {
+          const errText = await res.text();
+          errors += batch.length;
+          log(`  ❌ 批次 ${i}~${i+batch.length} 失敗 (${res.status}): ${errText.substring(0,120)}`, 'log-err');
+        }
+      } catch(e) {
+        errors += batch.length;
+        log(`  ❌ 網路錯誤: ${e.message}`, 'log-err');
+      }
+
+      // 短暫停頓，避免打爆 API
+      await new Promise(function(r){ setTimeout(r, 30); });
+    }
+
+    totalImported += imported;
+    totalErrors   += errors;
+    resultDetails.push({ table, imported, errors });
+
+    if (errors === 0) {
+      log(`✅ ${table}：${imported} 筆匯入成功`, 'log-ok');
+    } else {
+      log(`⚠️ ${table}：${imported} 筆成功 / ${errors} 筆失敗`, 'log-warn');
+    }
+  }
+
+  // 完成
+  document.getElementById('progress-text').textContent = '完成！';
+  document.getElementById('progress-bar').style.width = '100%';
+
+  document.getElementById('s-tables').textContent = tables.length;
+  document.getElementById('s-rows').textContent   = totalImported.toLocaleString();
+  document.getElementById('s-errors').textContent = totalErrors;
+
+  let detailHtml = '<div style="display:flex; flex-wrap:wrap; gap:4px;">';
+  resultDetails.forEach(function(d) {
+    const color = d.errors > 0 ? '#ff9800' : (d.imported === 0 ? '#666' : '#4caf50');
+    detailHtml += `<span style="background:#0d1b2a; border:1px solid ${color}; border-radius:4px; padding:2px 8px; font-size:11px; color:${color};">${d.table} ${d.imported}</span>`;
+  });
+  detailHtml += '</div>';
+  document.getElementById('s-details').innerHTML = detailHtml;
+  document.getElementById('summary-box').style.display = 'block';
+
+  log('=== 全部完成 ===', 'log-info');
+  document.getElementById('import-btn').disabled = false;
+  document.getElementById('import-btn').textContent = '🔄 重新匯入';
+}
+</script>
+</body>
+</html>
