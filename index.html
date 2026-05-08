@@ -1514,10 +1514,19 @@ function switchTopMode(mode) {
       _cb(_patch('dispatch_return_reporters',{'dispatchId':'eq.'+dispatchId,'status':'eq.active'},
         {status:'paused',endTime:((opts||{}).endTime)||_nowLocal(),updatedAt:_nowIso()}).then(function(){ return {ok:true}; }), cb, errCb);
     },
-    switchReporterSession: function(dispatchId, newReporters, opts, cb, errCb){
-      const self=this;
-      _cb((async function(){ await self.pauseReporterSession._promise(dispatchId,opts); return self._addReporter(dispatchId,newReporters,opts); })(), cb, errCb);
-      this.pauseReporterSession(dispatchId,opts,function(){ window.API.addReporterSession(dispatchId,newReporters,opts,cb,errCb); },errCb);
+        switchReporterSession: function(dispatchId, newReporters, opts, cb, errCb){
+      // 先暫停舊段，再開新段
+      var self = this;
+      _cb(_patch('dispatch_return_reporters',
+        {'dispatchId':'eq.'+dispatchId,'status':'eq.active'},
+        {status:'paused',endTime:((opts||{}).endTime)||_nowLocal(),updatedAt:_nowIso()}
+      ).then(function(){
+        var row={id:_uid('RS'),dispatchId,reporters:newReporters,
+          machine:(opts||{}).machine||'',
+          startTime:((opts||{}).startTime)||_nowLocal(),
+          status:'active',createdAt:_nowIso(),updatedAt:_nowIso()};
+        return _upsert('dispatch_return_reporters',row).then(function(){ return {ok:true,reporters:newReporters}; });
+      }), cb, errCb);
     },
     resumeReporterSession: function(dispatchId, reporters, opts, cb, errCb){
       this.addReporterSession(dispatchId,reporters,opts,cb,errCb);
@@ -1525,17 +1534,22 @@ function switchTopMode(mode) {
     getReporterSessionsByDispatch: function(dispatchId, cb, errCb){
       _cb(_get('dispatch_return_reporters',{'dispatchId':'eq.'+dispatchId,'order':'createdAt'}), cb, errCb);
     },
-    computeEffectiveWorkHours: function(dispatchId, cb, errCb){
+        computeEffectiveWorkHours: function(dispatchId, cb, errCb){
       _cb(_get('dispatch_return_reporters',{'dispatchId':'eq.'+dispatchId}).then(function(sessions){
-        let total=0;
-        sessions.forEach(function(s){
+        let total=0, paused=0;
+        (sessions||[]).forEach(function(s){
           if(s.startTime&&s.endTime){
             const st=new Date(s.startTime).getTime(), en=new Date(s.endTime).getTime();
-            if(!isNaN(st)&&!isNaN(en)) total+=Math.max(0,(en-st)/1000);
+            if(!isNaN(st)&&!isNaN(en)){
+              const diff=Math.max(0,(en-st)/1000);
+              if(s.status==='paused') paused+=diff; else total+=diff;
+            }
           }
         });
-        const hh=Math.floor(total/3600),mm=Math.floor((total%3600)/60),ss=Math.floor(total%60);
-        return {workHours:String(hh).padStart(2,'0')+':'+String(mm).padStart(2,'0')+':'+String(ss).padStart(2,'0')};
+        function _fmt(secs){ const h=Math.floor(secs/3600),m=Math.floor((secs%3600)/60),s=Math.floor(secs%60); return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0'); }
+        const wh=_fmt(total), ph=_fmt(paused);
+        // 同時回傳 workHours（後端用）和 hhmmss（前端舊用）
+        return {workHours:wh,hhmmss:wh,pausedHhmmss:ph};
       }), cb, errCb);
     },
     linkOrderCuttingsToDispatch: function(orderId, dispatchId, cb, errCb){
@@ -1545,33 +1559,53 @@ function switchTopMode(mode) {
       _cb(_patch('dispatch_orders',{'id':'eq.'+dispatchId},
         {status:'closed',workHours:workHours||'00:00:00',finishTime:_nowLocal(),updatedAt:_nowIso()}).then(function(){ return {ok:true}; }), cb, errCb);
     },
-    endDispatch: function(dispatchId, opts, cb, errCb){
+        endDispatch: function(dispatchId, opts, cb, errCb){
       opts=opts||{};
+      const coilUnloadWeights=opts.coilUnloadWeights||{};  // {moveId: unloadKg}
       _cb((async function(){
         const dh=(await _get('dispatch_orders',{'id':'eq.'+dispatchId,'limit':'1'}))[0];
         if(!dh) throw new Error('找不到派工單: '+dispatchId);
         const moves=await _get('dispatch_coil_moves',{'dispatchId':'eq.'+dispatchId});
         const returnId='R'+dispatchId;
         const now=_nowIso();
-        const totalIn=moves.reduce(function(s,m){ return s+(Number(m.qty)||0); },0);
+        // 套用 coilUnloadWeights：更新每筆鋼捲的 unloadWeight
+        for(const m of moves){
+          const moveId=String(m.id||m.moveId||'');
+          if(coilUnloadWeights[moveId]!==undefined){
+            const unloadKg=parseFloat(coilUnloadWeights[moveId])||0;
+            const loadKg=parseFloat(m.loadWeight||m.total||0);
+            const deductKg=loadKg>0?Math.max(0,loadKg-unloadKg):parseFloat(m.total||0);
+            await _patch('dispatch_coil_moves',{'id':'eq.'+moveId},{unloadWeight:unloadKg,qty:deductKg});
+          }
+        }
+        // 重新取最新的 moves（含更新後的 qty）
+        const moves2=await _get('dispatch_coil_moves',{'dispatchId':'eq.'+dispatchId});
+        const totalIn=moves2.reduce(function(s,m){ return s+(parseFloat(m.qty)||0); },0);
         const unload=Number(opts.unloadWeight||0);
-        const lossRate=totalIn>0?+((totalIn-unload)/totalIn*100).toFixed(2):0;
+        const lossRate=totalIn>0?+((Math.max(0,totalIn-unload))/totalIn*100).toFixed(2):0;
         await _upsert('dispatch_returns',{id:returnId,dispatchId,
           date:new Date().toLocaleDateString('zh-TW'),docCategory:'回單',
-          orderId:dh.orderId,partnerCode:dh.partnerCode,partnerName:dh.partnerName,
-          operator:dh.operator,machine:dh.machine,finishTime:opts.finishTime||_nowLocal(),
+          orderId:dh.orderId,partnerCode:dh.partnerCode||dh.partnercode,
+          partnerName:dh.partnerName||dh.partnername,
+          operator:opts.operator||dh.operator,machine:dh.machine,
+          finishTime:opts.finishTime||_nowLocal(),
           totalIn,totalDeduct:unload,lossRate,remark:opts.remark||'',
           dispatchRemark:opts.dispatchRemark||'',effectiveWorkHours:opts.workHours||'',
           status:'closed',createdAt:now,updatedAt:now});
-        for(const m of moves){
+        let deductCount=0;
+        for(const m of moves2){
           await _upsert('dispatch_return_deduct',{id:_uid('DD'),returnId,dispatchId,
-            coilMoveId:m.id,model:m.model,batchNo:m.outBatchNo,
-            warehouse:m.inWarehouse,location:m.inLocation,
-            qty:m.qty,total:m.total,unit:m.unit,originalRollNo:m.originalRollNo,createdAt:now});
+            coilMoveId:m.id||m.moveId,model:m.model,
+            batchNo:m.outBatchNo||m.outbatchno||m.batchNo||m.batchno,
+            warehouse:m.inWarehouse||m.inwarehouse,
+            location:m.inLocation||m.inlocation,
+            qty:m.qty,total:m.total,unit:m.unit,
+            originalRollNo:m.originalRollNo||m.originalrollno,createdAt:now});
+          deductCount++;
         }
         await _patch('dispatch_orders',{'id':'eq.'+dispatchId},
           {status:'closed',workHours:opts.workHours||'',finishTime:_nowLocal(),updatedAt:now});
-        return {ok:true,returnId};
+        return {ok:true,returnId,itemCount:0,deductCount};
       })(), cb, errCb);
     },
     listDispatchReturnIds: function(cb, errCb){
@@ -1599,13 +1633,33 @@ function switchTopMode(mode) {
         return {ok:true};
       })(), cb, errCb);
     },
-    searchCoilStock: function(filter, cb, errCb){
+        searchCoilStock: function(filter, cb, errCb){
       filter=filter||{};
       const qs={};
       if(filter.model) qs['model']='ilike.*'+filter.model+'*';
       if(filter.batchNo) qs['batchNo']='eq.'+filter.batchNo;
       if(filter.warehouse) qs['warehouseNo']='eq.'+filter.warehouse;
-      _cb(_get('batch_detail',qs), cb, errCb);
+      // keyword 可同時搜 model 或 batchNo
+      if(filter.keyword && !filter.batchNo && !filter.model){
+        qs['or']='(model.ilike.*'+filter.keyword+'*,batchNo.ilike.*'+filter.keyword+'*)';
+      }
+      _cb(_get('batch_detail',qs).then(function(rows){
+        // 加入前端期望的別名欄位
+        return (rows||[]).map(function(r){
+          return Object.assign({},r,{
+            availableKg:    parseFloat(r.total||r.qty||0),   // 前端讀 availableKg
+            availablePieces:parseFloat(r.qty||0),
+            rollNo:         r.originalRollNo||r.originalrollno||'',
+            coilNo:         r.batchNo||r.batchno||'',        // 批號當 coilNo
+            factory:        r.vendor||'',                    // 供應商當廠別
+            material:       r.model||'',
+            warehouse:      r.warehouseNo||r.warehouseno||'',
+            spec:           r.model||'',
+            color:          '',
+            size:           (r.thickness||'')+'x'+(r.width||''),
+          });
+        });
+      }), cb, errCb);
     },
     saveInventory: function(payload, cb, errCb){
       const ops=[];
