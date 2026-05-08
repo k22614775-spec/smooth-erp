@@ -1534,9 +1534,16 @@ function switchTopMode(mode) {
             if(r.orderItemNo) fqs['orderItemNo']='eq.'+r.orderItemNo;
             if(r.feet!=null) fqs['feet']='eq.'+r.feet;
             await _patch('cutting_details', fqs, patch);
+            // 同步更新 dispatch_production
+            if(r.dispatchId) {
+              const dpFqs=Object.assign({},fqs,{'dispatchId':'eq.'+r.dispatchId});
+              await _patch('dispatch_production', dpFqs, patch).catch(function(){});
+            }
           } else {
             // 實際 ID → UPSERT
             await _upsert('cutting_details', Object.assign({}, r, patch));
+            // 同步更新 dispatch_production（相同 id）
+            await _patch('dispatch_production',{'id':'eq.'+r.id}, patch).catch(function(){});
           }
           saved++;
         }
@@ -1639,6 +1646,40 @@ function switchTopMode(mode) {
           // fallback：若欄位是小寫
           await _patch('orders',{'id':'eq.'+orderId},{status:'已派工',dispatchid:newId,updatedat:now});
         }
+
+        // 同步 cutting_details → dispatch_production（供 ERP 派工入庫明細顯示）
+        try {
+          const cuttings=await _get('cutting_details',{'orderId':'eq.'+orderId});
+          if(cuttings.length){
+            for(const c of cuttings){
+              await _upsert('dispatch_production',{
+                id:          c.id,
+                dispatchId:  newId,
+                dispatchSeq: '',
+                orderId:     c.orderId,
+                orderItemNo: c.orderItemNo||'',
+                zone:        c.zone||'',
+                bundle:      c.bundle||'',
+                feet:        c.feet||0,
+                lengthMm:    c.lengthMm||0,
+                qty:         c.qty||0,
+                totalFeet:   c.totalFeet||0,
+                theoreticalLenM: c.theoreticalLenM||0,
+                kg:          c.kg||0,
+                materialNo:  c.materialNo||'',
+                factory:     c.factory||'',
+                deliveryDate:c.deliveryDate||'',
+                topUnfinish: c.topUnfinish||c.qty||0,
+                topDone:     c.topDone||0,
+                bottomUnfinish:c.bottomUnfinish||c.qty||0,
+                bottomDone:  c.bottomDone||0,
+                mesUnfinish: c.mesUnfinish||c.qty||0,
+                closed:      0,
+                remark:      c.remark||'',
+              });
+            }
+          }
+        } catch(syncErr){ console.warn('[createDispatch] dispatch_production sync failed:', syncErr); }
         // 回傳 id（前端讀 res.id）+ dispatchId + phase + machine
         return {ok:true, id:newId, dispatchId:newId,
                 phase: opts.phase||'BOTH', machine: opts.machine||''};
@@ -1897,7 +1938,9 @@ function switchTopMode(mode) {
       })(), cb, errCb);
     },
     listDispatchReturnIds: function(cb, errCb){
-      _cb(_get('dispatch_returns',{'select':'id,date,dispatchId,machine,status','order':'id.desc'}), cb, errCb);
+      // 同時回傳 id 字串陣列 和 完整物件陣列，前端取 id 字串
+      _cb(_get('dispatch_returns',{'select':'id,date,dispatchId,machine,status','order':'id.desc'})
+        .then(function(rows){ return (rows||[]).map(function(r){ return r.id||r; }); }), cb, errCb);
     },
     getDispatchReturnFull: function(returnId, cb, errCb){
       _cb(Promise.all([
@@ -2644,8 +2687,12 @@ window.addEventListener('DOMContentLoaded', function(){
 
         function loadDispatchReturnById(returnId) {
             if (!returnId) return;
-            DispatchReturnState.currentId = returnId;
-            var idx = DispatchReturnState.ids.indexOf(returnId);
+            // 相容物件 {id:...} 或純字串
+            var rid = (typeof returnId === 'object' && returnId) ? returnId.id : returnId;
+            if (!rid) return;
+            returnId = rid;   // 統一為字串
+            DispatchReturnState.currentId = rid;
+            var idx = DispatchReturnState.ids.indexOf(rid);
             if (idx >= 0) DispatchReturnState.index = idx;
             updateDispatchReturnNavCounter();
 
