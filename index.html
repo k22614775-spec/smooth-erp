@@ -1217,8 +1217,7 @@ function switchTopMode(mode) {
   // ── GET (query params 物件) ──
   async function _get(table, qs){
     const url = new URL(_base() + '/' + table);
-    // filter key 一律小寫（相容 003 執行前後的欄位名稱）
-    if(qs) Object.entries(qs).forEach(([k,v])=>{ if(v!=null) url.searchParams.set(k.toLowerCase(),String(v)); });
+    if(qs) Object.entries(qs).forEach(([k,v])=>{ if(v!=null) url.searchParams.set(k,String(v)); });
     const res = await fetch(url, { headers: _hdr() });
     if(!res.ok) throw new Error('[GET ' + table + '] ' + await res.text());
     const data = await res.json();
@@ -1259,7 +1258,7 @@ function switchTopMode(mode) {
     Object.entries(filterQs).forEach(([k,v])=>url.searchParams.set(k,String(v)));
     // filter key 也需 lowercase（若 003 未執行，欄位 key 是小寫）
     const lcFilter = new URL(_base() + '/' + table);
-    Object.entries(filterQs).forEach(([k,v])=>lcFilter.searchParams.set(k.toLowerCase(),String(v)));
+    Object.entries(filterQs).forEach(([k,v])=>lcFilter.searchParams.set(k,String(v)));
     let res = await fetch(url, {
       method:'PATCH', headers: _hdr({'Prefer':'return=minimal'}), body: JSON.stringify(data),
     });
