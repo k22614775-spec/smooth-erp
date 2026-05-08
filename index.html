@@ -1731,8 +1731,21 @@ function switchTopMode(mode) {
       }), cb, errCb);
     },
     addLeftoverInbound: function(dispatchId, leftover, cb, errCb){
-      const row=Object.assign({id:_uid('LO'),moveDate:new Date().toLocaleDateString('zh-TW'),
-        moveType:'IN',refType:'LEFTOVER',refId:dispatchId},leftover);
+      var lv = leftover || {};
+      // 統一 weight → total（FoldingWizard 傳 weight，endDispatch 讀 total）
+      var normalizedTotal = Number(lv.total || lv.weight || lv.qty || 0);
+      var row = Object.assign({
+        id:        _uid('LO'),
+        moveDate:  new Date().toLocaleDateString('zh-TW'),
+        moveType:  'IN',
+        refType:   'LEFTOVER',
+        refId:     dispatchId,
+        total:     normalizedTotal,   // 統一欄位
+        qty:       Number(lv.qty || 1),
+        unit:      lv.unit || 'KG',
+      }, lv, {
+        total: normalizedTotal,       // 確保覆蓋 lv.total（若 lv 只有 weight）
+      });
       _cb(_upsert('stock_moves',row).then(function(){ return {ok:true}; }), cb, errCb);
     },
     addReporterSession: function(dispatchId, reporters, opts, cb, errCb){
@@ -1798,6 +1811,22 @@ function switchTopMode(mode) {
         const moves=await _get('dispatch_coil_moves',{'dispatchId':'eq.'+dispatchId});
         const returnId='R'+dispatchId;
         const now=_nowIso();
+
+        // Saga 補償追蹤：記錄已寫入的資料，供 Rollback 使用
+        const _written = { returnCreated:false, deductIds:[], statusPatched:false };
+        const _rollback = async function(reason){
+          console.error('[endDispatch] Rollback triggered:', reason);
+          try {
+            if(_written.statusPatched)
+              await _patch('dispatch_orders',{'id':'eq.'+dispatchId},{status:'active',updatedAt:_nowIso()});
+            for(const did of _written.deductIds)
+              await _del('dispatch_return_deduct',{'id':'eq.'+did}).catch(()=>{});
+            if(_written.returnCreated)
+              await _del('dispatch_returns',{'id':'eq.'+returnId}).catch(()=>{});
+          } catch(rbErr){ console.error('[endDispatch] Rollback itself failed:', rbErr); }
+        };
+
+        try {
         // 套用 coilUnloadWeights：更新每筆鋼捲的 unloadWeight
         for(const m of moves){
           const moveId=String(m.id||m.moveId||'');
@@ -1824,7 +1853,8 @@ function switchTopMode(mode) {
           'refType':'eq.LEFTOVER','refId':'eq.'+dispatchId,'moveType':'eq.IN'
         });
         const leftoverKg=leftoverMoves.reduce(function(s,m){
-          return s+(parseFloat(m.total||m.qty)||0);
+          // 相容 weight（舊記錄）/ total（新記錄）/ qty
+          return s+(parseFloat(m.total||m.weight||m.qty)||0);
         },0);
         // 合計退回量 = 鋼捲下架 + 餘料入庫
         const totalDeductKg=coilUnloadKg+leftoverKg;
@@ -1842,9 +1872,11 @@ function switchTopMode(mode) {
           totalIn,totalDeduct:totalDeductKg,actualUsed,lossRate,remark:opts.remark||'',
           dispatchRemark:opts.dispatchRemark||'',effectiveWorkHours:opts.workHours||'',
           status:'closed',createdAt:now,updatedAt:now});
+        _written.returnCreated=true;
         let deductCount=0;
         for(const m of moves2){
-          await _upsert('dispatch_return_deduct',{id:_uid('DD'),returnId,dispatchId,
+          const _duid=_uid('DD'); _written.deductIds.push(_duid);
+          await _upsert('dispatch_return_deduct',{id:_duid,returnId,dispatchId,
             coilMoveId:m.id||m.moveId,model:m.model,
             batchNo:m.outBatchNo||m.outbatchno||m.batchNo||m.batchno,
             warehouse:m.inWarehouse||m.inwarehouse,
@@ -1855,7 +1887,13 @@ function switchTopMode(mode) {
         }
         await _patch('dispatch_orders',{'id':'eq.'+dispatchId},
           {status:'closed',workHours:opts.workHours||'',finishTime:_nowLocal(),updatedAt:now});
+        _written.statusPatched=true;
         return {ok:true,returnId,itemCount:0,deductCount};
+
+        } catch(err) {
+          await _rollback(err);
+          throw err;
+        }
       })(), cb, errCb);
     },
     listDispatchReturnIds: function(cb, errCb){
@@ -6666,7 +6704,7 @@ window.addEventListener('DOMContentLoaded', function(){
         if (!window.API || typeof window.API.addCoilMove !== 'function') return alert('後端未連線');
         setSubmittingCoils(true);
         var dispatchId = dispatchIds[0];
-        var operatorStr = selectedOps.join(';');
+        var operatorStr = selectedOps.join(';').slice(0,500); // 長度安全限制
         var ci = 0;
         var addedMoveIds = [];
         function nextCoil() {
@@ -6676,6 +6714,18 @@ window.addEventListener('DOMContentLoaded', function(){
               setCoils(prev => prev.map(function(c, i){
                 return Object.assign({}, c, { moveId: addedMoveIds[i] });
               }));
+            }
+            // ── Phase D 前安全防呆：確認所有鋼捲都有 moveId ──
+            var emptyIdx = addedMoveIds.map((id,i)=>!id?i:-1).filter(i=>i>=0);
+            if (emptyIdx.length > 0) {
+              var badLabels = emptyIdx.map(function(i){
+                return (coils[i]&&(coils[i].coilNo||coils[i].batchNo||('第'+(i+1)+'筆')))||('第'+(i+1)+'筆');
+              }).join(', ');
+              setSubmittingCoils(false);
+              alert('⛔ 以下 '+emptyIdx.length+' 筆鋼捲上架失敗（moveId 為空），\n' +
+                    '無法進入報工階段：\n\n' + badLabels + '\n\n' +
+                    '請確認鋼捲是否成功寫入派工扣庫明細後重試。');
+              return;   // 留在 Phase C，不進入 Phase D
             }
             setSubmittingCoils(false);
             setReporterStatus('active');
