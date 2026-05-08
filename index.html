@@ -1163,6 +1163,23 @@ function switchTopMode(mode) {
     }, extra || {});
   }
 
+  // ── 寫入前清理：移除 _normRow 加的小寫別名（避免 PGRST204）──
+  function _cleanWriteObj(r){
+    const keys = Object.keys(r);
+    // 找出有 camelCase 版本的 lowercase key
+    const hasUpper = new Set();
+    keys.forEach(function(k){
+      if(k !== k.toLowerCase()) hasUpper.add(k.toLowerCase()); // k 是 camelCase，標記其 lowercase 版
+    });
+    const out = {};
+    keys.forEach(function(k){
+      if(k === k.toLowerCase() && hasUpper.has(k)) return; // lowercase 且有 camelCase 版 → 略過
+      if(r[k] === null || r[k] === undefined || r[k] === '') return; // 空值不送
+      out[k] = r[k];
+    });
+    return out;
+  }
+
   // camelCase 對照表（DB 小寫 → 前端 camelCase）
   const _CAMEL_MAP = {
     orderid:'orderId',itemno:'itemNo',bottommachine:'bottomMachine',
@@ -1232,15 +1249,17 @@ function switchTopMode(mode) {
   async function _upsert(table, rows, onConflict){
     const prefer = 'resolution=merge-duplicates,return=minimal';
     const url = _base() + '/' + table;
-    const body = Array.isArray(rows) ? rows : [rows];
+    const rawBody = Array.isArray(rows) ? rows : [rows];
+    // 清理：移除 _normRow 加的小寫別名，只送 camelCase 欄位
+    const body = rawBody.map(_cleanWriteObj);
     let res = await fetch(url, {
       method:'POST', headers: _hdr({'Prefer': prefer}), body: JSON.stringify(body),
     });
     if(!res.ok){
       const errText = await res.text();
-      // PGRST204: column not found in schema cache → 欄位是小寫，retry lowercase
-      if(errText.indexOf('PGRST204')>=0 || errText.indexOf('schema cache')>=0 || errText.indexOf('column')>=0){
-        const lcBody = body.map(_lcObj);
+      // PGRST204: column not found in schema cache → fallback: 全轉小寫 (003 執行前)
+      if(errText.indexOf('PGRST204')>=0 || errText.indexOf('schema cache')>=0){
+        const lcBody = rawBody.map(_lcObj);
         res = await fetch(url, {
           method:'POST', headers: _hdr({'Prefer': prefer}), body: JSON.stringify(lcBody),
         });
@@ -1460,11 +1479,35 @@ function switchTopMode(mode) {
     saveCuttingReport: function(records, cb, errCb){
       if(!records||!records.length){ if(cb) cb({saved:0}); return; }
       const nowIso=_nowIso();
-      records.forEach(function(r){
-        if(!r.id) r.id=_uid('m');
-        if(r.startTime||r.finishTime) r.reportedAt=r.reportedAt||nowIso;
-      });
-      _cb(_upsert('cutting_details',records).then(function(){ return {saved:records.length}; }), cb, errCb);
+      _cb((async function(){
+        let saved=0;
+        for(const r of records){
+          if(!r.id) r.id=_uid('m');
+          if(r.startTime||r.finishTime) r.reportedAt=r.reportedAt||nowIso;
+          // 只更新有意義的報工欄位
+          const patch={};
+          for(const f of ['startTime','finishTime','reporter','reportedAt','dispatchId',
+                          'topDone','bottomDone','mesUnfinish','topUnfinish','bottomUnfinish',
+                          'closed','processNo','inboundNo','inLocation','inBatchNo']){
+            if(r[f]!==undefined&&r[f]!==null&&r[f]!=='') patch[f]=r[f];
+          }
+          if(!Object.keys(patch).length) continue;
+
+          // consolidated ID 含 | → 用 orderId+orderItemNo+feet 過濾批次 PATCH
+          if(String(r.id).includes('|')){
+            const fqs={};
+            if(r.orderId) fqs['orderId']='eq.'+r.orderId;
+            if(r.orderItemNo) fqs['orderItemNo']='eq.'+r.orderItemNo;
+            if(r.feet!=null) fqs['feet']='eq.'+r.feet;
+            await _patch('cutting_details', fqs, patch);
+          } else {
+            // 實際 ID → UPSERT
+            await _upsert('cutting_details', Object.assign({}, r, patch));
+          }
+          saved++;
+        }
+        return {saved};
+      })(), cb, errCb);
     },
     saveLabel: function(label, cb, errCb){
       if(!label.id) label.id=_uid('L');
