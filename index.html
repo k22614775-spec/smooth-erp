@@ -1591,8 +1591,56 @@ function switchTopMode(mode) {
       _cb(_get('dispatch_orders',{'machine':'eq.'+(machine||''),'status':'eq.active','limit':'1'}).then(function(r){ return r[0]||null; }), cb, errCb);
     },
     addCoilMove: function(dispatchId, coilMove, cb, errCb){
-      const row=Object.assign({},coilMove,{id:_uid('CM'),dispatchId,createTime:_nowLocal()});
-      _cb(_upsert('dispatch_coil_moves',row).then(function(){ return {ok:true,id:row.id}; }), cb, errCb);
+      var m = coilMove || {};
+      // 統一欄位對照：前端清單頁、DetailView、FoldingWizard 三種呼叫格式全部兼容
+      var row = {
+        id:             _uid('CM'),
+        dispatchId:     dispatchId,
+        // 批號：前端可能傳 batchNo / outBatchNo / coilNo，全部對應到 outBatchNo
+        outBatchNo:     m.outBatchNo || m.batchNo || m.coilNo || '',
+        coilNo:         m.coilNo || m.outBatchNo || m.batchNo || '',
+        // 原廠捲號
+        originalRollNo: m.originalRollNo || m.rollNo || '',
+        // 型號規格
+        model:          m.model || '',
+        spec:           m.spec || '',
+        // 材質：前端可能傳 materialNo 或 material
+        materialNo:     m.materialNo || m.material || '',
+        factory:        m.factory || '',
+        size:           m.size || '',
+        color:          m.color || '',
+        paint:          m.paint || '',
+        coating:        m.coating || '',
+        strength:       m.strength || '',
+        // 出倉（鋼捲倉）：前端可能傳 outWarehouse 或 srcWarehouse
+        outWarehouse:   m.outWarehouse || m.srcWarehouse || '鋼捲倉',
+        outLocation:    m.outLocation  || m.srcLocation  || '',
+        // 入倉（產線倉）：前端可能傳 inWarehouse 或 dstWarehouse
+        inWarehouse:    m.inWarehouse  || m.dstWarehouse || '產線倉',
+        inLocation:     m.inLocation   || m.dstLocation  || '',
+        inBatchNo:      m.inBatchNo    || '',
+        // 數量重量：前端可能傳 qty/total 或 outPieces/outKg 或 inPieces/inKg
+        qty:            Number(m.qty   || m.outPieces || m.inPieces || 1),
+        total:          Number(m.total || m.outKg     || m.inKg     || 0),
+        unit:           m.unit || 'KG',
+        // 磅重
+        loadWeight:     Number(m.loadWeight   || m.total || m.outKg || 0),
+        unloadWeight:   Number(m.unloadWeight || 0),
+        // 其他
+        category:       m.category     || '',
+        costBasis:      m.costBasis    || '',
+        materialPrice:  Number(m.materialPrice || 0),
+        formula:        m.formula      || '',
+        unitWeight:     Number(m.unitWeight || 0),
+        dispatchSeq:    m.dispatchSeq  || '',
+        orderItemNo:    m.orderItemNo  || '',
+        processNo:      m.processNo    || '',
+        remark:         m.remark       || '',
+        createTime:     _nowLocal(),
+      };
+      _cb(_upsert('dispatch_coil_moves', row).then(function(){
+        return {ok:true, id:row.id, moveId:row.id};
+      }), cb, errCb);
     },
     removeCoilMove: function(dispatchId, moveId, cb, errCb){
       _cb(_del('dispatch_coil_moves',{'id':'eq.'+moveId,'dispatchId':'eq.'+dispatchId}).then(function(){ return {ok:true}; }), cb, errCb);
