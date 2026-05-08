@@ -1217,7 +1217,8 @@ function switchTopMode(mode) {
   // ── GET (query params 物件) ──
   async function _get(table, qs){
     const url = new URL(_base() + '/' + table);
-    if(qs) Object.entries(qs).forEach(([k,v])=>{ if(v!=null) url.searchParams.set(k,String(v)); });
+    // filter key 一律小寫（相容 003 執行前後的欄位名稱）
+    if(qs) Object.entries(qs).forEach(([k,v])=>{ if(v!=null) url.searchParams.set(k.toLowerCase(),String(v)); });
     const res = await fetch(url, { headers: _hdr() });
     if(!res.ok) throw new Error('[GET ' + table + '] ' + await res.text());
     const data = await res.json();
@@ -1225,26 +1226,54 @@ function switchTopMode(mode) {
     return Array.isArray(data) ? data.map(_normRow) : data;
   }
 
-  // ── UPSERT (onConflict=id by default) ──
+  // ── lowercase 寫入轉換（DB 欄位小寫時使用）──
+  function _lcObj(r){ const o={}; Object.keys(r).forEach(function(k){ o[k.toLowerCase()]=r[k]; }); return o; }
+
+  // ── UPSERT：先試 camelCase，若 schema cache 找不到欄位 → 自動 retry lowercase ──
   async function _upsert(table, rows, onConflict){
     const prefer = 'resolution=merge-duplicates,return=minimal';
     const url = _base() + '/' + table;
     const body = Array.isArray(rows) ? rows : [rows];
-    const res = await fetch(url, {
+    let res = await fetch(url, {
       method:'POST', headers: _hdr({'Prefer': prefer}), body: JSON.stringify(body),
     });
-    if(!res.ok) throw new Error('[UPSERT ' + table + '] ' + await res.text());
+    if(!res.ok){
+      const errText = await res.text();
+      // PGRST204: column not found in schema cache → 欄位是小寫，retry lowercase
+      if(errText.indexOf('PGRST204')>=0 || errText.indexOf('schema cache')>=0 || errText.indexOf('column')>=0){
+        const lcBody = body.map(_lcObj);
+        res = await fetch(url, {
+          method:'POST', headers: _hdr({'Prefer': prefer}), body: JSON.stringify(lcBody),
+        });
+        if(!res.ok) throw new Error('[UPSERT-lc ' + table + '] ' + await res.text());
+      } else {
+        throw new Error('[UPSERT ' + table + '] ' + errText);
+      }
+    }
     return true;
   }
 
-  // ── PATCH ──
+  // ── PATCH：先試 camelCase，schema cache 找不到時 retry lowercase ──
   async function _patch(table, filterQs, data){
     const url = new URL(_base() + '/' + table);
     Object.entries(filterQs).forEach(([k,v])=>url.searchParams.set(k,String(v)));
-    const res = await fetch(url, {
+    // filter key 也需 lowercase（若 003 未執行，欄位 key 是小寫）
+    const lcFilter = new URL(_base() + '/' + table);
+    Object.entries(filterQs).forEach(([k,v])=>lcFilter.searchParams.set(k.toLowerCase(),String(v)));
+    let res = await fetch(url, {
       method:'PATCH', headers: _hdr({'Prefer':'return=minimal'}), body: JSON.stringify(data),
     });
-    if(!res.ok) throw new Error('[PATCH ' + table + '] ' + await res.text());
+    if(!res.ok){
+      const errText = await res.text();
+      if(errText.indexOf('PGRST204')>=0 || errText.indexOf('schema cache')>=0 || errText.indexOf('column')>=0){
+        res = await fetch(lcFilter, {
+          method:'PATCH', headers: _hdr({'Prefer':'return=minimal'}), body: JSON.stringify(_lcObj(data)),
+        });
+        if(!res.ok) throw new Error('[PATCH-lc ' + table + '] ' + await res.text());
+      } else {
+        throw new Error('[PATCH ' + table + '] ' + errText);
+      }
+    }
     return true;
   }
 
