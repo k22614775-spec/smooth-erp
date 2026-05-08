@@ -1249,6 +1249,10 @@ function switchTopMode(mode) {
     inboundno:'inboundNo',
     // general
     actualinqty:'actualInQty',dispatchseq:'dispatchSeq',
+    // dispatch_return_deduct
+    coilmoveid:'coilMoveId',returnid:'returnId',
+    // 額外別名補強（確保完整）
+    unloadweight:'unloadWeight',loadweight:'loadWeight',
   };
   function _normRow(row){
     const out={};
@@ -1810,14 +1814,23 @@ function switchTopMode(mode) {
         const totalIn=moves2.reduce(function(s,m){
           return s+(parseFloat(m.loadWeight||m.total)||0);
         },0);
-        // totalDeduct = 所有鋼捲下架磅重之和（餘料退回量）
-        const totalDeductKg=moves2.reduce(function(s,m){
+        // totalDeduct = 鋼捲下架磅重 + 餘料入庫重量
+        // (1) 鋼捲下架：dispatch_coil_moves.unloadWeight
+        const coilUnloadKg=moves2.reduce(function(s,m){
           return s+(parseFloat(m.unloadWeight)||0);
         },0);
-        // 實際耗用 = totalIn - totalDeduct
+        // (2) 餘料入庫：stock_moves where refType=LEFTOVER and refId=dispatchId
+        const leftoverMoves=await _get('stock_moves',{
+          'refType':'eq.LEFTOVER','refId':'eq.'+dispatchId,'moveType':'eq.IN'
+        });
+        const leftoverKg=leftoverMoves.reduce(function(s,m){
+          return s+(parseFloat(m.total||m.qty)||0);
+        },0);
+        // 合計退回量 = 鋼捲下架 + 餘料入庫
+        const totalDeductKg=coilUnloadKg+leftoverKg;
+        // 實際耗用 = 投入 - 退回
         const actualUsed=Math.max(0,totalIn-totalDeductKg);
-        // lossRate = (實際耗用 - 生產產出) / 投入 × 100
-        // 此處用 totalDeductKg 作為 totalDeduct 寫入 dispatch_returns
+        // 損耗率：退回佔投入的比例（退回愈少 = 耗用愈多 = 損耗可能愈高）
         const lossRate=totalIn>0?+(totalDeductKg/totalIn*100).toFixed(2):0;
         const unload=totalDeductKg;
         await _upsert('dispatch_returns',{id:returnId,dispatchId,
@@ -6781,6 +6794,17 @@ window.addEventListener('DOMContentLoaded', function(){
         dispatchIds.forEach(function(id){ if (id && !seenIds[id]) { seenIds[id]=true; uniqIds.push(id); } });
 
         if (!window.confirm('確定完工結算？\n將為 ' + uniqIds.length + ' 張派工單產出派工回單。')) return;
+
+        // ── 前端安全檢查：確認所有鋼捲都已有 moveId ──
+        // moveId 空值代表鋼捲上架時 API 回傳失敗，重量無法對應正確的 dispatch_coil_moves 列
+        var missingMoveId = coils.filter(function(c){ return !c.moveId; });
+        if (missingMoveId.length > 0) {
+          var badCoils = missingMoveId.map(function(c){ return c.coilNo||c.batchNo||'未知批號'; }).join(', ');
+          alert('⛔ 無法提交完工：以下 ' + missingMoveId.length + ' 筆鋼捲缺少 moveId，\n' +
+                '請確認上架操作是否成功：\n\n' + badCoils + '\n\n' +
+                '若已重複上架，請先移除錯誤記錄再重新提交。');
+          return;
+        }
 
         // 建構 coilUnloadWeights 字典
         var coilUnloadWeights = {};
