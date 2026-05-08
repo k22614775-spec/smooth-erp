@@ -1843,32 +1843,64 @@ function switchTopMode(mode) {
       _cb(_patch('dispatch_orders',{'id':'eq.'+dispatchId},
         {status:'closed',workHours:workHours||'00:00:00',finishTime:_nowLocal(),updatedAt:_nowIso()}).then(function(){ return {ok:true}; }), cb, errCb);
     },
-        endDispatch: function(dispatchId, opts, cb, errCb){
-      opts=opts||{};
-      const coilUnloadWeights=opts.coilUnloadWeights||{};  // {moveId: unloadKg}
-      _cb((async function(){
-        const dh=(await _get('dispatch_orders',{'id':'eq.'+dispatchId,'limit':'1'}))[0];
-        if(!dh) throw new Error('找不到派工單: '+dispatchId);
-        const moves=await _get('dispatch_coil_moves',{'dispatchId':'eq.'+dispatchId});
-        const returnId='R'+dispatchId;
-        const now=_nowIso();
+            endDispatch: function(dispatchId, opts, cb, errCb){
+      opts = opts || {};
+      const coilUnloadWeights = opts.coilUnloadWeights || {};
 
-        // Saga 補償追蹤：記錄已寫入的資料，供 Rollback 使用
-        const _written = { returnCreated:false, deductIds:[], statusPatched:false };
-        const _rollback = async function(reason){
-          console.error('[endDispatch] Rollback triggered:', reason);
-          try {
-            if(_written.statusPatched)
-              await _patch('dispatch_orders',{'id':'eq.'+dispatchId},{status:'active',updatedAt:_nowIso()});
-            for(const did of _written.deductIds)
-              await _del('dispatch_return_deduct',{'id':'eq.'+did}).catch(()=>{});
-            if(_written.returnCreated)
-              await _del('dispatch_returns',{'id':'eq.'+returnId}).catch(()=>{});
-          } catch(rbErr){ console.error('[endDispatch] Rollback itself failed:', rbErr); }
+      // ── RPC 版：單一事務，前端不再有 Saga 補償負擔 ──
+      // 後端 PostgreSQL function end_dispatch() 保證原子性
+      _cb((async function(){
+        const body = {
+          p_dispatch_id:         dispatchId,
+          p_operator:            (opts.operator || '').slice(0, 500),
+          p_finish_time:         opts.finishTime || null,
+          p_remark:              opts.remark || '',
+          p_dispatch_remark:     opts.dispatchRemark || '',
+          p_work_hours:          opts.workHours || '',
+          p_coil_unload_weights: coilUnloadWeights,
         };
 
+        const res = await fetch(_base() + '/rpc/end_dispatch', {
+          method: 'POST',
+          headers: _hdr({'Content-Type': 'application/json'}),
+          body: JSON.stringify(body),
+        });
+
+        if (!res.ok) {
+          const errText = await res.text();
+          // RPC 不存在（尚未執行 004_rpc_end_dispatch.sql）→ Fallback 到前端版
+          if (res.status === 404 || errText.includes('does not exist')) {
+            console.warn('[endDispatch] RPC 未部署，使用前端版 fallback');
+            return await _endDispatchFallback(dispatchId, opts, coilUnloadWeights);
+          }
+          throw new Error('[RPC end_dispatch] ' + errText);
+        }
+
+        const result = await res.json();
+        if (result && result.ok === false) {
+          throw new Error(result.error || '派工結束失敗（RPC）');
+        }
+        return result;
+      })(), cb, errCb);
+    },
+
+    // ── Fallback：RPC 未部署時使用前端 Saga 版 ──────────────
+    _endDispatchFallback: async function(dispatchId, opts, coilUnloadWeights){
+      const dh=(await _get('dispatch_orders',{'id':'eq.'+dispatchId,'limit':'1'}))[0];
+      if(!dh) throw new Error('找不到派工單: '+dispatchId);
+      const moves=await _get('dispatch_coil_moves',{'dispatchId':'eq.'+dispatchId});
+      const returnId='R'+dispatchId;
+      const now=_nowIso();
+      const _written={returnCreated:false,deductIds:[],statusPatched:false};
+      const _rollback=async function(reason){
+        console.error('[endDispatch fallback] Rollback:',reason);
         try {
-        // 套用 coilUnloadWeights：更新每筆鋼捲的 unloadWeight
+          if(_written.statusPatched) await _patch('dispatch_orders',{'id':'eq.'+dispatchId},{status:'active',updatedAt:_nowIso()});
+          for(const did of _written.deductIds) await _del('dispatch_return_deduct',{'id':'eq.'+did}).catch(()=>{});
+          if(_written.returnCreated) await _del('dispatch_returns',{'id':'eq.'+returnId}).catch(()=>{});
+        } catch(e){ console.error('[endDispatch fallback] Rollback failed:',e); }
+      };
+      try {
         for(const m of moves){
           const moveId=String(m.id||m.moveId||'');
           if(coilUnloadWeights[moveId]!==undefined){
@@ -1878,39 +1910,20 @@ function switchTopMode(mode) {
             await _patch('dispatch_coil_moves',{'id':'eq.'+moveId},{unloadWeight:unloadKg,qty:deductKg});
           }
         }
-        // 重新取最新的 moves（含更新後的 qty = loadWeight - unloadWeight）
         const moves2=await _get('dispatch_coil_moves',{'dispatchId':'eq.'+dispatchId});
-        // totalIn  = 所有鋼捲上架磅重之和（實際投入量）
-        const totalIn=moves2.reduce(function(s,m){
-          return s+(parseFloat(m.loadWeight||m.total)||0);
-        },0);
-        // totalDeduct = 鋼捲下架磅重 + 餘料入庫重量
-        // (1) 鋼捲下架：dispatch_coil_moves.unloadWeight
-        const coilUnloadKg=moves2.reduce(function(s,m){
-          return s+(parseFloat(m.unloadWeight)||0);
-        },0);
-        // (2) 餘料入庫：stock_moves where refType=LEFTOVER and refId=dispatchId
-        const leftoverMoves=await _get('stock_moves',{
-          'refType':'eq.LEFTOVER','refId':'eq.'+dispatchId,'moveType':'eq.IN'
-        });
-        const leftoverKg=leftoverMoves.reduce(function(s,m){
-          // 相容 weight（舊記錄）/ total（新記錄）/ qty
-          return s+(parseFloat(m.total||m.weight||m.qty)||0);
-        },0);
-        // 合計退回量 = 鋼捲下架 + 餘料入庫
+        const totalIn=moves2.reduce(function(s,m){ return s+(parseFloat(m.loadWeight||m.total)||0); },0);
+        const coilUnloadKg=moves2.reduce(function(s,m){ return s+(parseFloat(m.unloadWeight)||0); },0);
+        const leftoverMoves=await _get('stock_moves',{'refType':'eq.LEFTOVER','refId':'eq.'+dispatchId,'moveType':'eq.IN'});
+        const leftoverKg=leftoverMoves.reduce(function(s,m){ return s+(parseFloat(m.total||m.weight||m.qty)||0); },0);
         const totalDeductKg=coilUnloadKg+leftoverKg;
-        // 實際耗用 = 投入 - 退回
-        const actualUsed=Math.max(0,totalIn-totalDeductKg);
-        // 損耗率：退回佔投入的比例（退回愈少 = 耗用愈多 = 損耗可能愈高）
         const lossRate=totalIn>0?+(totalDeductKg/totalIn*100).toFixed(2):0;
-        const unload=totalDeductKg;
         await _upsert('dispatch_returns',{id:returnId,dispatchId,
           date:new Date().toLocaleDateString('zh-TW'),docCategory:'回單',
           orderId:dh.orderId,partnerCode:dh.partnerCode||dh.partnercode,
           partnerName:dh.partnerName||dh.partnername,
-          operator:opts.operator||dh.operator,machine:dh.machine,
+          operator:(opts.operator||dh.operator||'').slice(0,500),machine:dh.machine,
           finishTime:opts.finishTime||_nowLocal(),
-          totalIn,totalDeduct:totalDeductKg,lossRate,remark:opts.remark||'',  // actualUsed 僅供本地計算，不寫入 DB
+          totalIn,totalDeduct:totalDeductKg,lossRate,remark:opts.remark||'',
           dispatchRemark:opts.dispatchRemark||'',effectiveWorkHours:opts.workHours||'',
           status:'closed',createdAt:now,updatedAt:now});
         _written.returnCreated=true;
@@ -1919,23 +1932,16 @@ function switchTopMode(mode) {
           const _duid=_uid('DD'); _written.deductIds.push(_duid);
           await _upsert('dispatch_return_deduct',{id:_duid,returnId,dispatchId,
             coilMoveId:m.id||m.moveId,model:m.model,
-            batchNo:m.outBatchNo||m.outbatchno||m.batchNo||m.batchno,
-            warehouse:m.inWarehouse||m.inwarehouse,
-            location:m.inLocation||m.inlocation,
-            qty:m.qty,total:m.total,unit:m.unit,
-            originalRollNo:m.originalRollNo||m.originalrollno,createdAt:now});
+            batchNo:m.outBatchNo||m.outbatchno,warehouse:m.inWarehouse||m.inwarehouse,
+            location:m.inLocation||m.inlocation,qty:m.qty,total:m.total,
+            unit:m.unit,originalRollNo:m.originalRollNo||m.originalrollno,createdAt:now});
           deductCount++;
         }
         await _patch('dispatch_orders',{'id':'eq.'+dispatchId},
           {status:'closed',workHours:opts.workHours||'',finishTime:_nowLocal(),updatedAt:now});
         _written.statusPatched=true;
         return {ok:true,returnId,itemCount:0,deductCount};
-
-        } catch(err) {
-          await _rollback(err);
-          throw err;
-        }
-      })(), cb, errCb);
+      } catch(err){ await _rollback(err); throw err; }
     },
     listDispatchReturnIds: function(cb, errCb){
       // 同時回傳 id 字串陣列 和 完整物件陣列，前端取 id 字串
