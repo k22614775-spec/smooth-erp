@@ -1251,6 +1251,28 @@ function switchTopMode(mode) {
     actualinqty:'actualInQty',dispatchseq:'dispatchSeq',
     // dispatch_return_deduct
     coilmoveid:'coilMoveId',returnid:'returnId',
+    // dispatch_return_items 欄位補強
+    cutmethod:'cutMethod',
+    totallen:'totalLen',
+    totalweight:'totalWeight',
+    inboundno:'inboundNo',
+    unitprice:'unitPrice',
+    pricebasis:'priceBasis',
+    costprice:'costPrice',
+    salereturn:'saleReturn',
+    customercode:'customerCode',
+    unitweight:'unitWeight',
+    inlocation:'inLocation',
+    inbatchno:'inBatchNo',
+    originalrollno:'originalRollNo',
+    furnaceno:'furnaceNo',
+    processno:'processNo',
+    packagingmethod:'packagingMethod',
+    shipmethod:'shipMethod',
+    cuttingdetailid:'cuttingDetailId',
+    labelid:'labelId',
+    labelno:'labelNo',
+    cutmethod:'cutMethod',
     // 額外別名補強（確保完整）
     unloadweight:'unloadWeight',loadweight:'loadWeight',
   };
@@ -1976,8 +1998,8 @@ function switchTopMode(mode) {
               totalWeight:p.kg||0,
               topDone:p.topDone||p.topdone||0, bottomDone:p.bottomDone||p.bottomdone||0,
               startTime:p.startTime||p.starttime||'',
-              endTime:p.finishTime||p.finishtime||'',  // dispatch_return_items 用 endTime
-              reporter:p.reporter||'', closed:p.closed||0,
+              endTime:p.finishTime||p.finishtime||'',  // dispatch_production.finishTime → endTime
+              operator:p.reporter||'', closed:p.closed||0,  // reporter → operator（dispatch_return_items 無 reporter 欄位）
               deliveryDate:p.deliveryDate||p.deliverydate||'',
               customerCode:p.customerCode||p.customercode||'',
               materialNo:p.materialNo||p.materialno||'',

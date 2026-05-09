@@ -247,7 +247,7 @@ BEGIN
         model, spec,
         qty, "totalLen", "totalWeight",
         "topDone", "bottomDone",
-        "startTime", "endTime", reporter,
+        "startTime", "endTime", operator,   -- reporter → operator（dispatch_return_items 無 reporter 欄）
         closed, "deliveryDate", "customerCode",
         "materialNo", factory, size,
         color, paint, coating, strength, category
