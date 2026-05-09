@@ -240,13 +240,14 @@ BEGIN
       SELECT * FROM dispatch_production WHERE "dispatchId" = p_dispatch_id
     LOOP
       v_item_id := 'DRI' || v_epoch::TEXT || v_item_cnt::TEXT;
+      -- dispatch_return_items 用 endTime（不是 finishTime）
       INSERT INTO dispatch_return_items (
         id, "returnId", "dispatchId",
         "orderId", "orderItemNo",
         model, spec,
         qty, "totalLen", "totalWeight",
         "topDone", "bottomDone",
-        "startTime", "finishTime", reporter,
+        "startTime", "endTime", reporter,
         closed, "deliveryDate", "customerCode",
         "materialNo", factory, size,
         color, paint, coating, strength, category
@@ -259,7 +260,9 @@ BEGIN
         COALESCE(v_prod.kg, 0),
         COALESCE(v_prod."topDone", 0),
         COALESCE(v_prod."bottomDone", 0),
-        v_prod."startTime", v_prod."finishTime", v_prod.reporter,
+        v_prod."startTime",
+        v_prod."finishTime",   -- dispatch_production.finishTime → dispatch_return_items.endTime
+        v_prod.reporter,
         COALESCE(v_prod.closed, 0),
         v_prod."deliveryDate", v_prod."customerCode",
         v_prod."materialNo", v_prod.factory, v_prod.size,
