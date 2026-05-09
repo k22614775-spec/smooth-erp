@@ -1942,7 +1942,55 @@ function switchTopMode(mode) {
         _written.statusPatched=true;
         // 把 reporter sessions 的 returnId 回填（供 ERP 派工回單回報人員 tab 顯示）
         await _patch('dispatch_return_reporters',{'dispatchId':'eq.'+dispatchId},{returnId}).catch(()=>{});
-        return {ok:true,returnId,itemCount:0,deductCount};
+
+        // ── 入庫明細：優先從 labels，無標籤則從 dispatch_production ──
+        let itemCount=0;
+        const labels=await _get('labels',{'orderId':'eq.'+dh.orderId});
+        if(labels.length){
+          for(const lbl of labels){
+            const iid='DRI'+Date.now()+itemCount;
+            await _upsert('dispatch_return_items',{
+              id:iid, returnId, dispatchId,
+              labelId:lbl.id, labelNo:lbl.labelNo||lbl.labelno||'',
+              orderId:lbl.orderId||lbl.orderid,
+              orderItemNo:lbl.orderItemNo||lbl.orderitemno||'',
+              machine:lbl.machine||'', model:lbl.model||'', spec:lbl.spec||'',
+              qty:lbl.qty||0, totalLen:lbl.totalLen||lbl.totallen||0,
+              totalWeight:lbl.totalWeight||lbl.totalweight||0, unit:lbl.unit||'',
+              startTime:lbl.startTime||lbl.starttime||'',
+              endTime:lbl.endTime||lbl.endtime||'',
+              operator:lbl.operator||'', remark:lbl.remark||'',
+            }).catch(()=>{});
+            itemCount++;
+          }
+        } else {
+          // 無標籤：從 dispatch_production 建立
+          const prods=await _get('dispatch_production',{'dispatchId':'eq.'+dispatchId});
+          for(const p of prods){
+            const iid='DRI'+Date.now()+itemCount;
+            await _upsert('dispatch_return_items',{
+              id:iid, returnId, dispatchId,
+              orderId:p.orderId||p.orderid, orderItemNo:p.orderItemNo||p.orderitemno||'',
+              model:p.model||'', spec:p.spec||'',
+              qty:p.qty||0, totalLen:p.totalFeet||p.totalfeet||0,
+              totalWeight:p.kg||0,
+              topDone:p.topDone||p.topdone||0, bottomDone:p.bottomDone||p.bottomdone||0,
+              startTime:p.startTime||p.starttime||'',
+              finishTime:p.finishTime||p.finishtime||'',
+              reporter:p.reporter||'', closed:p.closed||0,
+              deliveryDate:p.deliveryDate||p.deliverydate||'',
+              customerCode:p.customerCode||p.customercode||'',
+              materialNo:p.materialNo||p.materialno||'',
+              factory:p.factory||'', size:p.size||'',
+              color:p.color||'', paint:p.paint||'',
+              coating:p.coating||'', strength:p.strength||'',
+              category:p.category||'',
+            }).catch(()=>{});
+            itemCount++;
+          }
+        }
+
+        return {ok:true,returnId,itemCount,deductCount};
       } catch(err){ await _rollback(err); throw err; }
     },
     listDispatchReturnIds: function(cb, errCb){

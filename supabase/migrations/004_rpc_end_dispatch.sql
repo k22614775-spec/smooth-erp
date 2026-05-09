@@ -48,6 +48,13 @@ DECLARE
   v_load_kg           NUMERIC;
   v_deduct_kg         NUMERIC;
   v_dd_id             TEXT;
+  -- 4b. 入庫明細相關
+  v_prod              RECORD;
+  v_lbl               RECORD;
+  v_item_id           TEXT;
+  v_item_cnt          INT         := 0;
+  v_label_cnt         INT         := 0;
+  v_epoch             BIGINT;
 BEGIN
   -- ── 0. 基本驗證 ──────────────────────────────────────────
   SELECT * INTO v_dispatch
@@ -195,6 +202,72 @@ BEGIN
 
     v_deduct_count := v_deduct_count + 1;
   END LOOP;
+
+  -- ── 4b. 建立入庫明細（dispatch_return_items）─────────────
+  --   優先從 labels（MES 已報工標籤）建立
+  --   若無標籤則從 dispatch_production（計劃入庫）建立，確保明細不空白
+  v_item_cnt  := 0;
+  v_label_cnt := 0;
+  v_epoch     := EXTRACT(EPOCH FROM v_now)::BIGINT;
+
+  -- Step A：從 labels 建立（labels 表無 dispatchId，以 orderId 查詢）
+  FOR v_lbl IN
+    SELECT * FROM labels WHERE "orderId" = v_dispatch."orderId"
+  LOOP
+    v_item_id := 'DRI' || v_epoch::TEXT || v_item_cnt::TEXT;
+    INSERT INTO dispatch_return_items (
+      id, "returnId", "dispatchId",
+      "labelId", "labelNo",
+      "orderId", "orderItemNo",
+      machine, model, spec,
+      qty, "totalLen", "totalWeight", unit,
+      "startTime", "endTime", operator, remark
+    ) VALUES (
+      v_item_id, v_return_id, p_dispatch_id,
+      v_lbl.id, v_lbl."labelNo",
+      v_lbl."orderId", v_lbl."orderItemNo",
+      v_lbl.machine, v_lbl.model, v_lbl.spec,
+      v_lbl.qty, v_lbl."totalLen", v_lbl."totalWeight", v_lbl.unit,
+      v_lbl."startTime", v_lbl."endTime", v_lbl.operator, v_lbl.remark
+    ) ON CONFLICT DO NOTHING;
+    v_item_cnt  := v_item_cnt  + 1;
+    v_label_cnt := v_label_cnt + 1;
+  END LOOP;
+
+  -- Step B：無標籤時，從 dispatch_production 建立
+  IF v_label_cnt = 0 THEN
+    FOR v_prod IN
+      SELECT * FROM dispatch_production WHERE "dispatchId" = p_dispatch_id
+    LOOP
+      v_item_id := 'DRI' || v_epoch::TEXT || v_item_cnt::TEXT;
+      INSERT INTO dispatch_return_items (
+        id, "returnId", "dispatchId",
+        "orderId", "orderItemNo",
+        model, spec,
+        qty, "totalLen", "totalWeight",
+        "topDone", "bottomDone",
+        "startTime", "finishTime", reporter,
+        closed, "deliveryDate", "customerCode",
+        "materialNo", factory, size,
+        color, paint, coating, strength, category
+      ) VALUES (
+        v_item_id, v_return_id, p_dispatch_id,
+        v_prod."orderId", v_prod."orderItemNo",
+        v_prod.model, v_prod.spec,
+        v_prod.qty,
+        COALESCE(v_prod."totalFeet", 0),
+        COALESCE(v_prod.kg, 0),
+        COALESCE(v_prod."topDone", 0),
+        COALESCE(v_prod."bottomDone", 0),
+        v_prod."startTime", v_prod."finishTime", v_prod.reporter,
+        COALESCE(v_prod.closed, 0),
+        v_prod."deliveryDate", v_prod."customerCode",
+        v_prod."materialNo", v_prod.factory, v_prod.size,
+        v_prod.color, v_prod.paint, v_prod.coating, v_prod.strength, v_prod.category
+      ) ON CONFLICT DO NOTHING;
+      v_item_cnt := v_item_cnt + 1;
+    END LOOP;
+  END IF;
 
   -- ── 5. 結案派工單 ────────────────────────────────────────
   UPDATE dispatch_orders
