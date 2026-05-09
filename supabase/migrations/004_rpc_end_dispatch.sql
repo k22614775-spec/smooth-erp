@@ -44,6 +44,7 @@ DECLARE
   v_loss_rate         NUMERIC     := 0;
   v_deduct_count      INT         := 0;
   v_move              RECORD;
+  v_sm_id             TEXT;   -- stock_moves ID
   v_unload_kg         NUMERIC;
   v_load_kg           NUMERIC;
   v_deduct_kg         NUMERIC;
@@ -238,6 +239,25 @@ BEGIN
       v_now
     )
     ON CONFLICT DO NOTHING;
+
+    -- stock_moves：OUT 從產線倉（派工結束扣除已消耗量）
+    v_sm_id := 'SM_DD_' || v_epoch::TEXT || v_deduct_count::TEXT;
+    INSERT INTO stock_moves (
+      id, "moveDate", "moveType", "refType", "refId",
+      model, "batchNo", warehouse, location,
+      qty, total, unit, "originalRollNo", operator, remark
+    ) VALUES (
+      v_sm_id, v_date_str, 'OUT', 'DISPATCH_END', v_return_id,
+      v_move.model,
+      v_move."outBatchNo",
+      COALESCE(v_move."inWarehouse", '產線倉'),
+      COALESCE(v_move."inLocation", ''),
+      v_move.qty, v_move.total,
+      COALESCE(v_move.unit, 'KG'),
+      COALESCE(v_move."originalRollNo", ''),
+      p_operator,
+      '派工結束扣庫（產線倉），派工單 ' || p_dispatch_id
+    ) ON CONFLICT DO NOTHING;
 
     v_deduct_count := v_deduct_count + 1;
   END LOOP;

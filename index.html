@@ -1777,9 +1777,39 @@ function switchTopMode(mode) {
         remark:         m.remark       || '',
         createTime:     _nowLocal(),
       };
-      _cb(_upsert('dispatch_coil_moves', row).then(function(){
+      _cb((async function(){
+        await _upsert('dispatch_coil_moves', row);
+        const today = new Date().toLocaleDateString('zh-TW');
+        // stock_moves 1：OUT 從鋼捲倉（原料出庫）
+        await _upsert('stock_moves',{
+          id:       _uid('SM'), moveDate: today,
+          moveType: 'OUT', refType: 'DISPATCH_COIL', refId: dispatchId,
+          model:    row.model, batchNo: row.outBatchNo||'',
+          warehouse:row.outWarehouse||'鋼捲倉', location: row.outLocation||'',
+          qty:      row.qty, total: row.total, unit: row.unit||'KG',
+          unitWeight: row.unitWeight||0,
+          originalRollNo: row.originalRollNo||'',
+          color: row.color||'', paint: row.paint||'',
+          coating: row.coating||'', strength: row.strength||'',
+          operator: row.operator||'',
+          remark: '鋼捲上架 → 產線倉（派工單 ' + dispatchId + '）',
+        }).catch(function(){});
+        // stock_moves 2：IN 到產線倉（入庫產線）
+        await _upsert('stock_moves',{
+          id:       _uid('SM'), moveDate: today,
+          moveType: 'IN', refType: 'DISPATCH_COIL', refId: dispatchId,
+          model:    row.model, batchNo: row.outBatchNo||'',
+          warehouse:row.inWarehouse||'產線倉', location: row.inLocation||'',
+          qty:      row.qty, total: row.total, unit: row.unit||'KG',
+          unitWeight: row.unitWeight||0,
+          originalRollNo: row.originalRollNo||'',
+          color: row.color||'', paint: row.paint||'',
+          coating: row.coating||'', strength: row.strength||'',
+          operator: row.operator||'',
+          remark: '鋼捲上架 ← 鋼捲倉（派工單 ' + dispatchId + '）',
+        }).catch(function(){});
         return {ok:true, id:row.id, moveId:row.id};
-      }), cb, errCb);
+      })(), cb, errCb);
     },
     removeCoilMove: function(dispatchId, moveId, cb, errCb){
       _cb(_del('dispatch_coil_moves',{'id':'eq.'+moveId,'dispatchId':'eq.'+dispatchId}).then(function(){ return {ok:true}; }), cb, errCb);
@@ -1952,10 +1982,25 @@ function switchTopMode(mode) {
         let deductCount=0;
         for(const m of moves2){
           const _duid=_uid('DD'); _written.deductIds.push(_duid);
+          // 派工回單扣庫：出倉 = 產線倉（鋼捲已在產線倉，派工結束後從產線倉扣除）
+          const _deductWarehouse = m.inWarehouse||m.inwarehouse||'產線倉';
+          const _deductLoc       = m.inLocation||m.inlocation||'';
+          // stock_moves：OUT 從產線倉（扣除已消耗量）
+          await _upsert('stock_moves',{
+            id: _uid('SM'), moveDate: new Date().toLocaleDateString('zh-TW'),
+            moveType:'OUT', refType:'DISPATCH_END', refId:returnId,
+            model:m.model, batchNo:m.outBatchNo||m.outbatchno||'',
+            warehouse:_deductWarehouse, location:_deductLoc,
+            qty:m.qty, total:m.total||0, unit:m.unit||'KG',
+            originalRollNo:m.originalRollNo||m.originalrollno||'',
+            operator:opts.operator||'',
+            remark:'派工結束扣庫（產線倉），派工單 ' + dispatchId,
+          }).catch(function(){});
           await _upsert('dispatch_return_deduct',{id:_duid,returnId,dispatchId,
             coilMoveId:m.id||m.moveId,model:m.model,
-            batchNo:m.outBatchNo||m.outbatchno,warehouse:m.inWarehouse||m.inwarehouse,
-            location:m.inLocation||m.inlocation,qty:m.qty,total:m.total,
+            batchNo:m.outBatchNo||m.outbatchno,
+            warehouse:_deductWarehouse, location:_deductLoc,
+            qty:m.qty,total:m.total,
             unit:m.unit,originalRollNo:m.originalRollNo||m.originalrollno,createdAt:now});
           deductCount++;
         }
