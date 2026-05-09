@@ -1412,7 +1412,12 @@ function switchTopMode(mode) {
   }
 
   function _nowIso(){ return new Date().toISOString(); }
-  function _nowLocal(){ return new Date().toLocaleString('zh-TW'); }
+  // _nowLocal: 24h YYYY/MM/DD HH:MM:SS - no Chinese AM/PM for PostgreSQL TO_TIMESTAMP
+  function _nowLocal(){
+    const d=new Date(), p=n=>String(n).padStart(2,'0');
+    return d.getFullYear()+'/'+p(d.getMonth()+1)+'/'+p(d.getDate())+
+           ' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+  }
   function _uid(pfx){ return (pfx||'')+(Date.now())+Math.floor(Math.random()*1000); }
 
   window.API = {
@@ -5746,7 +5751,9 @@ window.addEventListener('DOMContentLoaded', function(){
         if (!window.confirm('確定結束派工單 ' + dispatchId + '？\n有效工時：' + _wh + '\n下架磅重：' + unloadKg + ' kg\n\n系統將扣產線倉庫存並產出派工回單。')) return;
         var coilUnloadWeights = {};
         if (window.__currentCoilMoveId) coilUnloadWeights[window.__currentCoilMoveId] = unloadKg;
-        window.API.endDispatch(dispatchId, { coilUnloadWeights: coilUnloadWeights, workHours: _wh }, function(res){
+        // 確保 workHours 嚴格為 HH:MM:SS 格式
+        var _safeWh = /^\d{2}:\d{2}:\d{2}$/.test(_wh) ? _wh : '00:00:00';
+        window.API.endDispatch(dispatchId, { coilUnloadWeights: coilUnloadWeights, workHours: _safeWh }, function(res){
           if (!res || !res.ok) return alert('派工結束失敗：' + JSON.stringify(res));
           setActiveDispatch(null);   // 結束後才清除全域派工單
           window.__currentDispatchId = null;
@@ -9254,7 +9261,8 @@ window.addEventListener('DOMContentLoaded', function(){
                         setSavedLabels(prev => [...prev, ...newLabels]);
 
                         // 儲存至全域狀態，讓新的 Tab 可以讀取
-                        const createTime = new Date().toLocaleString('zh-TW');
+                        const d=new Date(),p=n=>String(n).padStart(2,'0');
+                        const createTime = d.getFullYear()+'/'+p(d.getMonth()+1)+'/'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
                         const enhancedLabels = newLabels.map(l => ({
                            ...l,
                            orderId: headerData.id,
