@@ -55,6 +55,9 @@ DECLARE
   v_item_cnt          INT         := 0;
   v_label_cnt         INT         := 0;
   v_epoch             BIGINT;
+  -- 工時計算
+  v_auto_wh           TEXT        := '';
+  v_total_work_secs   NUMERIC     := 0;
 BEGIN
   -- ── 0. 基本驗證 ──────────────────────────────────────────
   SELECT * INTO v_dispatch
@@ -117,6 +120,41 @@ BEGIN
     ELSE 0
   END;
 
+  -- ── 2e. 提前計算工時（必須在 INSERT dispatch_returns 前完成）──────
+  -- 先關閉仍在 active 的 reporter session
+  UPDATE dispatch_return_reporters
+    SET status      = 'closed',
+        "endTime"   = v_finish_time_str,
+        "updatedAt" = v_now
+  WHERE "dispatchId" = p_dispatch_id
+    AND status = 'active';
+
+  -- 計算非 paused sessions 的有效秒數
+  SELECT COALESCE(SUM(
+      CASE WHEN status <> 'paused'
+               AND "startTime" IS NOT NULL
+               AND "endTime"   IS NOT NULL
+           THEN GREATEST(0,
+                  EXTRACT(EPOCH FROM (
+                    TO_TIMESTAMP("endTime",   'YYYY/MM/DD HH24:MI:SS') -
+                    TO_TIMESTAMP("startTime", 'YYYY/MM/DD HH24:MI:SS')
+                  )))
+           ELSE 0
+      END
+    ), 0)
+    INTO v_total_work_secs
+    FROM dispatch_return_reporters
+    WHERE "dispatchId" = p_dispatch_id;
+
+  -- 格式化 HH:MM:SS
+  v_auto_wh := CASE
+    WHEN v_total_work_secs > 0 THEN
+      LPAD(FLOOR(v_total_work_secs / 3600)::TEXT, 2, '0') || ':' ||
+      LPAD(FLOOR((v_total_work_secs % 3600) / 60)::TEXT, 2, '0') || ':' ||
+      LPAD(FLOOR(v_total_work_secs % 60)::TEXT, 2, '0')
+    ELSE COALESCE(NULLIF(p_work_hours, ''), '00:00:00')
+  END;
+
   -- ── 3. 建立派工回單頭 ────────────────────────────────────
   INSERT INTO dispatch_returns (
     id, "dispatchId", date, "docCategory",
@@ -141,7 +179,7 @@ BEGIN
     v_loss_rate,
     p_remark,
     p_dispatch_remark,
-    p_work_hours,
+    v_auto_wh,   -- 已在 Step 2e 計算完成的有效工時
     'closed',
     v_now,
     v_now
@@ -152,6 +190,7 @@ BEGIN
     "lossRate"            = EXCLUDED."lossRate",
     "finishTime"          = EXCLUDED."finishTime",
     "effectiveWorkHours"  = EXCLUDED."effectiveWorkHours",
+    "workHours"           = v_auto_wh,
     "updatedAt"           = v_now;
 
   -- ── 4. 建立扣庫明細 ──────────────────────────────────────
@@ -272,39 +311,24 @@ BEGIN
     END LOOP;
   END IF;
 
-  -- ── 5. 結案派工單 ────────────────────────────────────────
-  UPDATE dispatch_orders
-    SET status       = 'closed',
-        "workHours"  = p_work_hours,
-        "finishTime" = v_finish_time_str,
-        "updatedAt"  = v_now
-  WHERE id = p_dispatch_id;
-
-  -- ── 5b. 回填 reporter sessions 的 returnId（供 ERP 回報人員 tab）────
+  -- ── 5. 自動計算有效工時 + 結案派工單 ──────────────────────
+  -- 5a. 關閉仍在 active 的 reporter session（寫入結束時間）
   UPDATE dispatch_return_reporters
-    SET "returnId" = v_return_id
+    SET status      = 'closed',
+        "endTime"   = v_finish_time_str,
+        "updatedAt" = v_now
   WHERE "dispatchId" = p_dispatch_id
-    AND ("returnId" IS NULL OR "returnId" = '');
+    AND status = 'active';
 
-  -- ── 6. 回傳結果 ──────────────────────────────────────────
-  RETURN jsonb_build_object(
-    'ok',          true,
-    'returnId',    v_return_id,
-    'deductCount', v_deduct_count,
-    'totalIn',     v_total_in,
-    'totalDeduct', v_total_deduct_kg,
-    'lossRate',    v_loss_rate
-  );
-
-EXCEPTION WHEN OTHERS THEN
-  -- PostgreSQL 自動 ROLLBACK，回傳錯誤訊息
-  RETURN jsonb_build_object(
-    'ok',    false,
-    'error', SQLERRM,
-    'detail', SQLSTATE
-  );
-END;
-$$;
-
--- 允許 anon key 呼叫
-GRANT EXECUTE ON FUNCTION end_dispatch TO anon, authenticated, service_role;
+  -- 5b. 計算有效工時（非 paused sessions 的秒數合計 → HH:MM:SS）
+  SELECT COALESCE(SUM(
+      CASE WHEN status <> 'paused'
+               AND "startTime" IS NOT NULL
+               AND "endTime"   IS NOT NULL
+           THEN GREATEST(0,
+                  EXTRACT(EPOCH FROM (
+                    TO_TIMESTAMP("endTime",   'YYYY/MM/DD HH24:MI:SS') -
+                    TO_TIMESTAMP("startTime", 'YYYY/MM/DD HH24:MI:SS')
+                  )))
+           ELSE 0
+      

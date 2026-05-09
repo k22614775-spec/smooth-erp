@@ -1946,7 +1946,7 @@ function switchTopMode(mode) {
           operator:(opts.operator||dh.operator||'').slice(0,500),machine:dh.machine,
           finishTime:opts.finishTime||_nowLocal(),
           totalIn,totalDeduct:totalDeductKg,lossRate,remark:opts.remark||'',
-          dispatchRemark:opts.dispatchRemark||'',effectiveWorkHours:opts.workHours||'',
+          dispatchRemark:opts.dispatchRemark||'',effectiveWorkHours:autoWorkHours,pausedHours:autoPausedHours,
           status:'closed',createdAt:now,updatedAt:now});
         _written.returnCreated=true;
         let deductCount=0;
@@ -1960,9 +1960,37 @@ function switchTopMode(mode) {
           deductCount++;
         }
         await _patch('dispatch_orders',{'id':'eq.'+dispatchId},
-          {status:'closed',workHours:opts.workHours||'',finishTime:_nowLocal(),updatedAt:now});
+          {status:'closed',workHours:autoWorkHours,finishTime:_nowLocal(),updatedAt:now});
         _written.statusPatched=true;
         // 把 reporter sessions 的 returnId 回填（供 ERP 派工回單回報人員 tab 顯示）
+        // ── 自動結算回報人員工時 ──────────────────────────────
+        // 先關閉仍在 active 的 session（寫入結束時間）
+        const nowLocal = _nowLocal();
+        await _patch('dispatch_return_reporters',
+          {'dispatchId':'eq.'+dispatchId,'status':'eq.active'},
+          {status:'closed', endTime:nowLocal, updatedAt:_nowIso()}
+        ).catch(()=>{});
+
+        // 取所有 sessions 計算有效工時
+        const sessions = await _get('dispatch_return_reporters',{'dispatchId':'eq.'+dispatchId});
+        let totalSecs=0, pausedSecs=0;
+        (sessions||[]).forEach(function(s){
+          if(s.startTime && s.endTime){
+            const st=new Date(s.startTime).getTime(), en=new Date(s.endTime).getTime();
+            if(!isNaN(st)&&!isNaN(en)){
+              const diff=Math.max(0,(en-st)/1000);
+              if(String(s.status||'').toLowerCase()==='paused') pausedSecs+=diff;
+              else totalSecs+=diff;
+            }
+          }
+        });
+        function _fmtHms(secs){
+          const h=Math.floor(secs/3600), m=Math.floor((secs%3600)/60), s=Math.floor(secs%60);
+          return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
+        }
+        const autoWorkHours = opts.workHours || _fmtHms(totalSecs) || '00:00:00';
+        const autoPausedHours = _fmtHms(pausedSecs);
+
         await _patch('dispatch_return_reporters',{'dispatchId':'eq.'+dispatchId},{returnId}).catch(()=>{});
 
         // ── 入庫明細：優先從 labels，無標籤則從 dispatch_production ──
@@ -5661,11 +5689,26 @@ window.addEventListener('DOMContentLoaded', function(){
         var dispatchId = (activeDispatch && activeDispatch.id) || window.__currentDispatchId;
         if (!dispatchId) return alert('尚未建立派工單');
         if (!window.API || typeof window.API.endDispatch !== 'function') return alert('後端未連線');
-        if (!window.confirm('確定結束派工單 ' + dispatchId + '？\n系統將扣產線倉庫存並產出派工回單。')) return;
-        var unloadKg = parseFloat(window.prompt('請輸入下架磅重（剩料 kg，無剩料請輸入 0）', '0') || '0') || 0;
+        // ── 先取得工時再 confirm（工時為即時讀取，prompt 前呼叫） ──
+        var _wh = '00:00:00';
+        if (window.API && typeof window.API.computeEffectiveWorkHours === 'function') {
+          window.API.computeEffectiveWorkHours(dispatchId, function(eff){
+            _wh = (eff && (eff.hhmmss || eff.workHours)) || '00:00:00';
+          });
+        }
+        var unloadKg = parseFloat(
+          window.prompt('派工結束確認
+目前有效工時：' + _wh + '
+
+請輸入下架磅重（剩料 kg，無剩料輸入 0）', '0') || '0') || 0;
+        if (!window.confirm('確定結束派工單 ' + dispatchId + '？
+有效工時：' + _wh + '
+下架磅重：' + unloadKg + ' kg
+
+系統將扣產線倉庫存並產出派工回單。')) return;
         var coilUnloadWeights = {};
         if (window.__currentCoilMoveId) coilUnloadWeights[window.__currentCoilMoveId] = unloadKg;
-        window.API.endDispatch(dispatchId, { coilUnloadWeights: coilUnloadWeights }, function(res){
+        window.API.endDispatch(dispatchId, { coilUnloadWeights: coilUnloadWeights, workHours: _wh }, function(res){
           if (!res || !res.ok) return alert('派工結束失敗：' + JSON.stringify(res));
           setActiveDispatch(null);   // 結束後才清除全域派工單
           window.__currentDispatchId = null;
