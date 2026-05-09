@@ -5697,15 +5697,8 @@ window.addEventListener('DOMContentLoaded', function(){
           });
         }
         var unloadKg = parseFloat(
-          window.prompt('派工結束確認
-目前有效工時：' + _wh + '
-
-請輸入下架磅重（剩料 kg，無剩料輸入 0）', '0') || '0') || 0;
-        if (!window.confirm('確定結束派工單 ' + dispatchId + '？
-有效工時：' + _wh + '
-下架磅重：' + unloadKg + ' kg
-
-系統將扣產線倉庫存並產出派工回單。')) return;
+          window.prompt('派工結束確認\n目前有效工時：' + _wh + '\n\n請輸入下架磅重（剩料 kg，無剩料輸入 0）', '0') || '0') || 0;
+        if (!window.confirm('確定結束派工單 ' + dispatchId + '？\n有效工時：' + _wh + '\n下架磅重：' + unloadKg + ' kg\n\n系統將扣產線倉庫存並產出派工回單。')) return;
         var coilUnloadWeights = {};
         if (window.__currentCoilMoveId) coilUnloadWeights[window.__currentCoilMoveId] = unloadKg;
         window.API.endDispatch(dispatchId, { coilUnloadWeights: coilUnloadWeights, workHours: _wh }, function(res){
