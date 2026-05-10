@@ -1369,6 +1369,47 @@ function switchTopMode(mode) {
     });
   }
 
+  // ══ 庫存調整輔助函式 ══════════════════════════════════════
+  // warehouse_stock：以 (model, warehouseNo) 為主鍵增減庫存
+  async function _adjustWarehouseStock(model, warehouseNo, dQty, dTotal) {
+    try {
+      const rows = await _get('warehouse_stock',
+        {'model':'eq.'+model,'warehouseNo':'eq.'+warehouseNo});
+      if (rows.length) {
+        await _patch('warehouse_stock',
+          {'model':'eq.'+model,'warehouseNo':'eq.'+warehouseNo},
+          { qty:   Math.max(0,(parseFloat(rows[0].qty)||0)+dQty),
+            total: Math.max(0,(parseFloat(rows[0].total)||0)+dTotal),
+            moveDate: _nowLocal() });
+      } else if (dQty > 0) {
+        await _upsert('warehouse_stock',{
+          model, warehouseNo,
+          qty: Math.max(0,dQty), total: Math.max(0,dTotal),
+          price:0, amount:0, moveDate:_nowLocal(), remark:''});
+      }
+    } catch(e){ console.warn('[_adjustWarehouseStock]', model, warehouseNo, e.message); }
+  }
+
+  // batch_detail：以 (model, warehouseNo, batchNo) 為主鍵增減
+  async function _adjustBatchDetail(model, warehouseNo, batchNo, location, dQty, dTotal, baseFields) {
+    try {
+      const rows = await _get('batch_detail',
+        {'model':'eq.'+model,'warehouseNo':'eq.'+warehouseNo,'batchNo':'eq.'+batchNo});
+      if (rows.length) {
+        await _patch('batch_detail',
+          {'model':'eq.'+model,'warehouseNo':'eq.'+warehouseNo,'batchNo':'eq.'+batchNo},
+          { qty:   Math.max(0,(parseFloat(rows[0].qty)||0)+dQty),
+            total: Math.max(0,(parseFloat(rows[0].total)||0)+dTotal) });
+      } else if (dQty > 0) {
+        await _upsert('batch_detail', Object.assign(
+          {model, warehouseNo, location, batchNo,
+           qty:Math.max(0,dQty), total:Math.max(0,dTotal)},
+          baseFields||{}));
+      }
+    } catch(e){ console.warn('[_adjustBatchDetail]', batchNo, warehouseNo, e.message); }
+  }
+  // ════════════════════════════════════════════════════════════
+
   // ── 裁切細項合併（前端版，對應 GAS _consolidateCuttings）──
   function _consolidate(rows){
     if(!rows||!rows.length) return [];
@@ -1736,19 +1777,14 @@ function switchTopMode(mode) {
     },
     addCoilMove: function(dispatchId, coilMove, cb, errCb){
       var m = coilMove || {};
-      // 統一欄位對照：前端清單頁、DetailView、FoldingWizard 三種呼叫格式全部兼容
       var row = {
         id:             _uid('CM'),
         dispatchId:     dispatchId,
-        // 批號：前端可能傳 batchNo / outBatchNo / coilNo，全部對應到 outBatchNo
         outBatchNo:     m.outBatchNo || m.batchNo || m.coilNo || '',
         coilNo:         m.coilNo || m.outBatchNo || m.batchNo || '',
-        // 原廠捲號
         originalRollNo: m.originalRollNo || m.rollNo || '',
-        // 型號規格
         model:          m.model || '',
         spec:           m.spec || '',
-        // 材質：前端可能傳 materialNo 或 material
         materialNo:     m.materialNo || m.material || '',
         factory:        m.factory || '',
         size:           m.size || '',
@@ -1756,63 +1792,89 @@ function switchTopMode(mode) {
         paint:          m.paint || '',
         coating:        m.coating || '',
         strength:       m.strength || '',
-        // 出倉（鋼捲倉）：前端可能傳 outWarehouse 或 srcWarehouse
         outWarehouse:   m.outWarehouse || m.srcWarehouse || '鋼捲倉',
         outLocation:    m.outLocation  || m.srcLocation  || '',
-        // 入倉（產線倉）：前端可能傳 inWarehouse 或 dstWarehouse
         inWarehouse:    m.inWarehouse  || m.dstWarehouse || '產線倉',
         inLocation:     m.inLocation   || m.dstLocation  || '',
-        inBatchNo:      m.inBatchNo    || '',
-        // 數量重量：前端可能傳 qty/total 或 outPieces/outKg 或 inPieces/inKg
+        inBatchNo:      m.inBatchNo || '',
         qty:            Number(m.qty   || m.outPieces || m.inPieces || 1),
         total:          Number(m.total || m.outKg     || m.inKg     || 0),
         unit:           m.unit || 'KG',
-        // 磅重
-        loadWeight:     Number(m.loadWeight   || m.total || m.outKg || 0),
+        loadWeight:     Number(m.loadWeight || m.total || m.outKg || 0),
         unloadWeight:   Number(m.unloadWeight || 0),
-        // 其他
-        category:       m.category     || '',
-        costBasis:      m.costBasis    || '',
+        category:       m.category || '',
+        costBasis:      m.costBasis || '',
         materialPrice:  Number(m.materialPrice || 0),
-        formula:        m.formula      || '',
+        formula:        m.formula || '',
         unitWeight:     Number(m.unitWeight || 0),
-        dispatchSeq:    m.dispatchSeq  || '',
-        orderItemNo:    m.orderItemNo  || '',
-        processNo:      m.processNo    || '',
-        remark:         m.remark       || '',
+        dispatchSeq:    m.dispatchSeq || '',
+        orderItemNo:    m.orderItemNo || '',
+        processNo:      m.processNo || '',
+        remark:         m.remark || '',
         createTime:     _nowLocal(),
       };
       _cb((async function(){
+        // 1. 寫入 dispatch_coil_moves
         await _upsert('dispatch_coil_moves', row);
-        const today = new Date().toLocaleDateString('zh-TW');
-        // stock_moves 1：OUT 從鋼捲倉（原料出庫）
-        await _upsert('stock_moves',{
-          id:       _uid('SM'), moveDate: today,
-          moveType: 'OUT', refType: 'DISPATCH_COIL', refId: dispatchId,
-          model:    row.model, batchNo: row.outBatchNo||'',
-          warehouse:row.outWarehouse||'鋼捲倉', location: row.outLocation||'',
-          qty:      row.qty, total: row.total, unit: row.unit||'KG',
-          unitWeight: row.unitWeight||0,
-          originalRollNo: row.originalRollNo||'',
-          color: row.color||'', paint: row.paint||'',
-          coating: row.coating||'', strength: row.strength||'',
-          operator: row.operator||'',
-          remark: '鋼捲上架 → 產線倉（派工單 ' + dispatchId + '）',
-        }).catch(function(){});
-        // stock_moves 2：IN 到產線倉（入庫產線）
-        await _upsert('stock_moves',{
-          id:       _uid('SM'), moveDate: today,
-          moveType: 'IN', refType: 'DISPATCH_COIL', refId: dispatchId,
-          model:    row.model, batchNo: row.outBatchNo||'',
-          warehouse:row.inWarehouse||'產線倉', location: row.inLocation||'',
-          qty:      row.qty, total: row.total, unit: row.unit||'KG',
-          unitWeight: row.unitWeight||0,
-          originalRollNo: row.originalRollNo||'',
-          color: row.color||'', paint: row.paint||'',
-          coating: row.coating||'', strength: row.strength||'',
-          operator: row.operator||'',
-          remark: '鋼捲上架 ← 鋼捲倉（派工單 ' + dispatchId + '）',
-        }).catch(function(){});
+
+        const today    = _nowLocal().split(' ')[0];
+        const movQty   = row.qty;
+        const movTotal = row.total || row.loadWeight || 0;
+        const srcWH    = row.outWarehouse;  // 鋼捲倉
+        const srcLoc   = row.outLocation;
+        const dstWH    = row.inWarehouse;   // 產線倉
+        const dstLoc   = row.inLocation;
+        const batchNo  = row.outBatchNo;
+        const model    = row.model;
+        const smBase   = {
+          model, batchNo, qty:movQty, total:movTotal, unit:row.unit,
+          unitWeight:row.unitWeight||0, originalRollNo:row.originalRollNo||'',
+          color:row.color||'', paint:row.paint||'',
+          coating:row.coating||'', strength:row.strength||'',
+          operator:row.operator||'', moveDate:today,
+        };
+
+        // 2. stock_moves：OUT 鋼捲倉（原料出庫）
+        await _upsert('stock_moves', Object.assign({}, smBase, {
+          id:_uid('SM'), moveType:'OUT', refType:'DISPATCH_COIL', refId:dispatchId,
+          warehouse:srcWH, location:srcLoc,
+          remark:'上架出庫（鋼捲倉→產線倉）派工 '+dispatchId,
+        })).catch(function(){});
+
+        // 3. stock_moves：IN 產線倉（調撥入庫）
+        await _upsert('stock_moves', Object.assign({}, smBase, {
+          id:_uid('SM'), moveType:'IN', refType:'DISPATCH_COIL', refId:dispatchId,
+          warehouse:dstWH, location:dstLoc,
+          remark:'上架入庫（產線倉←鋼捲倉）派工 '+dispatchId,
+        })).catch(function(){});
+
+        // 4. warehouse_stock：鋼捲倉 −qty/−total
+        await _adjustWarehouseStock(model, srcWH, -movQty, -movTotal);
+
+        // 5. warehouse_stock：產線倉 +qty/+total
+        await _adjustWarehouseStock(model, dstWH, +movQty, +movTotal);
+
+        // 6. batch_detail：鋼捲倉批號 扣減
+        await _adjustBatchDetail(model, srcWH, batchNo, srcLoc, -movQty, -movTotal, null);
+
+        // 7. batch_detail：產線倉批號 增加（批號隨鋼捲調撥過來）
+        const srcBatches = await _get('batch_detail',
+          {'model':'eq.'+model,'warehouseNo':'eq.'+srcWH,'batchNo':'eq.'+batchNo}
+        ).catch(function(){ return []; });
+        const srcBatch = srcBatches[0] || {};
+        await _adjustBatchDetail(model, dstWH, batchNo, dstLoc, +movQty, +movTotal, {
+          originalRollNo: row.originalRollNo || srcBatch.originalRollNo || '',
+          vendor:         srcBatch.vendor || '',
+          thickness:      srcBatch.thickness || 0,
+          width:          srcBatch.width || 0,
+          density:        srcBatch.density || 0,
+          lengthM:        srcBatch.lengthM || srcBatch.lengthm || 0,
+          innerRing:      srcBatch.innerRing || srcBatch.innerring || '',
+          coilDirection:  srcBatch.coilDirection || srcBatch.coildirection || '',
+          price:          srcBatch.price || 0,
+          detailRemark:   '調撥自鋼捲倉，派工 '+dispatchId,
+        });
+
         return {ok:true, id:row.id, moveId:row.id};
       })(), cb, errCb);
     },
@@ -2001,6 +2063,42 @@ function switchTopMode(mode) {
             operator:opts.operator||'',
             remark:'派工結束扣庫（產線倉），派工單 ' + dispatchId,
           }).catch(function(){});
+
+          // ── 同步更新庫存三表（產線倉扣減）──────────────────────
+          const _consumedQty   = parseFloat(m.qty||0);
+          const _consumedTotal = parseFloat(m.total||0);
+          const _unloadKg      = parseFloat(m.unloadWeight||m.unloadweight||0);
+          const _batchNo       = m.outBatchNo||m.outbatchno||'';
+          const _model         = m.model||'';
+
+          // (A) 產線倉 warehouse_stock 扣減消耗量
+          if (_consumedQty > 0 || _consumedTotal > 0)
+            await _adjustWarehouseStock(_model, _deductWarehouse, -_consumedQty, -_consumedTotal).catch(function(){});
+
+          // (B) 產線倉 batch_detail 扣減消耗量
+          if (_batchNo && (_consumedQty > 0 || _consumedTotal > 0))
+            await _adjustBatchDetail(_model, _deductWarehouse, _batchNo, _deductLoc, -_consumedQty, -_consumedTotal, null).catch(function(){});
+
+          // (C) 若有下架剩料，歸回鋼捲倉
+          const _srcWH = m.outWarehouse||m.outwarehouse||'鋼捲倉';
+          const _srcLoc= m.outLocation ||m.outlocation ||'';
+          if (_unloadKg > 0) {
+            const today2 = _nowLocal().split(' ')[0];
+            await _upsert('stock_moves',{
+              id:_uid('SM'), moveDate:today2,
+              moveType:'IN', refType:'DISPATCH_RETURN', refId:returnId,
+              model:_model, batchNo:_batchNo,
+              warehouse:_srcWH, location:_srcLoc,
+              qty:1, total:_unloadKg, unit:m.unit||'KG',
+              originalRollNo:m.originalRollNo||m.originalrollno||'',
+              operator:opts.operator||'',
+              remark:'派工剩料歸回鋼捲倉，回單 '+returnId,
+            }).catch(function(){});
+            await _adjustWarehouseStock(_model, _srcWH, 0, +_unloadKg).catch(function(){});
+            await _adjustBatchDetail(_model, _srcWH, _batchNo, _srcLoc, 0, +_unloadKg, null).catch(function(){});
+          }
+          // ─────────────────────────────────────────────────────────
+
           await _upsert('dispatch_return_deduct',{id:_duid,returnId,dispatchId,
             coilMoveId:m.id||m.moveId,model:m.model,
             batchNo:m.outBatchNo||m.outbatchno,

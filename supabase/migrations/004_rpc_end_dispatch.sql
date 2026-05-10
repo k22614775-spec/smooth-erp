@@ -1,6 +1,5 @@
 -- ============================================================
---  RPC: end_dispatch  (完整乾淨版)
---  在 Supabase SQL Editor 執行此腳本一次即可
+
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION end_dispatch(
@@ -43,7 +42,6 @@ DECLARE
   v_auto_wh           TEXT        := '';
   v_total_work_secs   NUMERIC     := 0;
 BEGIN
-  -- 0. 基本驗證
   SELECT * INTO v_dispatch FROM dispatch_orders WHERE id = p_dispatch_id;
   IF NOT FOUND THEN
     RETURN jsonb_build_object('ok', false, 'error', '找不到派工單: ' || p_dispatch_id);
@@ -57,7 +55,6 @@ BEGIN
     TO_CHAR(NOW() AT TIME ZONE 'Asia/Taipei', 'YYYY/MM/DD HH24:MI:SS'));
   v_epoch           := EXTRACT(EPOCH FROM v_now)::BIGINT;
 
-  -- 1. 套用鋼捲下架磅重
   FOR v_move IN SELECT * FROM dispatch_coil_moves WHERE "dispatchId" = p_dispatch_id LOOP
     v_unload_kg := (p_coil_unload_weights ->> v_move.id)::NUMERIC;
     IF v_unload_kg IS NOT NULL THEN
@@ -70,26 +67,21 @@ BEGIN
     END IF;
   END LOOP;
 
-  -- 2a. 投入量
   SELECT COALESCE(SUM(COALESCE("loadWeight", total, 0)), 0) INTO v_total_in
     FROM dispatch_coil_moves WHERE "dispatchId" = p_dispatch_id;
 
-  -- 2b. 下架磅重合計
   SELECT COALESCE(SUM(COALESCE("unloadWeight", 0)), 0) INTO v_coil_unload_kg
     FROM dispatch_coil_moves WHERE "dispatchId" = p_dispatch_id;
 
-  -- 2c. 餘料入庫
   SELECT COALESCE(SUM(COALESCE(total, qty, 0)), 0) INTO v_leftover_kg
     FROM stock_moves
     WHERE "refType" = 'LEFTOVER' AND "refId" = p_dispatch_id AND "moveType" = 'IN';
 
-  -- 2d. 退回量 & 損耗率
   v_total_deduct_kg := v_coil_unload_kg + v_leftover_kg;
   v_loss_rate := CASE
     WHEN v_total_in > 0 THEN ROUND(v_total_deduct_kg / v_total_in * 100, 2)
     ELSE 0 END;
 
-  -- 2e. 關閉 active sessions + 計算工時（必須在 INSERT dispatch_returns 前）
   UPDATE dispatch_return_reporters
     SET status = 'closed', "endTime" = v_finish_time_str, "updatedAt" = v_now
   WHERE "dispatchId" = p_dispatch_id AND status = 'active';
@@ -110,7 +102,6 @@ BEGIN
       LPAD(FLOOR(v_total_work_secs%60)::TEXT,2,'0')
     ELSE COALESCE(NULLIF(p_work_hours,''),'00:00:00') END;
 
-  -- 3. 建立派工回單頭
   INSERT INTO dispatch_returns (
     id, "dispatchId", date, "docCategory",
     "orderId", "partnerCode", "partnerName",
@@ -134,7 +125,6 @@ BEGIN
     "effectiveWorkHours" = EXCLUDED."effectiveWorkHours",
     "updatedAt"          = v_now;
 
-  -- 4. 建立扣庫明細 + stock_moves OUT 產線倉
   FOR v_move IN SELECT * FROM dispatch_coil_moves WHERE "dispatchId" = p_dispatch_id LOOP
     v_dd_id := 'DD' || v_epoch::TEXT || v_deduct_count::TEXT;
 
@@ -159,7 +149,6 @@ BEGIN
       v_move."furnaceNo", v_move."dispatchSeq", v_now
     ) ON CONFLICT DO NOTHING;
 
-    -- stock_moves：OUT 從產線倉（已消耗量）
     v_sm_id := 'SM_DD_' || v_epoch::TEXT || v_deduct_count::TEXT;
     INSERT INTO stock_moves (
       id, "moveDate", "moveType", "refType", "refId",
@@ -175,10 +164,58 @@ BEGIN
       '派工結束扣庫（產線倉），派工單 ' || p_dispatch_id
     ) ON CONFLICT DO NOTHING;
 
+    -- warehouse_stock：產線倉扣減消耗量
+    UPDATE warehouse_stock
+      SET qty   = GREATEST(0, qty   - v_move.qty),
+          total = GREATEST(0, total - v_move.total),
+          "moveDate" = v_date_str
+    WHERE model = v_move.model
+      AND "warehouseNo" = COALESCE(v_move."inWarehouse", '產線倉');
+
+    -- batch_detail：產線倉批號扣減
+    UPDATE batch_detail
+      SET qty   = GREATEST(0, qty   - v_move.qty),
+          total = GREATEST(0, total - v_move.total)
+    WHERE model = v_move.model
+      AND "warehouseNo" = COALESCE(v_move."inWarehouse", '產線倉')
+      AND "batchNo" = COALESCE(v_move."outBatchNo", '');
+
+    -- 若有下架剩料 (unloadWeight > 0)，歸回鋼捲倉
+    IF COALESCE(v_move."unloadWeight", 0) > 0 THEN
+      -- stock_moves：IN 鋼捲倉（剩料歸回）
+      INSERT INTO stock_moves (
+        id, "moveDate", "moveType", "refType", "refId",
+        model, "batchNo", warehouse, location,
+        qty, total, unit, "originalRollNo", operator, remark
+      ) VALUES (
+        'SM_RET_' || v_epoch::TEXT || v_deduct_count::TEXT,
+        v_date_str, 'IN', 'DISPATCH_RETURN', v_return_id,
+        v_move.model, COALESCE(v_move."outBatchNo",''),
+        COALESCE(v_move."outWarehouse",'鋼捲倉'),
+        COALESCE(v_move."outLocation",''),
+        0, v_move."unloadWeight", COALESCE(v_move.unit,'KG'),
+        COALESCE(v_move."originalRollNo",''), p_operator,
+        '派工剩料歸回鋼捲倉，回單 ' || v_return_id
+      ) ON CONFLICT DO NOTHING;
+
+      -- warehouse_stock：鋼捲倉歸回剩料重量
+      UPDATE warehouse_stock
+        SET total = total + v_move."unloadWeight",
+            "moveDate" = v_date_str
+      WHERE model = v_move.model
+        AND "warehouseNo" = COALESCE(v_move."outWarehouse",'鋼捲倉');
+
+      -- batch_detail：鋼捲倉批號歸回
+      UPDATE batch_detail
+        SET total = total + v_move."unloadWeight"
+      WHERE model = v_move.model
+        AND "warehouseNo" = COALESCE(v_move."outWarehouse",'鋼捲倉')
+        AND "batchNo" = COALESCE(v_move."outBatchNo",'');
+    END IF;
+
     v_deduct_count := v_deduct_count + 1;
   END LOOP;
 
-  -- 4b. 入庫明細（優先 labels，無則用 dispatch_production）
   v_item_cnt  := 0;
   v_label_cnt := 0;
 
@@ -231,19 +268,16 @@ BEGIN
     END LOOP;
   END IF;
 
-  -- 5. 結案派工單
   UPDATE dispatch_orders
     SET status = 'closed', "workHours" = v_auto_wh,
         "finishTime" = v_finish_time_str, "updatedAt" = v_now
   WHERE id = p_dispatch_id;
 
-  -- 5b. 回填 reporter returnId
   UPDATE dispatch_return_reporters
     SET "returnId" = v_return_id
   WHERE "dispatchId" = p_dispatch_id
     AND ("returnId" IS NULL OR "returnId" = '');
 
-  -- 6. 回傳
   RETURN jsonb_build_object(
     'ok', true, 'returnId', v_return_id,
     'deductCount', v_deduct_count,
