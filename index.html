@@ -2222,20 +2222,85 @@ function switchTopMode(mode) {
     },
     resetSimulationData: function(cb, errCb){
       _cb((async function(){
-        const tables=['labels','dispatch_return_reporters','dispatch_return_deduct',
+        // 1. 清除所有派工/回單/標籤資料
+        var DISP=['labels','dispatch_return_reporters','dispatch_return_deduct',
           'dispatch_return_items','dispatch_returns','dispatch_coil_moves',
           'dispatch_production','dispatch_orders'];
-        for(const t of tables) await _del(t,{'id':'neq.__none__'}).catch(function(){});
-        await _del('stock_moves',{'refType':'neq.PURCHASE'}).catch(function(){});
-        await _patch('orders',{'status':'eq.已派工'},{status:'待派工',dispatchId:''});
+        for(var t of DISP) await _del(t,{'id':'neq.__none__'}).catch(function(){});
+
+        // 2. stock_moves 只保留 PURCHASE 相關
+        await _del('stock_moves',{'refType':'not.in.(PURCHASE,PURCHASE_REVERSE)'}).catch(function(){});
+
+        // 3. 還原訂單/裁切細項狀態
+        await _patch('orders',{'status':'eq.已派工'},{status:'待派工',dispatchId:''}).catch(function(){});
         await _patch('cutting_details',{'id':'neq.__none__'},{
           dispatchId:'',dispatchSeq:'',topDone:0,bottomDone:0,
           closed:0,startTime:'',finishTime:'',reporter:'',reportedAt:'',
-          processNo:'',inboundNo:'',inLocation:'',inBatchNo:''});
-        return {ok:true};
+          processNo:'',inboundNo:'',inLocation:'',inBatchNo:''}).catch(function(){});
+
+        // 4. 清空庫存表，從進貨資料重建
+        await _del('warehouse_stock',{'id':'gt.0'}).catch(function(){});
+        await _del('batch_detail',   {'id':'gt.0'}).catch(function(){});
+
+        var results = await Promise.all([
+          _get('purchases',      {'order':'id'}),
+          _get('purchase_items', {'order':'itemNo'}),
+          _get('purchase_batch', {'order':'id'}),
+        ]);
+        var purchases=results[0], purchaseItems=results[1], purchaseBatches=results[2];
+
+        var whMap={}, batchMap={};
+
+        for(var pur of purchases){
+          var pid=String(pur.id||'');
+          var itms=purchaseItems.filter(function(x){ return String(x.purchaseId||x.purchaseid||'')=== pid; });
+          var bats=purchaseBatches.filter(function(x){ return String(x.purchaseId||x.purchaseid||'')=== pid; });
+          for(var b of bats){
+            var itmNo=String(b.purchaseItemNo||b.purchaseitemno||'');
+            var itm=itms.find(function(x){ return String(x.itemNo||x.itemno||'')=== itmNo; })||{};
+            var model=itm.model||b.model||'';
+            var wh=itm.warehouse||'鋼捲倉';
+            var loc=b.location||'';
+            var bn=String(b.batchNo||b.batchno||'');
+            var qty=Number(b.qty||0);
+            var total=Number(b.total||0);
+            var price=Number(itm.price||0);
+            if(!model) continue;
+
+            // warehouse_stock
+            var wk=model+'|'+wh;
+            if(!whMap[wk]) whMap[wk]={model,warehouseNo:wh,qty:0,total:0,price,amount:0,moveDate:pur.date||'',remark:''};
+            whMap[wk].qty+=qty; whMap[wk].total+=total; whMap[wk].amount+=price*total;
+
+            // batch_detail
+            var bk=model+'|'+wh+'|'+bn;
+            if(!batchMap[bk]){
+              batchMap[bk]={
+                model,warehouseNo:wh,location:loc,batchNo:bn,qty:0,total:0,
+                originalRollNo:b.originalRollNo||b.originalrollno||'',
+                vendor:b.vendor||pur.vendorName||pur.vendorname||'',
+                thickness:Number(b.thickness||0), width:Number(b.width||0),
+                density:Number(b.density||0), lengthM:Number(b.lengthM||b.lengthm||0),
+                innerRing:b.innerRing||b.innerring||'',
+                coilDirection:b.coilDirection||b.coildirection||'',
+                price, detailRemark:'進貨單 '+pid,
+              };
+            }
+            batchMap[bk].qty+=qty; batchMap[bk].total+=total;
+          }
+        }
+
+        var whRows=Object.values(whMap);
+        var batchRows=Object.values(batchMap);
+        if(whRows.length)    await _upsert('warehouse_stock', whRows).catch(function(){});
+        if(batchRows.length) await _upsert('batch_detail',   batchRows).catch(function(){});
+
+        return {ok:true, restored:{
+          warehouseStock:whRows.length,
+          batchDetail:batchRows.length,
+          purchases:purchases.length}};
       })(), cb, errCb);
-    },
-        searchCoilStock: function(filter, cb, errCb){
+    },        searchCoilStock: function(filter, cb, errCb){
       filter=filter||{};
       const qs={};
       if(filter.model) qs['model']='ilike.*'+filter.model+'*';
