@@ -2477,10 +2477,18 @@ function switchTopMode(mode) {
         if(whRows.length)    await _upsert('warehouse_stock', whRows).catch(function(){});
         if(batchRows.length) await _upsert('batch_detail',   batchRows).catch(function(){});
 
+        var coilTxOk = 0;
+        try {
+          var _chk = await _get('coil_transactions',{'id':'eq.1150511001'});
+          coilTxOk = (_chk && _chk.length) ? 1 : 0;
+        } catch(e){}
         return {ok:true, restored:{
           warehouseStock:whRows.length,
           batchDetail:batchRows.length,
-          purchases:purchases.length}};
+          purchasesReplayed:purchases.length,
+          ordersResetToPending: 0,
+          cuttingsReset: 0,
+          coilTxSeeded: coilTxOk}};
       })(), cb, errCb);
     },        // ── 鋼捲異動 CRUD ──────────────────────────────────────────────
     getCoilTransactions: function(filter, cb, errCb){
@@ -5003,13 +5011,16 @@ window.addEventListener('DOMContentLoaded', function(){
                 if (!res || !res.ok) return alert('還原失敗：' + JSON.stringify(res));
                 var c = res.cleared || {};
                 var r = res.restored || {};
+                var coilMsg = r.coilTxSeeded
+                  ? '✅ 鋼捲異動示範單 1150511001 已建立\n'
+                  : '⚠️ 鋼捲異動示範單未建立（請確認 Supabase migration 005 已執行）\n';
                 alert('模擬資料已還原。\n\n' +
                       '清空：標籤 / 派工單 / 派工回單 / 派工入庫 / 派工扣庫\n' +
                       '已沖銷 STOCK_MOVES：' + (c.stockMovesRemoved || 0) + ' 列\n' +
                       '進貨重打：' + (r.purchasesReplayed || 0) + ' 張\n' +
                       '訂單回到待派工：' + (r.ordersResetToPending || 0) + ' 張\n' +
-                      '裁切細項重設：' + (r.cuttingsReset || 0) + ' 列\n\n' +
-                      '即將重新載入畫面。');
+                      '裁切細項重設：' + (r.cuttingsReset || 0) + ' 列\n' +
+                      coilMsg + '\n即將重新載入畫面。');
                 // 重新載入當前 active 的模組
                 try {
                     var act = document.querySelector('.app-view.active-app');
