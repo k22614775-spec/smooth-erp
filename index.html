@@ -207,7 +207,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
   <span style="font-weight:bold;font-size:15px;color:#fbbf24;margin-right:14px">◆ ERP × MES 整合系統</span>
   <button id="mode-erp-btn" onclick="switchTopMode('erp')" style="background:#fff;color:#0055aa;border:0;padding:5px 18px;border-radius:4px;font-weight:bold;cursor:pointer">ERP 系統 (庫存/訂單/進貨/機台)</button>
   <button id="mode-mes-btn" onclick="switchTopMode('mes')" style="background:rgba(255,255,255,.18);color:#fff;border:1px solid rgba(255,255,255,.4);padding:5px 18px;border-radius:4px;font-weight:bold;cursor:pointer">MES 現場 (裁切/進度/標籤/條碼)</button>
-  <span id="ver-badge" style="margin-left:auto;font-size:11px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:2px 8px;cursor:default;font-family:monospace" title="目前部署版次 (git commit)">v7c2600d</span>
+  <span id="ver-badge" style="margin-left:auto;font-size:11px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:2px 8px;cursor:default;font-family:monospace" title="目前部署版次 (git commit)">v47ec404</span>
   <span style="font-size:12px;opacity:.75" id="sync-indicator"></span>
 </div>
 
@@ -1328,7 +1328,7 @@ function switchTopMode(mode) {
   }
 
   // ── 系統版次 (每次 commit 自動更新) ──
-  var APP_VERSION = '7c2600d';  // __APP_VERSION__
+  var APP_VERSION = '47ec404';  // __APP_VERSION__
   (function(){ var el=document.getElementById('ver-badge'); if(el) el.textContent='v'+APP_VERSION; })();
 
   // camelCase 對照表（DB 小寫 → 前端 camelCase）
@@ -6664,12 +6664,18 @@ window.addEventListener('DOMContentLoaded', function(){
       const doneCount = coilRows.filter(r=>r.status==='ok').length;
       const pct = coils.length > 0 ? Math.round(doneCount / coils.length * 100) : 0;
       return (
-        <div style={{maxWidth:520, margin:'0 auto', fontFamily:'sans-serif', fontSize:15,
-                     paddingBottom: coils.length > 0 ? 82 : 0, position:'relative'}}>
+        <div className="flex-1 bg-gray-100 flex items-center justify-center p-4">
+          <div className="w-[400px] h-[800px] bg-gray-800 rounded-[3rem] p-4 shadow-2xl relative border-4 border-gray-700 flex flex-col">
+            {/* Notch */}
+            <div className="absolute top-0 inset-x-0 h-6 flex justify-center z-20">
+              <div className="w-40 h-6 bg-black rounded-b-3xl"></div>
+            </div>
+            {/* Screen */}
+            <div className="flex-1 bg-[#f8fafc] rounded-[2rem] overflow-hidden flex flex-col mt-4 relative" style={{fontSize:14, fontFamily:'sans-serif'}}>
 
           {/* ── 標題 Banner ── */}
           <div style={{background:'linear-gradient(135deg,#b71c1c 0%,#c62828 100%)', color:'#fff',
-                       padding:'14px 16px', display:'flex', alignItems:'center', gap:12}}>
+                       padding:'14px 16px', display:'flex', alignItems:'center', gap:12, flexShrink:0}}>
             <div style={{width:46, height:46, borderRadius:'50%', background:'rgba(255,255,255,0.18)',
                          display:'flex', alignItems:'center', justifyContent:'center', fontSize:24, flexShrink:0}}>
               🏭
@@ -6686,7 +6692,7 @@ window.addEventListener('DOMContentLoaded', function(){
             )}
           </div>
 
-          <div style={{padding:'12px 12px 0'}}>
+          <div style={{flex:1, overflowY:'auto', padding:'12px 12px 4px'}}>
 
             {/* ── 輸入單號 ── */}
             <div style={{background:'#fff', borderRadius:14, padding:'12px 14px', marginBottom:10,
@@ -6870,11 +6876,11 @@ window.addEventListener('DOMContentLoaded', function(){
 
           {/* ── 底部固定確認按鈕 ── */}
           {coils.length > 0 && (
-            <div style={{position:'sticky', bottom:0, background:'rgba(255,255,255,0.96)',
+            <div style={{background:'rgba(255,255,255,0.96)',
                          backdropFilter:'blur(8px)', padding:'10px 12px',
-                         borderTop:'1px solid #eee', zIndex:100}}>
+                         borderTop:'1px solid #eee', flexShrink:0}}>
               <button onClick={handleConfirm} disabled={loading}
-                      style={{width:'100%', padding:'15px', fontSize:17, fontWeight:'bold',
+                      style={{width:'100%', padding:'13px', fontSize:15, fontWeight:'bold',
                               borderRadius:12, border:'none', cursor: loading?'not-allowed':'pointer',
                               background: loading?'#bdbdbd': allOk
                                 ? 'linear-gradient(135deg,#b71c1c,#c62828)'
@@ -6888,6 +6894,8 @@ window.addEventListener('DOMContentLoaded', function(){
               </button>
             </div>
           )}
+            </div>{/* /screen */}
+          </div>{/* /phone-shell */}
         </div>
       );
     }
@@ -6983,12 +6991,18 @@ window.addEventListener('DOMContentLoaded', function(){
       const doneCount = coilRows.filter(r=>r.status==='ok').length;
       const pct = coils.length > 0 ? Math.round(doneCount / coils.length * 100) : 0;
       return (
-        <div style={{maxWidth:520, margin:'0 auto', fontFamily:'sans-serif', fontSize:15,
-                     paddingBottom: coils.length > 0 ? 82 : 0, position:'relative'}}>
+        <div className="flex-1 bg-gray-100 flex items-center justify-center p-4">
+          <div className="w-[400px] h-[800px] bg-gray-800 rounded-[3rem] p-4 shadow-2xl relative border-4 border-gray-700 flex flex-col">
+            {/* Notch */}
+            <div className="absolute top-0 inset-x-0 h-6 flex justify-center z-20">
+              <div className="w-40 h-6 bg-black rounded-b-3xl"></div>
+            </div>
+            {/* Screen */}
+            <div className="flex-1 bg-[#f8fafc] rounded-[2rem] overflow-hidden flex flex-col mt-4 relative" style={{fontSize:14, fontFamily:'sans-serif'}}>
 
           {/* ── 標題 Banner ── */}
           <div style={{background:'linear-gradient(135deg,#1b5e20 0%,#2e7d32 100%)', color:'#fff',
-                       padding:'14px 16px', display:'flex', alignItems:'center', gap:12}}>
+                       padding:'14px 16px', display:'flex', alignItems:'center', gap:12, flexShrink:0}}>
             <div style={{width:46, height:46, borderRadius:'50%', background:'rgba(255,255,255,0.18)',
                          display:'flex', alignItems:'center', justifyContent:'center', fontSize:24, flexShrink:0}}>
               📦
@@ -7005,7 +7019,7 @@ window.addEventListener('DOMContentLoaded', function(){
             )}
           </div>
 
-          <div style={{padding:'12px 12px 0'}}>
+          <div style={{flex:1, overflowY:'auto', padding:'12px 12px 4px'}}>
 
             {/* ── 輸入單號 ── */}
             <div style={{background:'#fff', borderRadius:14, padding:'12px 14px', marginBottom:10,
@@ -7261,11 +7275,11 @@ window.addEventListener('DOMContentLoaded', function(){
 
           {/* ── 底部固定確認按鈕 ── */}
           {coils.length > 0 && (
-            <div style={{position:'sticky', bottom:0, background:'rgba(255,255,255,0.96)',
+            <div style={{background:'rgba(255,255,255,0.96)',
                          backdropFilter:'blur(8px)', padding:'10px 12px',
-                         borderTop:'1px solid #eee', zIndex:100}}>
+                         borderTop:'1px solid #eee', flexShrink:0}}>
               <button onClick={handleConfirm} disabled={loading}
-                      style={{width:'100%', padding:'15px', fontSize:17, fontWeight:'bold',
+                      style={{width:'100%', padding:'13px', fontSize:15, fontWeight:'bold',
                               borderRadius:12, border:'none', cursor: loading?'not-allowed':'pointer',
                               background: loading?'#bdbdbd': allOk
                                 ? 'linear-gradient(135deg,#1b5e20,#2e7d32)'
@@ -7279,6 +7293,8 @@ window.addEventListener('DOMContentLoaded', function(){
               </button>
             </div>
           )}
+            </div>{/* /screen */}
+          </div>{/* /phone-shell */}
         </div>
       );
     }
