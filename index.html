@@ -2648,13 +2648,14 @@ function switchTopMode(mode) {
           await _upsert('dispatch_production',{
             id:'DP-'+it.id, dispatchId:dspId,
             dispatchSeq:it.itemNo||it.itemno||'0010',
+            orderId:'', orderItemNo:'',
             model:itModel, spec:it.spec||'',
             qty:it.qty||1, kg:itKg, unit:'KG',
             inBatchNo:itBn, inLocation:'',
             warehouseCode:itWh,
             remark:'委外入庫預期 批號:'+itBn, closed:0,
             createdAt:now,
-          }).catch(function(){});
+          }).catch(function(e){ console.error('委外出庫 dispatch_production 寫入失敗:', e); });
         }
 
         // 4. 更新鋼捲異動單狀態
@@ -2692,11 +2693,12 @@ function switchTopMode(mode) {
           var itBn=it.batchNo||it.id;
           await _upsert('dispatch_production',{
             id:'DPI-'+it.id, dispatchId:dspId, dispatchSeq:it.itemNo||'0010',
+            orderId:'', orderItemNo:'',
             model:itModel, spec:it.spec||'', qty:it.qty||1, kg:itKg,
             unit:'KG', inBatchNo:itBn, inLocation:'',
             warehouseCode:itWh,
             remark:it.remark||'委外入庫', closed:1,
-          }).catch(function(){});
+          }).catch(function(e){ console.error('委外入庫 dispatch_production 寫入失敗:', e); });
 
           // 1b. 把入庫細項加入 warehouse_stock + batch_detail（按實際磅重）
           if(itModel && itKg > 0){
