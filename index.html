@@ -2368,11 +2368,47 @@ function switchTopMode(mode) {
     },
     resetSimulationData: function(cb, errCb){
       _cb((async function(){
-        // 1. 清除所有派工/回單/標籤資料
+        // 1. 清除所有派工/回單/標籤 + 鋼捲異動資料
         var DISP=['labels','dispatch_return_reporters','dispatch_return_deduct',
           'dispatch_return_items','dispatch_returns','dispatch_coil_moves',
-          'dispatch_production','dispatch_orders'];
+          'dispatch_production','dispatch_orders',
+          'coil_transaction_coils','coil_transaction_items','coil_transactions'];
         for(var t of DISP) await _del(t,{'id':'neq.__none__'}).catch(function(){});
+
+        // 1b. 重新植入鋼捲異動示範單 1150511001
+        var _simDate = '2026-05-11';
+        await _upsert('coil_transactions',{
+          id:'1150511001', date:_simDate, docType:'1.委外加工',
+          companyCode:'V001', companyName:'測試委外廠商', taxType:'1.外加', taxRate:5,
+          vendorType:'1.廠商', remark:'示範委外加工單', processAmount:0,
+          status:'待處理', dispatchId:'',
+          createdAt:_simDate+' 08:00:00', updatedAt:_simDate+' 08:00:00'
+        }).catch(function(){});
+        await _upsert('coil_transaction_coils',{
+          id:'CTC-1150511001-01', transactionId:'1150511001', itemNo:'0010',
+          dispatchNo:'', salesNo:'', outWarehouse:'鋼捲倉', inWarehouse:'委外派工倉',
+          model:'ZBE0.500*0914R001', spec:'鍍鋅 0.5*914', batchNo:'1001',
+          qty:1, outWeight:5000, unit:'KG', outLength:2000,
+          returnWarehouse:'鋼捲倉', stockWeight:5000, returnWeight:0,
+          processPrice:0, processAmount:0, returnDate:'', usedWeight:0,
+          usedLength:0, remainLength:0, closed:0, purchaseNo:'',
+          totalPerKg:0, priceBasis:'1.總尺/KG', remark:'示範鋼捲',
+          createdAt:_simDate+' 08:00:00'
+        }).catch(function(){});
+        await _upsert('coil_transaction_items',{
+          id:'CTI-1150511001-A', transactionId:'1150511001', itemNo:'0010',
+          orderNo:'', warehouseCode:'委外派工倉',
+          model:'ZBE0.500*0914R001', spec:'鍍鋅 0.5*914 (分條A)',
+          qty:1, totalKg:2500, remark:'分條 A', batchNo:'1001-A',
+          createdAt:_simDate+' 08:00:00'
+        }).catch(function(){});
+        await _upsert('coil_transaction_items',{
+          id:'CTI-1150511001-B', transactionId:'1150511001', itemNo:'0020',
+          orderNo:'', warehouseCode:'委外派工倉',
+          model:'ZBE0.500*0914R001', spec:'鍍鋅 0.5*914 (分條B)',
+          qty:1, totalKg:2500, remark:'分條 B', batchNo:'1001-B',
+          createdAt:_simDate+' 08:00:00'
+        }).catch(function(){});
 
         // 2. stock_moves 只保留 PURCHASE 相關
         await _del('stock_moves',{'refType':'not.in.(PURCHASE,PURCHASE_REVERSE)'}).catch(function(){});
@@ -2503,7 +2539,7 @@ function switchTopMode(mode) {
     deleteCoilTransactionItem: function(rowId, cb, errCb){
       _cb(_del('coil_transaction_items',{'id':'eq.'+rowId}).then(function(){return{ok:true};}), cb, errCb);
     },
-    // 委外加工出庫：從鋼捲異動單建立派工單
+    // 委外加工出庫：從鋼捲異動單建立派工單 + 倉庫調撥
     createOutsourceDispatch: function(txId, cb, errCb){
       _cb((async function(){
         var r = await Promise.all([
@@ -2513,52 +2549,172 @@ function switchTopMode(mode) {
         var hdr=r[0]&&r[0][0]; var coils=r[1]||[];
         if(!hdr) throw new Error('找不到鋼捲異動單：'+txId);
         var dspId='D'+txId;
+        var now=_nowLocal(); var today=now.split(' ')[0];
+
+        // 1. 建立派工單（委外派工，status open）
         await _upsert('dispatch_orders',{
-          id:dspId, date:hdr.date||_nowLocal().split(' ')[0],
-          docCategory:'2', docType:hdr.docType||'1.委外加工',
+          id:dspId, date:hdr.date||today, docCategory:'2',
+          docType:hdr.docType||'1.委外加工',
           source:'鋼捲異動', orderId:'', partnerCode:hdr.companyCode||'',
           partnerName:hdr.companyName||'', operator:'', machine:'', phase:'',
-          receiveTime:_nowLocal(), finishTime:'', workHours:0, printCount:0,
-          status:'已結案', remark:'來源鋼捲異動單 '+txId,
-          createdAt:_nowLocal(), updatedAt:_nowLocal(),
+          receiveTime:now, finishTime:'', workHours:0, printCount:0,
+          status:'open', remark:'來源鋼捲異動單 '+txId,
+          createdAt:now, updatedAt:now,
         });
+
+        // 2. 建立扣庫明細 + 倉庫調撥（出倉扣庫存、入倉增庫存）
         for(var c of coils){
+          var outWh  = c.outWarehouse||'鋼捲倉';
+          var inWh   = c.inWarehouse||'委外派工倉';
+          var model  = c.model||'';
+          var kg     = parseFloat(c.outWeight)||0;
+          var bn     = c.batchNo||'';
+
           await _upsert('dispatch_coil_moves',{
             id:'CM'+c.id, dispatchId:dspId,
-            outBatchNo:c.batchNo||'', coilNo:c.batchNo||'',
-            model:c.model||'', spec:c.spec||'', qty:c.qty||1,
-            total:c.outWeight||0, unit:c.unit||'KG',
-            outWarehouse:c.outWarehouse||'鋼捲倉', outLocation:'',
-            inWarehouse:c.inWarehouse||'委外派工倉', inLocation:'',
-            inBatchNo:'', loadWeight:c.outWeight||0, unloadWeight:0,
-            createTime:_nowLocal(),
+            outBatchNo:bn, coilNo:bn, model:model, spec:c.spec||'',
+            qty:c.qty||1, total:kg, unit:c.unit||'KG',
+            outWarehouse:outWh, outLocation:'',
+            inWarehouse:inWh,  inLocation:'',
+            inBatchNo:'', loadWeight:kg, unloadWeight:0,
+            createTime:now,
           }).catch(function(){});
+
+          // 扣出倉庫存
+          if(model){
+            var wkOut=model+'|'+outWh;
+            var wsOut = await _get('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+outWh}).catch(function(){return[];});
+            if(wsOut&&wsOut[0]){
+              await _patch('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+outWh},{
+                qty: Math.max(0,(wsOut[0].qty||0)-1),
+                total: Math.max(0,(wsOut[0].total||0)-kg)
+              }).catch(function(){});
+            }
+            // 加入倉庫存
+            var wsIn = await _get('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+inWh}).catch(function(){return[];});
+            if(wsIn&&wsIn[0]){
+              await _patch('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+inWh},{
+                qty:(wsIn[0].qty||0)+1, total:(wsIn[0].total||0)+kg
+              }).catch(function(){});
+            } else {
+              await _upsert('warehouse_stock',{
+                model:model, warehouseNo:inWh, qty:1, total:kg, price:0, amount:0,
+                moveDate:today, remark:'委外出庫調撥 '+txId
+              }).catch(function(){});
+            }
+            // stock_moves 記錄
+            await _upsert('stock_moves',{
+              id:'SM-OUT-'+c.id, model:model, warehouseNo:outWh, batchNo:bn,
+              qty:-1, total:-kg, refType:'OUTSOURCE_OUT', refId:dspId,
+              moveDate:today, remark:'委外出庫 '+txId, createdAt:now
+            }).catch(function(){});
+            await _upsert('stock_moves',{
+              id:'SM-IN-'+c.id, model:model, warehouseNo:inWh, batchNo:bn,
+              qty:1, total:kg, refType:'OUTSOURCE_OUT', refId:dspId,
+              moveDate:today, remark:'委外入倉調撥 '+txId, createdAt:now
+            }).catch(function(){});
+          }
         }
-        await _patch('coil_transactions',{'id':'eq.'+txId},{status:'已出庫',dispatchId:dspId,updatedAt:_nowLocal()}).catch(function(){});
+
+        // 3. 更新鋼捲異動單狀態
+        await _patch('coil_transactions',{'id':'eq.'+txId},{
+          status:'已出庫', dispatchId:dspId, updatedAt:now
+        }).catch(function(){});
+
         return {ok:true, dispatchId:dspId};
       })(), cb, errCb);
     },
-    // 委外加工入庫：從鋼捲異動單建立入庫明細
+    // 委外加工入庫：從鋼捲異動單建立入庫明細 + 自動結案派工單
     createOutsourceInbound: function(txId, cb, errCb){
       _cb((async function(){
         var r = await Promise.all([
           _get('coil_transactions',     {'id':'eq.'+txId}),
+          _get('coil_transaction_coils',{'transactionId':'eq.'+txId}),
           _get('coil_transaction_items',{'transactionId':'eq.'+txId}),
         ]);
-        var hdr=r[0]&&r[0][0]; var items=r[1]||[];
+        var hdr=r[0]&&r[0][0]; var coils=r[1]||[]; var items=r[2]||[];
         if(!hdr) throw new Error('找不到鋼捲異動單：'+txId);
         var dspId=hdr.dispatchId||('D'+txId);
+        var now=_nowLocal(); var today=now.split(' ')[0];
+
+        // 1. 建立 dispatch_production 入庫細項（每筆入庫細項）
         for(var it of items){
           await _upsert('dispatch_production',{
-            id:'DPI'+it.id, dispatchId:dspId, dispatchSeq:it.itemNo||'0010',
+            id:'DPI-'+it.id, dispatchId:dspId, dispatchSeq:it.itemNo||'0010',
             model:it.model||'', spec:it.spec||'', qty:it.qty||1, kg:it.totalKg||0,
             unit:'KG', inBatchNo:it.batchNo||'', inLocation:'',
             warehouseCode:it.warehouseCode||'委外派工倉',
-            remark:it.remark||'委外入庫', closed:0,
+            remark:it.remark||'委外入庫', closed:1,
           }).catch(function(){});
         }
-        await _patch('coil_transactions',{'id':'eq.'+txId},{status:'已入庫',updatedAt:_nowLocal()}).catch(function(){});
-        return {ok:true, dispatchId:dspId};
+
+        // 2. 更新扣庫明細 unloadWeight（回倉磅重）
+        for(var c of coils){
+          if(c.returnWeight){
+            await _patch('dispatch_coil_moves',{'id':'eq.CM'+c.id},{
+              unloadWeight: parseFloat(c.returnWeight)||0
+            }).catch(function(){});
+          }
+        }
+
+        // 3. 自動結案派工單
+        await _patch('dispatch_orders',{'id':'eq.'+dspId},{
+          status:'closed', finishTime:now, updatedAt:now
+        }).catch(function(){});
+
+        // 4. 建立派工回單 (dispatch_returns)
+        var drId='DR'+txId;
+        await _upsert('dispatch_returns',{
+          id:drId, dispatchId:dspId, date:today,
+          remark:'委外加工入庫自動回單 '+txId,
+          status:'closed', createdAt:now, updatedAt:now,
+        }).catch(function(){});
+
+        // 5. 回倉：把委外派工倉扣庫存，加回來源倉
+        for(var c of coils){
+          var inWh  = c.inWarehouse||'委外派工倉';
+          var retWh = c.returnWarehouse||c.outWarehouse||'鋼捲倉';
+          var model = c.model||'';
+          var retKg = parseFloat(c.returnWeight)||parseFloat(c.outWeight)||0;
+          var bn    = c.batchNo||'';
+          if(!model) continue;
+          // 扣委外派工倉
+          var wsFrom = await _get('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+inWh}).catch(function(){return[];});
+          if(wsFrom&&wsFrom[0]){
+            await _patch('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+inWh},{
+              qty:Math.max(0,(wsFrom[0].qty||0)-1), total:Math.max(0,(wsFrom[0].total||0)-retKg)
+            }).catch(function(){});
+          }
+          // 加回入庫倉（加工後批號可能不同，這裡仍用原批號）
+          var wsTo = await _get('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+retWh}).catch(function(){return[];});
+          if(wsTo&&wsTo[0]){
+            await _patch('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+retWh},{
+              qty:(wsTo[0].qty||0)+1, total:(wsTo[0].total||0)+retKg
+            }).catch(function(){});
+          } else {
+            await _upsert('warehouse_stock',{
+              model:model, warehouseNo:retWh, qty:1, total:retKg,
+              price:0, amount:0, moveDate:today, remark:'委外入庫回倉 '+txId
+            }).catch(function(){});
+          }
+          await _upsert('stock_moves',{
+            id:'SM-RET-'+c.id, model:model, warehouseNo:inWh, batchNo:bn,
+            qty:-1, total:-retKg, refType:'OUTSOURCE_IN', refId:drId,
+            moveDate:today, remark:'委外回倉扣庫 '+txId, createdAt:now
+          }).catch(function(){});
+          await _upsert('stock_moves',{
+            id:'SM-RTN-'+c.id, model:model, warehouseNo:retWh, batchNo:bn,
+            qty:1, total:retKg, refType:'OUTSOURCE_IN', refId:drId,
+            moveDate:today, remark:'委外回倉入庫 '+txId, createdAt:now
+          }).catch(function(){});
+        }
+
+        // 6. 更新鋼捲異動單狀態 → 已結案
+        await _patch('coil_transactions',{'id':'eq.'+txId},{
+          status:'已結案', updatedAt:now
+        }).catch(function(){});
+
+        return {ok:true, dispatchId:dspId, returnId:drId};
       })(), cb, errCb);
     },
     searchCoilStock: function(filter, cb, errCb){
