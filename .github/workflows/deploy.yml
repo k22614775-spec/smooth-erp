@@ -28,19 +28,13 @@ jobs:
       # 在 GitHub Repo > Settings > Secrets and variables > Actions 設定:
       #   SUPABASE_URL       = https://YOUR_PROJECT_REF.supabase.co
       #   SUPABASE_ANON_KEY  = eyJhbG...（anon public key）
-      - name: Inject Supabase config
+      # 注入正確的 commit sha 到版次徽章（確保頁面右上角版次 = GitHub 上的 commit sha）
+      - name: Inject version sha
         run: |
-          sed -i "s|https://YOUR_PROJECT_REF.supabase.co|${{ secrets.SUPABASE_URL }}|g" index.html
-          sed -i "s|YOUR_ANON_KEY_HERE|${{ secrets.SUPABASE_ANON_KEY }}|g" index.html
+          SHA=$(git rev-parse --short HEAD)
+          sed -i "s/var APP_VERSION = '[0-9a-f]*'/var APP_VERSION = '${SHA}'/g" index.html
+          sed -i "s/>v[0-9a-f]*</>v${SHA}</g" index.html
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: '.'
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      # 把 Supabase 金鑰從 GitHub Secrets 注入 index.html
+      # 在 GitHub Repo > Settings > Secrets and variables > Actions 設定:
+      #   SUPABASE_URL 
