@@ -2546,8 +2546,8 @@ function switchTopMode(mode) {
     },
     deleteCoilTransaction: function(id, cb, errCb){
       _cb((async function(){
-        await _del('coil_transaction_coils',{'transactionId':'eq.'+id}).catch(function(){});
-        await _del('coil_transaction_items',{'transactionId':'eq.'+id}).catch(function(){});
+        await _del('coil_transaction_coils',{'transactionid':'eq.'+id}).catch(function(){});
+        await _del('coil_transaction_items',{'transactionid':'eq.'+id}).catch(function(){});
         await _del('coil_transactions',     {'id':'eq.'+id}).catch(function(){});
         return {ok:true};
       })(), cb, errCb);
@@ -2563,7 +2563,7 @@ function switchTopMode(mode) {
       _cb((async function(){
         var r = await Promise.all([
           _get('coil_transactions',     {'id':'eq.'+txId}),
-          _get('coil_transaction_coils',{'transactionId':'eq.'+txId}),
+          _get('coil_transaction_coils',{'transactionid':'eq.'+txId}),
         ]);
         var hdr=r[0]&&r[0][0]; var coils=r[1]||[];
         if(!hdr) throw new Error('找不到鋼捲異動單：'+txId);
@@ -2648,8 +2648,8 @@ function switchTopMode(mode) {
       _cb((async function(){
         var r = await Promise.all([
           _get('coil_transactions',     {'id':'eq.'+txId}),
-          _get('coil_transaction_coils',{'transactionId':'eq.'+txId}),
-          _get('coil_transaction_items',{'transactionId':'eq.'+txId}),
+          _get('coil_transaction_coils',{'transactionid':'eq.'+txId}),
+          _get('coil_transaction_items',{'transactionid':'eq.'+txId}),
         ]);
         var hdr=r[0]&&r[0][0]; var coils=r[1]||[]; var items=r[2]||[];
         if(!hdr) throw new Error('找不到鋼捲異動單：'+txId);
