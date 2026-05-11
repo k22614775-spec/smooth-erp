@@ -207,7 +207,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
   <span style="font-weight:bold;font-size:15px;color:#fbbf24;margin-right:14px">◆ ERP × MES 整合系統</span>
   <button id="mode-erp-btn" onclick="switchTopMode('erp')" style="background:#fff;color:#0055aa;border:0;padding:5px 18px;border-radius:4px;font-weight:bold;cursor:pointer">ERP 系統 (庫存/訂單/進貨/機台)</button>
   <button id="mode-mes-btn" onclick="switchTopMode('mes')" style="background:rgba(255,255,255,.18);color:#fff;border:1px solid rgba(255,255,255,.4);padding:5px 18px;border-radius:4px;font-weight:bold;cursor:pointer">MES 現場 (裁切/進度/標籤/條碼)</button>
-  <span id="ver-badge" style="margin-left:auto;font-size:11px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:2px 8px;cursor:default;font-family:monospace" title="目前部署版次 (git commit)">ve5798ca</span>
+  <span id="ver-badge" style="margin-left:auto;font-size:11px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:2px 8px;cursor:default;font-family:monospace" title="目前部署版次 (git commit)">v5399335</span>
   <span style="font-size:12px;opacity:.75" id="sync-indicator"></span>
 </div>
 
@@ -1328,7 +1328,7 @@ function switchTopMode(mode) {
   }
 
   // ── 系統版次 (每次 commit 自動更新) ──
-  var APP_VERSION = 'e5798ca';  // __APP_VERSION__
+  var APP_VERSION = '5399335';  // __APP_VERSION__
   (function(){ var el=document.getElementById('ver-badge'); if(el) el.textContent='v'+APP_VERSION; })();
 
   // camelCase 對照表（DB 小寫 → 前端 camelCase）
@@ -2756,7 +2756,7 @@ function switchTopMode(mode) {
             qty:it.qty||1, totalWeight:itKg,
             inBatchNo:itBn,
             remark:'委外入庫 批號:'+itBn+' '+txId,
-            closed:1, createdAt:now,
+            closed:1,
           }).catch(function(e){_errs.push('DRI:'+String(e.message||e));});
         }
 
