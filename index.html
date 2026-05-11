@@ -2746,7 +2746,7 @@ window.addEventListener('DOMContentLoaded', function(){
           window.API.getCoilTransactions({}, function(rows){
             var b=document.getElementById('ctx-list-body'), html='';
             (rows||[]).forEach(function(r){
-              html+='<tr data-ctx-id="'+_esc(r.id)+'" onclick="selectCoilTxRow(this,''+_esc(r.id)+'')" style="cursor:pointer;">' +
+              html+='<tr data-ctx-id="'+_esc(r.id)+'" onclick="selectCoilTxRow(this)" style="cursor:pointer;">' +
                 '<td><input type="radio" name="ctx-pick"></td>' +
                 '<td>'+_esc(r.id)+'</td><td>'+_esc(r.date)+'</td><td>'+_esc(r.docType)+'</td>' +
                 '<td>'+_esc(r.companyCode)+'</td><td>'+_esc(r.companyName)+'</td>' +
@@ -2758,6 +2758,7 @@ window.addEventListener('DOMContentLoaded', function(){
         }
         function _num(v,d){ return isNaN(Number(v))?'0':Number(v).toFixed(d||0).replace(/\B(?=(\d{3})+(?!\d))/g,','); }
         function selectCoilTxRow(tr, id){
+          if(!id) id = tr.getAttribute('data-ctx-id');
           tr.parentNode.querySelectorAll('tr').forEach(function(r){r.classList.remove('selected-row');});
           tr.classList.add('selected-row');
           var radio=tr.querySelector('input[type=radio]'); if(radio) radio.checked=true;
@@ -2786,7 +2787,7 @@ window.addEventListener('DOMContentLoaded', function(){
           if(!rows.length){ document.getElementById('ctx-coils-body').innerHTML='<tr><td colspan="27" style="text-align:center;color:#999;padding:8px;">（無鋼捲細項）</td></tr>'; return; }
           rows.forEach(function(c,i){
             var seq=String((i+1)*10).padStart(4,'0');
-            html+='<tr onclick="this.classList.toggle('selected-row')">' +
+            html+='<tr onclick="this.classList.toggle(&quot;selected-row&quot;)">' +
               '<td>'+seq+'</td>' +
               '<td><input type="text" value="'+_esc(c.dispatchNo||'')+'" oninput="_ctxCoils['+i+'].dispatchNo=this.value" style="width:100%;border:0;background:transparent;"></td>' +
               '<td><input type="text" value="'+_esc(c.salesNo||'')+'" oninput="_ctxCoils['+i+'].salesNo=this.value" style="width:100%;border:0;background:transparent;"></td>' +
@@ -2813,7 +2814,7 @@ window.addEventListener('DOMContentLoaded', function(){
               '<td class="text-right">'+(c.totalPerKg||0)+'</td>' +
               '<td><input type="text" value="'+_esc(c.priceBasis||'1.總尺/KG')+'" oninput="_ctxCoils['+i+'].priceBasis=this.value" style="width:100%;border:0;background:transparent;"></td>' +
               '<td><input type="text" value="'+_esc(c.remark||'')+'" oninput="_ctxCoils['+i+'].remark=this.value" style="width:100%;border:0;background:transparent;"></td>' +
-              '<td><button onclick="_delCtxCoil('+i+',''+_esc(c.id||'')+'')" style="color:#b22222;border:0;background:none;cursor:pointer;font-size:14px;">✕</button></td>' +
+              '<td><button data-idx="'+i+'" data-rowid="'+_esc(c.id||'')+'" onclick="_delCtxCoilBtn(this)" style="color:#b22222;border:0;background:none;cursor:pointer;font-size:14px;">✕</button></td>' +
             '</tr>';
           });
           document.getElementById('ctx-coils-body').innerHTML=html;
@@ -2823,7 +2824,7 @@ window.addEventListener('DOMContentLoaded', function(){
           if(!rows.length){ document.getElementById('ctx-items-body').innerHTML='<tr><td colspan="10" style="text-align:center;color:#999;padding:8px;">（無入庫細項）</td></tr>'; return; }
           rows.forEach(function(it,i){
             var seq=String((i+1)*10).padStart(4,'0');
-            html+='<tr onclick="this.classList.toggle('selected-row')">' +
+            html+='<tr onclick="this.classList.toggle(&quot;selected-row&quot;)">' +
               '<td>'+seq+'</td>' +
               '<td><input type="text" value="'+_esc(it.orderNo||'')+'" oninput="_ctxItems['+i+'].orderNo=this.value" style="width:100%;border:0;background:transparent;"></td>' +
               '<td><input type="text" value="'+_esc(it.warehouseCode||'')+'" oninput="_ctxItems['+i+'].warehouseCode=this.value" style="width:100%;border:0;background:transparent;"></td>' +
@@ -2833,7 +2834,7 @@ window.addEventListener('DOMContentLoaded', function(){
               '<td><input type="number" value="'+(it.totalKg||0)+'" oninput="_ctxItems['+i+'].totalKg=+this.value" style="width:100%;border:0;background:transparent;text-align:right;"></td>' +
               '<td><input type="text" value="'+_esc(it.remark||'')+'" oninput="_ctxItems['+i+'].remark=this.value" style="width:100%;border:0;background:transparent;"></td>' +
               '<td><input type="text" value="'+_esc(it.batchNo||'')+'" oninput="_ctxItems['+i+'].batchNo=this.value" style="width:100%;border:0;background:transparent;"></td>' +
-              '<td><button onclick="_delCtxItem('+i+',''+_esc(it.id||'')+'')" style="color:#b22222;border:0;background:none;cursor:pointer;font-size:14px;">✕</button></td>' +
+              '<td><button data-idx="'+i+'" data-rowid="'+_esc(it.id||'')+'" onclick="_delCtxItemBtn(this)" style="color:#b22222;border:0;background:none;cursor:pointer;font-size:14px;">✕</button></td>' +
             '</tr>';
           });
           document.getElementById('ctx-items-body').innerHTML=html;
@@ -2891,6 +2892,8 @@ window.addEventListener('DOMContentLoaded', function(){
           _ctxItems.push({id:'',itemNo:'',orderNo:'',warehouseCode:'委外派工倉',model:'',spec:'',qty:1,totalKg:0,remark:'',batchNo:''});
           renderCtxItems();
         }
+        function _delCtxCoilBtn(btn){ _delCtxCoil(+btn.dataset.idx, btn.dataset.rowid||''); }
+        function _delCtxItemBtn(btn){ _delCtxItem(+btn.dataset.idx, btn.dataset.rowid||''); }
         function _delCtxCoil(idx, rowId){
           if(rowId && window.API && window.API.deleteCoilTransactionCoil){
             window.API.deleteCoilTransactionCoil(rowId, function(){ _ctxCoils.splice(idx,1); renderCtxCoils(); });
