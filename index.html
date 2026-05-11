@@ -10782,4 +10782,22 @@ window.addEventListener('DOMContentLoaded', function(){
                 <div className="text-sm text-gray-700 whitespace-pre-line leading-relaxed mb-5">
                   {mesNotice.body}
                 </div>
-  
+                <div className="flex justify-center">
+                  <button onClick={closeMesNotice}
+                          className="px-10 py-2 rounded-lg font-bold text-white shadow"
+                          style={{background: mesNotice.type === 'success' ? '#16a34a' : '#d97706'}}>
+                    確定
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+        </div>
+      );
+    }
+
+    window.mountMesApp = function(){ ReactDOM.createRoot(document.getElementById('mes-root')).render(<App />); };
+</script>
+</body>
+</html>
