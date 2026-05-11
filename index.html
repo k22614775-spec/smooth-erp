@@ -207,7 +207,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
   <span style="font-weight:bold;font-size:15px;color:#fbbf24;margin-right:14px">◆ ERP × MES 整合系統</span>
   <button id="mode-erp-btn" onclick="switchTopMode('erp')" style="background:#fff;color:#0055aa;border:0;padding:5px 18px;border-radius:4px;font-weight:bold;cursor:pointer">ERP 系統 (庫存/訂單/進貨/機台)</button>
   <button id="mode-mes-btn" onclick="switchTopMode('mes')" style="background:rgba(255,255,255,.18);color:#fff;border:1px solid rgba(255,255,255,.4);padding:5px 18px;border-radius:4px;font-weight:bold;cursor:pointer">MES 現場 (裁切/進度/標籤/條碼)</button>
-  <span id="ver-badge" style="margin-left:auto;font-size:11px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:2px 8px;cursor:default;font-family:monospace" title="目前部署版次 (git commit)">v5399335</span>
+  <span id="ver-badge" style="margin-left:auto;font-size:11px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:2px 8px;cursor:default;font-family:monospace" title="目前部署版次 (git commit)">v7491561</span>
   <span style="font-size:12px;opacity:.75" id="sync-indicator"></span>
 </div>
 
@@ -968,7 +968,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
                     <tr>
                         <th style="width:50px;">項次</th>
                         <th style="width:100px;">訂單號</th>
-                        <th style="width:110px;">入倉編號</th>
+                        <th style="width:100px;">批號</th>
                         <th style="width:100px;">型號</th>
                         <th style="width:200px;">品名規格</th>
                         <th style="width:60px;">公式</th>
@@ -976,7 +976,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
                         <th style="width:80px;">廠別編號</th>
                         <th style="width:90px;">尺寸</th>
                         <th style="width:60px;">數量</th>
-                        <th style="width:70px;">總數</th>
+                        <th style="width:70px;">總數(KG)</th>
                         <th style="width:60px;">單位</th>
                         <th style="width:70px;">單價</th>
                         <th style="width:80px;">計價基準</th>
@@ -990,7 +990,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
                         <th style="width:60px;">結案</th>
                         <th style="width:70px;">單重</th>
                         <th style="width:80px;">入倉儲位</th>
-                        <th style="width:80px;">入倉批號</th>
+                        <th style="width:110px;">入倉編號</th>
                         <th style="width:60px;">類別</th>
                         <th style="width:60px;">顏色</th>
                         <th style="width:60px;">漆種</th>
@@ -1328,7 +1328,7 @@ function switchTopMode(mode) {
   }
 
   // ── 系統版次 (每次 commit 自動更新) ──
-  var APP_VERSION = '5399335';  // __APP_VERSION__
+  var APP_VERSION = '7491561';  // __APP_VERSION__
   (function(){ var el=document.getElementById('ver-badge'); if(el) el.textContent='v'+APP_VERSION; })();
 
   // camelCase 對照表（DB 小寫 → 前端 camelCase）
@@ -2755,6 +2755,7 @@ function switchTopMode(mode) {
             model:itModel, spec:it.spec||'',
             qty:it.qty||1, totalWeight:itKg,
             inBatchNo:itBn,
+            inboundNo:itWh,
             remark:'委外入庫 批號:'+itBn+' '+txId,
             closed:1,
           }).catch(function(e){_errs.push('DRI:'+String(e.message||e));});
@@ -3883,7 +3884,7 @@ window.addEventListener('DOMContentLoaded', function(){
                         return '<tr' + (i === 0 ? ' class="selected-row"' : '') + '>' +
                             '<td>' + seqNo + '</td>' +                                                              // 項次
                             '<td>' + _drEsc(it.orderId) + '</td>' +                                                 // 訂單號
-                            '<td>' + _drEsc(it.labelNo || it.inboundNo) + '</td>' +                                 // 入倉編號
+                            '<td>' + _drEsc(it.inBatchNo) + '</td>' +                                               // 批號
                             '<td>' + _drEsc(it.model) + '</td>' +                                                   // 型號
                             '<td>' + _drEsc(it.spec) + '</td>' +                                                    // 品名規格
                             '<td>' + _drEsc(it.formula) + '</td>' +                                                 // 公式
@@ -3891,7 +3892,7 @@ window.addEventListener('DOMContentLoaded', function(){
                             '<td>' + _drEsc(it.factory) + '</td>' +                                                 // 廠別編號
                             '<td>' + _drEsc(it.size) + '</td>' +                                                    // 尺寸
                             '<td class="text-right">' + _drEsc(it.qty) + '</td>' +                                  // 數量
-                            '<td class="text-right">' + (_drNum(it.totalLen != null ? it.totalLen : it.totalWeight, 2) || '0.00') + '</td>' + // 總數
+                            '<td class="text-right">' + (_drNum(it.totalLen || it.totalWeight || 0, 2) || '0.00') + '</td>' +                  // 總數(KG)
                             '<td>' + _drEsc(it.unit || '支') + '</td>' +                                            // 單位
                             '<td class="text-right">' + (_drNum(it.unitPrice, 2) || '0.00') + '</td>' +             // 單價
                             '<td>' + _drEsc(it.priceBasis || '1.總數') + '</td>' +                                  // 計價基準
@@ -3905,7 +3906,7 @@ window.addEventListener('DOMContentLoaded', function(){
                             '<td>' + closed + '</td>' +                                                             // 結案
                             '<td class="text-right">' + (_drNum(it.unitWeight, 3) || '0.000') + '</td>' +           // 單重
                             '<td>' + _drEsc(it.inLocation) + '</td>' +                                              // 入倉儲位
-                            '<td>' + _drEsc(it.inBatchNo) + '</td>' +                                               // 入倉批號
+                            '<td>' + _drEsc(it.labelNo || it.inboundNo) + '</td>' +                                 // 入倉編號
                             '<td>' + _drEsc(it.category) + '</td>' +                                                // 類別
                             '<td>' + _drEsc(it.color) + '</td>' +                                                   // 顏色
                             '<td>' + _drEsc(it.paint) + '</td>' +                                                   // 漆種
