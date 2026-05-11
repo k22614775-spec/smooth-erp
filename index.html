@@ -2648,23 +2648,44 @@ function switchTopMode(mode) {
       _cb((async function(){
         var r = await Promise.all([
           _get('coil_transactions',     {'id':'eq.'+txId}),
-          _get('coil_transaction_coils',{'transactionid':'eq.'+txId}),
-          _get('coil_transaction_items',{'transactionid':'eq.'+txId}),
+          _get('coil_transaction_coils',{'transactionId':'eq.'+txId}),
+          _get('coil_transaction_items',{'transactionId':'eq.'+txId}),
         ]);
         var hdr=r[0]&&r[0][0]; var coils=r[1]||[]; var items=r[2]||[];
         if(!hdr) throw new Error('找不到鋼捲異動單：'+txId);
         var dspId=hdr.dispatchId||('D'+txId);
+        var drId='DR'+txId;   // 提前定義，stock_moves 會用到
         var now=_nowLocal(); var today=now.split(' ')[0];
+        // 取第一筆鋼捲的 model / 回倉 作為入庫細項的預設
+        var coil0=coils[0]||{};
+        var itemModel=coil0.model||'';
+        var itemRetWh=coil0.returnWarehouse||coil0.outWarehouse||'鋼捲倉';
 
-        // 1. 建立 dispatch_production 入庫細項（每筆入庫細項）
+        // 1. 建立 dispatch_production 入庫細項 + 加入庫存
         for(var it of items){
+          var itModel=it.model||itemModel;
+          var itWh=it.warehouseCode||itemRetWh;
+          var itKg=parseFloat(it.totalKg)||0;
+          var itBn=it.batchNo||it.id;
           await _upsert('dispatch_production',{
             id:'DPI-'+it.id, dispatchId:dspId, dispatchSeq:it.itemNo||'0010',
-            model:it.model||'', spec:it.spec||'', qty:it.qty||1, kg:it.totalKg||0,
-            unit:'KG', inBatchNo:it.batchNo||'', inLocation:'',
-            warehouseCode:it.warehouseCode||'委外派工倉',
+            model:itModel, spec:it.spec||'', qty:it.qty||1, kg:itKg,
+            unit:'KG', inBatchNo:itBn, inLocation:'',
+            warehouseCode:itWh,
             remark:it.remark||'委外入庫', closed:1,
           }).catch(function(){});
+
+          // 1b. 把入庫細項加入 warehouse_stock + batch_detail（按實際磅重）
+          if(itModel && itKg > 0){
+            await _adjustWarehouseStock(itModel, itWh, 1, itKg);
+            await _adjustBatchDetail(itModel, itWh, itBn, '', 1, itKg,
+              {remark:'委外入庫 '+txId, createdAt:now});
+            await _upsert('stock_moves',{
+              id:'SM-ITM-'+it.id, model:itModel, warehouseNo:itWh, batchNo:itBn,
+              qty:1, total:itKg, refType:'OUTSOURCE_IN', refId:drId,
+              moveDate:today, remark:'委外入庫細項 '+txId, createdAt:now
+            }).catch(function(){});
+          }
         }
 
         // 2. 更新扣庫明細 unloadWeight（回倉磅重）
@@ -2682,7 +2703,6 @@ function switchTopMode(mode) {
         }).catch(function(){});
 
         // 4. 建立派工回單 (dispatch_returns)
-        var drId='DR'+txId;
         await _upsert('dispatch_returns',{
           id:drId, dispatchId:dspId, date:today,
           remark:'委外加工入庫自動回單 '+txId,
@@ -6683,6 +6703,7 @@ window.addEventListener('DOMContentLoaded', function(){
       const [loading, setLoading] = useState(false);
       const [msg, setMsg]       = useState('');
       const [coilRows, setCoilRows] = useState([]);
+      const [itemRows, setItemRows] = useState([]);
       const txRef = useRef(null);
 
       useEffect(() => { if(txRef.current) txRef.current.focus(); }, []);
@@ -6696,12 +6717,17 @@ window.addEventListener('DOMContentLoaded', function(){
           setTxData(data); setLoading(false);
           const rows = (data.coils||[]).map(c=>({ scanNo:'', weight: c.returnWeight||'', status:'' }));
           setCoilRows(rows);
+          const irows = (data.items||[]).map(it=>({ weight: parseFloat(it.totalKg)||'' }));
+          setItemRows(irows);
           setMsg('');
-        }, function(){ setLoading(false); setMsg('❌ 找不到單號：'+no); setTxData(null); setCoilRows([]); });
+        }, function(){ setLoading(false); setMsg('❌ 找不到單號：'+no); setTxData(null); setCoilRows([]); setItemRows([]); });
       };
 
       const updateRow = (i, field, val) => {
         setCoilRows(prev => prev.map((r,idx) => idx===i ? {...r, [field]:val} : r));
+      };
+      const updateItemRow = (i, val) => {
+        setItemRows(prev => prev.map((r,idx) => idx===i ? {...r, weight:val} : r));
       };
 
       const checkMatch = (i) => {
@@ -6726,10 +6752,14 @@ window.addEventListener('DOMContentLoaded', function(){
           ...c,
           returnWeight: parseFloat(coilRows[i].weight) || c.returnWeight || 0
         }));
+        const updatedItems = (txData.items||[]).map((it,i) => ({
+          ...it,
+          totalKg: parseFloat((itemRows[i]||{}).weight) || parseFloat(it.totalKg) || 0
+        }));
         const payload = {
           header: {...txData.header, status:'已入庫'},
           coils: updatedCoils,
-          items: txData.items||[]
+          items: updatedItems
         };
         window.API.saveCoilTransaction(payload, function(){
           if(window.API.createOutsourceInbound){
@@ -6845,6 +6875,43 @@ window.addEventListener('DOMContentLoaded', function(){
           {h && coils.length===0 && (
             <div style={{textAlign:'center', padding:'24px', color:'#999', border:'2px dashed #ddd', borderRadius:10, fontSize:14}}>
               此異動單尚無鋼捲細項<br/>請先至 ERP 鋼捲異動系統填入資料
+            </div>
+          )}
+
+          {/* 入庫細項過磅（委外加工後回入的每筆鋼捲）*/}
+          {txData && (txData.items||[]).length > 0 && (
+            <div style={{marginTop:10, marginBottom:4}}>
+              <div style={{fontWeight:'bold', fontSize:14, color:'#1b5e20', marginBottom:6, borderBottom:'2px solid #a5d6a7', paddingBottom:4}}>
+                📋 入庫細項過磅（加工後回入庫存）
+              </div>
+              {(txData.items||[]).map((it,i)=>{
+                const irow = itemRows[i]||{weight:''};
+                return (
+                  <div key={i} style={{background:'#f9fbe7', border:'2px solid #c5e1a5', borderRadius:10, padding:'10px 14px', marginBottom:8}}>
+                    <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6}}>
+                      <div style={{fontWeight:'bold', fontSize:14}}>
+                        #{i+1} 批號：<span style={{color:'#2e7d32'}}>{it.batchNo||it.id}</span>
+                      </div>
+                      <div style={{fontSize:12, color:'#888'}}>系統：{it.totalKg||0} KG</div>
+                    </div>
+                    <div style={{fontSize:12, color:'#666', marginBottom:8}}>
+                      {it.model||''}{it.spec ? ' ／'+it.spec : ''}
+                      {it.warehouseCode ? <span>  目標倉：{it.warehouseCode}</span> : ''}
+                    </div>
+                    <div>
+                      <div style={{fontSize:12, color:'#555', marginBottom:3, fontWeight:'bold'}}>⚖️ 入庫過磅重量 (KG)</div>
+                      <div style={{display:'flex', gap:6, alignItems:'center'}}>
+                        <input type="number" step="0.01" min="0"
+                               style={{width:130, fontSize:16, padding:'7px 10px', border:'2px solid #66bb6a', borderRadius:6, outline:'none', textAlign:'right', background:'#fff'}}
+                               value={irow.weight}
+                               onChange={e=>updateItemRow(i,e.target.value)}
+                               placeholder="0.00" />
+                        <span style={{fontSize:13, color:'#888'}}>KG</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
 
