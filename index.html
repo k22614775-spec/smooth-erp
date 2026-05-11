@@ -2709,8 +2709,8 @@ window.addEventListener('DOMContentLoaded', function(){
                     : 'oninput="onCoilUnloadWeightChange(this, \'' + _esc(moveId) + '\')"';
                 html += '<tr data-move-id="' + _esc(moveId) + '" data-load-kg="' + loadKg + '" onclick="selectCoilMoveRow(this)">' +
                     '<td>' + seqNo + '</td>' +                                                                   // 項次
-                    '<td>' + (r.coilNo || r.outboundNo || '') + '</td>' +                                        // 出倉編號
-                    '<td>' + (r.inboundNo || r.coilNo || '') + '</td>' +                                         // 入倉編號
+                    '<td>' + (r.outWarehouse || r.srcWarehouse || '') + '</td>' +                                    // 出倉編號
+                    '<td>' + (r.inWarehouse  || r.dstWarehouse || '') + '</td>' +                                  // 入倉編號
                     '<td>' + (r.model || '') + '</td>' +                                                          // 型號
                     '<td>' + (r.spec || '') + '</td>' +                                                           // 品名規格
                     '<td class="text-right">' + (r.outPieces || r.qty || 0) + '</td>' +                          // 數量
@@ -3134,7 +3134,7 @@ window.addEventListener('DOMContentLoaded', function(){
                         var seqNo = (typeof _padItemNo === 'function') ? _padItemNo((i+1)*10) : String((i+1)*10).padStart(4,'0');
                         return '<tr' + (i === 0 ? ' class="selected-row"' : '') + '>' +
                             '<td>' + seqNo + '</td>' +                                                              // 項次
-                            '<td>' + _drEsc(d.id || d.coilMoveId) + '</td>' +                                       // 出倉編號
+                            '<td>' + _drEsc(d.warehouse || d.outWarehouse || '') + '</td>' +                         // 出倉編號
                             '<td>' + _drEsc(d.model) + '</td>' +                                                    // 型號
                             '<td>' + _drEsc(d.spec) + '</td>' +                                                     // 品名規格
                             '<td class="text-right">' + _drEsc(d.qty) + '</td>' +                                   // 數量
