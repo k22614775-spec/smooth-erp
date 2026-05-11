@@ -207,7 +207,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
   <span style="font-weight:bold;font-size:15px;color:#fbbf24;margin-right:14px">◆ ERP × MES 整合系統</span>
   <button id="mode-erp-btn" onclick="switchTopMode('erp')" style="background:#fff;color:#0055aa;border:0;padding:5px 18px;border-radius:4px;font-weight:bold;cursor:pointer">ERP 系統 (庫存/訂單/進貨/機台)</button>
   <button id="mode-mes-btn" onclick="switchTopMode('mes')" style="background:rgba(255,255,255,.18);color:#fff;border:1px solid rgba(255,255,255,.4);padding:5px 18px;border-radius:4px;font-weight:bold;cursor:pointer">MES 現場 (裁切/進度/標籤/條碼)</button>
-  <span id="ver-badge" style="margin-left:auto;font-size:11px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:2px 8px;cursor:default;font-family:monospace" title="目前部署版次 (git commit)">v14909b3</span>
+  <span id="ver-badge" style="margin-left:auto;font-size:11px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:2px 8px;cursor:default;font-family:monospace" title="目前部署版次 (git commit)">ve5798ca</span>
   <span style="font-size:12px;opacity:.75" id="sync-indicator"></span>
 </div>
 
@@ -1328,7 +1328,7 @@ function switchTopMode(mode) {
   }
 
   // ── 系統版次 (每次 commit 自動更新) ──
-  var APP_VERSION = '14909b3';  // __APP_VERSION__
+  var APP_VERSION = 'e5798ca';  // __APP_VERSION__
   (function(){ var el=document.getElementById('ver-badge'); if(el) el.textContent='v'+APP_VERSION; })();
 
   // camelCase 對照表（DB 小寫 → 前端 camelCase）
@@ -2417,14 +2417,14 @@ function switchTopMode(mode) {
           model:'ZBE0.500*0914R001', spec:'鍍鋅 0.5*914 (分條A)',
           qty:1, totalKg:2500, remark:'分條 A', batchNo:'1001-A',
           createdAt:_simDate+' 08:00:00'
-        }).catch(function(){});
+        }).catch(function(e){ console.error('[RESET] CTI-A 寫入失敗 (請確認006 RLS已套用):', e); });
         await _upsert('coil_transaction_items',{
           id:'CTI-1150511001-B', transactionId:'1150511001', itemNo:'0020',
           orderNo:'', warehouseCode:'委外派工倉',
           model:'ZBE0.500*0914R001', spec:'鍍鋅 0.5*914 (分條B)',
           qty:1, totalKg:2500, remark:'分條 B', batchNo:'1001-B',
           createdAt:_simDate+' 08:00:00'
-        }).catch(function(){});
+        }).catch(function(e){ console.error('[RESET] CTI-B 寫入失敗 (請確認006 RLS已套用):', e); });
 
         // 2. stock_moves 只保留 PURCHASE 相關
         await _del('stock_moves',{'refType':'not.in.(PURCHASE,PURCHASE_REVERSE)'}).catch(function(){});
@@ -2681,6 +2681,8 @@ function switchTopMode(mode) {
         ]);
         var hdr=r[0]&&r[0][0]; var coils=r[1]||[]; var items=r[2]||[];
         if(!hdr) throw new Error('找不到鋼捲異動單：'+txId);
+        console.log('[入庫] txId='+txId, 'coils='+coils.length, 'items='+items.length, items);
+        if(items.length===0) console.warn('[入庫] ⚠️ coil_transaction_items 回傳空 → 請確認：1.已執行模擬資料還原 2.Supabase已套用006_coil_tx_rls.sql');
         var dspId=hdr.dispatchId||('D'+txId);
         var drId='DR'+txId;   // 提前定義，stock_moves 會用到
         var now=_nowLocal(); var today=now.split(' ')[0];
@@ -2825,7 +2827,7 @@ function switchTopMode(mode) {
           status:'已結案', updatedAt:now
         }).catch(function(){});
 
-        return {ok:true, dispatchId:dspId, returnId:drId, errors:_errs};
+        return {ok:true, dispatchId:dspId, returnId:drId, itemCount:items.length, errors:_errs};
       })(), cb, errCb);
     },
     searchCoilStock: function(filter, cb, errCb){
@@ -6838,7 +6840,8 @@ window.addEventListener('DOMContentLoaded', function(){
             window.API.createOutsourceInbound(txData.header.id, function(res){
               setLoading(false);
               var _em=(res&&res.errors&&res.errors.length)?'\n⚠️ '+res.errors.join(' | '):'';
-              setMsg('✅ 入庫完成，派工單：'+(res&&res.dispatchId||'已更新')+_em);
+              var _ic=(res&&res.itemCount!=null)?'  [入庫明細:'+res.itemCount+'筆]':'';
+              setMsg('✅ 入庫完成，派工單：'+(res&&res.dispatchId||'已更新')+_ic+_em);
               setTxData(prev=>prev?{...prev,header:{...prev.header,status:'已入庫'}}:prev);
             }, function(err){ setLoading(false); setMsg('❌ '+(err&&err.message||err)); });
           } else {
