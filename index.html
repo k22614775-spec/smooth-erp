@@ -1055,146 +1055,145 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
 
     <!-- 6. 鋼捲異動系統 -->
     <div id="coilTx-app" class="app-view">
-        <div class="toolbar">
-            <span>[鋼捲異動 - 委外加工 / 鋼捲借出 / 鋼捲售出 / 廠內分條]</span>
-            <span style="float:right; color:#555; font-size:12px;" id="ctx-id-display"></span>
-        </div>
+        <div class="toolbar"><span id="ctx-toolbar-title">[鋼捲異動系統]</span></div>
+
         <!-- 表頭 -->
-        <div class="main-form" style="padding:6px 10px;">
-            <div style="display:flex; flex-wrap:wrap; gap:6px 18px; align-items:center;">
-                <span class="form-label">鋼捲異動單號</span>
-                <input type="text" id="ctx-id" class="form-input" style="width:130px;" placeholder="自動產生" readonly>
-                <span class="form-label">單據日期</span>
-                <input type="text" id="ctx-date" class="form-input" style="width:110px;">
-                <span class="form-label">單據類別</span>
-                <select id="ctx-doc-type" class="input-field" style="width:130px;">
+        <div class="main-container">
+            <div class="form-section">
+                <div class="form-label red">異動單號</div>
+                <input type="text" id="ctx-id" class="input-field" readonly>
+                <div class="form-label">單據日期</div>
+                <input type="text" id="ctx-date" class="input-field">
+                <div class="form-label">單據類別</div>
+                <select id="ctx-doc-type" class="input-field">
                     <option value="1.委外加工">1.委外加工</option>
                     <option value="2.鋼捲借出">2.鋼捲借出</option>
                     <option value="3.鋼捲售出">3.鋼捲售出</option>
                     <option value="4.廠內分條">4.廠內分條</option>
                 </select>
-                <span class="form-label">公司編號</span>
-                <input type="text" id="ctx-company-code" class="form-input" style="width:80px;">
-                <input type="text" id="ctx-company-name" class="form-input" style="width:160px;" placeholder="公司名稱">
-                <span class="form-label">稅金狀況</span>
-                <select id="ctx-tax-type" class="input-field" style="width:100px;">
-                    <option value="1.外加">1.外加</option>
-                    <option value="2.內含">2.內含</option>
-                    <option value="3.免稅">3.免稅</option>
-                </select>
-                <input type="number" id="ctx-tax-rate" class="form-input" style="width:50px;" value="5"> %
-                <span class="form-label">廠客</span>
-                <select id="ctx-vendor-type" class="input-field" style="width:90px;">
-                    <option value="1.廠商">1.廠商</option>
-                    <option value="2.客戶">2.客戶</option>
-                </select>
-                <span class="form-label" style="margin-left:auto; color:#bf360c;">加工金額</span>
-                <input type="number" id="ctx-process-amount" class="form-input" style="width:100px;" value="0" readonly>
-            </div>
-            <div style="display:flex; gap:6px; margin-top:4px; align-items:center;">
-                <span class="form-label">備註</span>
-                <input type="text" id="ctx-remark" class="form-input" style="flex:1;">
-                <select id="ctx-status" class="input-field" style="width:100px;">
+                <div class="form-label">狀態</div>
+                <select id="ctx-status" class="input-field" style="width:90px;">
                     <option value="待處理">待處理</option>
                     <option value="已出庫">已出庫</option>
                     <option value="已入庫">已入庫</option>
                     <option value="已結案">已結案</option>
                 </select>
-                <button class="btn-group" onclick="newCoilTx()" style="background:#4caf50;color:#fff;border-color:#388e3c;">新增</button>
-                <button class="btn-group" onclick="saveCoilTx()" style="background:#0055aa;color:#fff;border-color:#003a75;">儲存</button>
-                <button class="btn-group" onclick="deleteCoilTx()" style="background:#b71c1c;color:#fff;border-color:#7f0000;">刪除</button>
-            </div>
-        </div>
 
-        <!-- 主表格：上方顯示異動清單 -->
-        <div style="display:flex; height:120px; border-top:1px solid #bbb; overflow:hidden;">
-            <div style="flex:1; overflow:auto;">
-                <table class="search-table" style="font-size:12px;">
-                    <thead><tr style="background:#d0d8e8;">
-                        <th style="width:30px;"></th>
-                        <th style="width:120px;">異動單號</th>
-                        <th style="width:90px;">日期</th>
-                        <th style="width:120px;">單據類別</th>
-                        <th style="width:100px;">公司編號</th>
-                        <th style="width:200px;">公司名稱</th>
-                        <th style="width:80px;">狀態</th>
-                        <th style="width:100px;">加工金額</th>
-                        <th>備註</th>
-                    </tr></thead>
-                    <tbody id="ctx-list-body">
-                        <tr><td colspan="9" style="text-align:center;color:#999;padding:10px;">（點擊載入或新增）</td></tr>
-                    </tbody>
-                </table>
+                <div class="form-label">公司編號</div>
+                <input type="text" id="ctx-company-code" class="input-field" style="width:80px;">
+                <div class="form-label">公司名稱</div>
+                <input type="text" id="ctx-company-name" class="input-field" style="width:160px;">
+                <div class="form-label">稅金</div>
+                <select id="ctx-tax-type" class="input-field" style="width:90px;">
+                    <option value="1.外加">1.外加</option>
+                    <option value="2.內含">2.內含</option>
+                    <option value="3.免稅">3.免稅</option>
+                </select>
+                <input type="number" id="ctx-tax-rate" class="input-field" style="width:46px;" value="5"> %
+                <div class="form-label">廠客</div>
+                <select id="ctx-vendor-type" class="input-field" style="width:90px;">
+                    <option value="1.廠商">1.廠商</option>
+                    <option value="2.客戶">2.客戶</option>
+                </select>
+
+                <div class="form-label">備註</div>
+                <input type="text" id="ctx-remark" class="input-field" style="grid-column:span 5;">
+            </div>
+            <div class="totals-section">
+                <span class="total-label">加工金額:</span>
+                <span class="total-value" id="ctx-process-amount-disp">0</span>
+                <input type="hidden" id="ctx-process-amount">
+                <span class="total-label">鋼捲細項:</span>
+                <span class="total-value" id="ctx-coils-count">0</span>
+                <span class="total-label">入庫細項:</span>
+                <span class="total-value" id="ctx-items-count">0</span>
             </div>
         </div>
 
         <!-- Sub-tabs：鋼捲細項 / 入庫細項 -->
-        <div style="border-top:2px solid #0055aa; display:flex; flex-direction:column; flex:1; overflow:hidden;">
-            <div style="display:flex; gap:0; background:#e8edf5; padding:3px 6px 0;">
-                <button class="sub-tab-btn active" id="ctx-tab-coils" onclick="switchCtxTab('coils',this)" style="padding:3px 18px; border:1px solid #0055aa; border-bottom:none; background:#fff; color:#0055aa; font-weight:bold; cursor:pointer; border-radius:4px 4px 0 0; margin-right:4px;">鋼捲細項</button>
-                <button class="sub-tab-btn" id="ctx-tab-items" onclick="switchCtxTab('items',this)" style="padding:3px 18px; border:1px solid #aaa; border-bottom:none; background:#e8edf5; color:#333; cursor:pointer; border-radius:4px 4px 0 0;">入庫細項</button>
-                <button class="btn-group" onclick="addCtxCoilRow()" id="ctx-add-coil-btn" style="margin-left:auto; margin-bottom:2px; padding:2px 12px; font-size:12px; background:#0055aa; color:#fff; border-color:#003a75;">+ 新增鋼捲細項</button>
-                <button class="btn-group" onclick="addCtxItemRow()" id="ctx-add-item-btn" style="margin-left:6px; margin-bottom:2px; padding:2px 12px; font-size:12px; display:none; background:#0055aa; color:#fff; border-color:#003a75;">+ 新增入庫細項</button>
-            </div>
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchCtxTab('coils',this)">鋼捲細項</button>
+            <button class="tab-btn" onclick="switchCtxTab('items',this)">入庫細項</button>
+            <button class="btn-group" onclick="addCtxCoilRow()" id="ctx-add-coil-btn" style="margin-left:auto;padding:2px 12px;font-size:12px;background:#0055aa;color:#fff;border-color:#003a75;">+ 新增鋼捲細項</button>
+            <button class="btn-group" onclick="addCtxItemRow()" id="ctx-add-item-btn" style="margin-left:6px;padding:2px 12px;font-size:12px;display:none;background:#0055aa;color:#fff;border-color:#003a75;">+ 新增入庫細項</button>
+        </div>
 
-            <!-- 鋼捲細項表格 -->
-            <div id="ctx-coils-panel" style="flex:1; overflow:auto; display:block;">
-                <table class="search-table" style="font-size:11px; min-width:1800px;">
-                    <thead><tr style="background:#e8edf5; position:sticky; top:0; z-index:1;">
-                        <th style="width:40px;">項次</th>
-                        <th style="width:110px;">派工單號</th>
-                        <th style="width:90px;">銷貨單號</th>
-                        <th style="width:90px;">出倉編號</th>
-                        <th style="width:90px;">入倉編號</th>
-                        <th style="width:150px;">型號</th>
-                        <th style="width:180px;">品名規格</th>
-                        <th style="width:90px;">批號</th>
-                        <th style="width:50px;">數量</th>
-                        <th style="width:80px;">出庫磅重</th>
-                        <th style="width:50px;">單位</th>
-                        <th style="width:70px;">出庫捲長</th>
-                        <th style="width:90px;">回倉倉號</th>
-                        <th style="width:80px;">庫存重</th>
-                        <th style="width:80px;">回倉磅重</th>
-                        <th style="width:80px;">加工單價</th>
-                        <th style="width:90px;">加工金額</th>
-                        <th style="width:90px;">回倉日期</th>
-                        <th style="width:80px;">使用重量</th>
-                        <th style="width:70px;">使用捲長</th>
-                        <th style="width:70px;">剩餘捲長</th>
-                        <th style="width:50px;">結案</th>
-                        <th style="width:70px;">進貨單號</th>
-                        <th style="width:70px;">總尺/KG</th>
-                        <th style="width:90px;">計費基準</th>
-                        <th style="width:60px;">備註</th>
-                        <th style="width:40px;">刪</th>
-                    </tr></thead>
-                    <tbody id="ctx-coils-body">
-                        <tr><td colspan="27" style="text-align:center;color:#999;padding:10px;">（請先選取或新增鋼捲異動單）</td></tr>
-                    </tbody>
-                </table>
-            </div>
+        <!-- 鋼捲細項表格 -->
+        <div id="ctx-coils-panel" class="grid-container">
+            <table class="search-table" style="font-size:11px; min-width:1800px;">
+                <thead><tr style="background:#e8edf5; position:sticky; top:0; z-index:1;">
+                    <th style="width:40px;">項次</th>
+                    <th style="width:110px;">派工單號</th>
+                    <th style="width:90px;">銷貨單號</th>
+                    <th style="width:90px;">出倉編號</th>
+                    <th style="width:90px;">入倉編號</th>
+                    <th style="width:150px;">型號</th>
+                    <th style="width:180px;">品名規格</th>
+                    <th style="width:90px;">批號</th>
+                    <th style="width:50px;">數量</th>
+                    <th style="width:80px;">出庫磅重</th>
+                    <th style="width:50px;">單位</th>
+                    <th style="width:70px;">出庫捲長</th>
+                    <th style="width:90px;">回倉倉號</th>
+                    <th style="width:80px;">庫存重</th>
+                    <th style="width:80px;">回倉磅重</th>
+                    <th style="width:80px;">加工單價</th>
+                    <th style="width:90px;">加工金額</th>
+                    <th style="width:90px;">回倉日期</th>
+                    <th style="width:80px;">使用重量</th>
+                    <th style="width:70px;">使用捲長</th>
+                    <th style="width:70px;">剩餘捲長</th>
+                    <th style="width:50px;">結案</th>
+                    <th style="width:70px;">進貨單號</th>
+                    <th style="width:70px;">總尺/KG</th>
+                    <th style="width:90px;">計費基準</th>
+                    <th style="width:60px;">備註</th>
+                    <th style="width:40px;">刪</th>
+                </tr></thead>
+                <tbody id="ctx-coils-body">
+                    <tr><td colspan="27" style="text-align:center;color:#999;padding:10px;">（尚未載入）</td></tr>
+                </tbody>
+            </table>
+        </div>
 
-            <!-- 入庫細項表格 -->
-            <div id="ctx-items-panel" style="flex:1; overflow:auto; display:none;">
-                <table class="search-table" style="font-size:11px; min-width:900px;">
-                    <thead><tr style="background:#e8edf5; position:sticky; top:0; z-index:1;">
-                        <th style="width:40px;">項次</th>
-                        <th style="width:110px;">訂單單號</th>
-                        <th style="width:90px;">倉庫編號</th>
-                        <th style="width:150px;">型號</th>
-                        <th style="width:200px;">品名規格</th>
-                        <th style="width:60px;">數量</th>
-                        <th style="width:90px;">總尺/KG</th>
-                        <th style="width:150px;">備註</th>
-                        <th style="width:100px;">批號</th>
-                        <th style="width:40px;">刪</th>
-                    </tr></thead>
-                    <tbody id="ctx-items-body">
-                        <tr><td colspan="10" style="text-align:center;color:#999;padding:10px;">（請先選取鋼捲異動單）</td></tr>
-                    </tbody>
-                </table>
-            </div>
+        <!-- 入庫細項表格 -->
+        <div id="ctx-items-panel" class="grid-container hidden">
+            <table class="search-table" style="font-size:11px; min-width:900px;">
+                <thead><tr style="background:#e8edf5; position:sticky; top:0; z-index:1;">
+                    <th style="width:40px;">項次</th>
+                    <th style="width:110px;">訂單單號</th>
+                    <th style="width:90px;">倉庫編號</th>
+                    <th style="width:150px;">型號</th>
+                    <th style="width:200px;">品名規格</th>
+                    <th style="width:60px;">數量</th>
+                    <th style="width:90px;">總尺/KG</th>
+                    <th style="width:150px;">備註</th>
+                    <th style="width:100px;">批號</th>
+                    <th style="width:40px;">刪</th>
+                </tr></thead>
+                <tbody id="ctx-items-body">
+                    <tr><td colspan="10" style="text-align:center;color:#999;padding:10px;">（尚未載入）</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 鋼捲異動 導覽工具列 -->
+        <div class="nav-toolbar" id="coilTx-nav-toolbar">
+          <button class="nav-btn" data-act="first"  title="首筆 (H)"><span class="icn ic-blue">⏮</span><span class="lbl">首筆<b>H</b></span></button>
+          <button class="nav-btn" data-act="prev"   title="往前一筆 (↑)"><span class="icn ic-blue">⏴</span><span class="lbl">往前↑</span></button>
+          <button class="nav-btn" data-act="next"   title="往後一筆 (↓)"><span class="icn ic-blue">⏵</span><span class="lbl">往後↓</span></button>
+          <button class="nav-btn" data-act="last"   title="末筆 (E)"><span class="icn ic-blue">⏭</span><span class="lbl">末筆<b>E</b></span></button>
+          <span class="nav-sep"></span>
+          <button class="nav-btn" data-act="add"    title="新增 (I)"><span class="icn ic-green">＋</span><span class="lbl">新增<b>I</b></span></button>
+          <button class="nav-btn" data-act="del"    title="刪除 (D)"><span class="icn ic-red">－</span><span class="lbl">刪除<b>D</b></span></button>
+          <button class="nav-btn" data-act="modify" title="修改 (M)"><span class="icn ic-pencil">✎</span><span class="lbl">修改<b>M</b></span></button>
+          <button class="nav-btn" data-act="save"   title="確認/儲存 (S)"><span class="icn ic-check">✔</span><span class="lbl">確認<b>S</b></span></button>
+          <button class="nav-btn" data-act="cancel" title="取消 (Z)"><span class="icn ic-x">✕</span><span class="lbl">取消<b>Z</b></span></button>
+          <span class="nav-spacer"></span>
+          <span class="nav-counter" id="coilTx-nav-counter"><b>0</b> / 0</span>
+          <span class="nav-spacer"></span>
+          <button class="nav-btn" data-act="search" title="搜尋 (F)"><span class="icn ic-search">🔍</span><span class="lbl">搜尋<b>F</b></span></button>
+          <button class="nav-btn" data-act="quit"   title="離開 (Q)"><span class="icn ic-quit">⎋</span><span class="lbl">離開<b>Q</b></span></button>
         </div>
     </div>
 
