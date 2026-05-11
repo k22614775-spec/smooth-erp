@@ -2713,76 +2713,85 @@ window.addEventListener('DOMContentLoaded', function(){
         // 1. 視圖切換與導航
         // ==========================================
         // ── 鋼捲異動單號產生器 ─────────────────────────────────────────
+        // ── 鋼捲異動 helper ──
+        function _ctxSet(id, v){
+          var el=document.getElementById(id); if(!el) return;
+          var t=el.tagName;
+          if(t==='INPUT'||t==='SELECT'||t==='TEXTAREA') el.value=(v==null?'':v);
+          else el.textContent=(v==null?'':String(v));
+        }
         function _ctxGenId(){
           var d=new Date(), y=d.getFullYear()-1911;
           var m=String(d.getMonth()+1).padStart(2,'0');
           var dd=String(d.getDate()).padStart(2,'0');
           var base=y+''+m+''+dd;
-          var rows=document.querySelectorAll('#ctx-list-body tr[data-ctx-id]');
+          // Use current list to find max seq
+          var nav=window.CoilTxNav;
           var maxSeq=0;
-          rows.forEach(function(r){
-            var id=r.getAttribute('data-ctx-id');
-            if(id && id.startsWith(base)) maxSeq=Math.max(maxSeq,parseInt(id.slice(-3))||0);
+          (nav?nav.list:[]).forEach(function(id){
+            if(String(id).startsWith(base)){
+              var seq=parseInt(String(id).slice(base.length),10)||0;
+              if(seq>maxSeq) maxSeq=seq;
+            }
           });
           return base+String(maxSeq+1).padStart(3,'0');
         }
-        // 當前鋼捲異動單快取
-        var _ctxHeader={}, _ctxCoils=[], _ctxItems=[];
-
         function switchCtxTab(tab, btn){
-          document.getElementById('ctx-coils-panel').style.display = tab==='coils'?'block':'none';
-          document.getElementById('ctx-items-panel').style.display = tab==='items'?'block':'none';
-          document.getElementById('ctx-add-coil-btn').style.display = tab==='coils'?'':'none';
-          document.getElementById('ctx-add-item-btn').style.display = tab==='items'?'':'none';
-          ['ctx-tab-coils','ctx-tab-items'].forEach(function(id){
-            var el=document.getElementById(id);
-            if(el){ el.style.background=id.endsWith(tab)?'#fff':'#e8edf5';
-                    el.style.color=id.endsWith(tab)?'#0055aa':'#333';
-                    el.style.borderBottomColor=id.endsWith(tab)?'#fff':'#aaa'; }
+          document.querySelectorAll('#coilTx-app .tab-btn').forEach(function(b){
+            b.classList.toggle('active', b===btn);
           });
+          var coilsPanel=document.getElementById('ctx-coils-panel');
+          var itemsPanel=document.getElementById('ctx-items-panel');
+          var addCoil=document.getElementById('ctx-add-coil-btn');
+          var addItem=document.getElementById('ctx-add-item-btn');
+          if(tab==='coils'){
+            if(coilsPanel) coilsPanel.classList.remove('hidden');
+            if(itemsPanel) itemsPanel.classList.add('hidden');
+            if(addCoil) addCoil.style.display='';
+            if(addItem) addItem.style.display='none';
+          } else {
+            if(coilsPanel) coilsPanel.classList.add('hidden');
+            if(itemsPanel) itemsPanel.classList.remove('hidden');
+            if(addCoil) addCoil.style.display='none';
+            if(addItem) addItem.style.display='';
+          }
         }
-        function loadCoilTxList(){
-          if(!window.API||!window.API.getCoilTransactions) return;
+        var _ctxHeader={}, _ctxCoils=[], _ctxItems=[];
+        function renderCtxHeader(h){
+          h=h||{}; _ctxHeader=h;
+          _ctxSet('ctx-id',       h.id||'');
+          _ctxSet('ctx-date',     h.date||'');
+          _ctxSet('ctx-doc-type', h.docType||'1.委外加工');
+          _ctxSet('ctx-company-code', h.companyCode||'');
+          _ctxSet('ctx-company-name', h.companyName||'');
+          _ctxSet('ctx-tax-type', h.taxType||'1.外加');
+          _ctxSet('ctx-tax-rate', h.taxRate!=null?h.taxRate:5);
+          _ctxSet('ctx-vendor-type', h.vendorType||'1.廠商');
+          _ctxSet('ctx-remark',   h.remark||'');
+          _ctxSet('ctx-status',   h.status||'待處理');
+          _ctxSet('ctx-process-amount', h.processAmount||0);
+          _ctxSet('ctx-process-amount-disp', _num(h.processAmount||0,0));
+          var tb=document.getElementById('ctx-toolbar-title');
+          if(tb) tb.textContent='[鋼捲異動] 目前單號：'+(h.id||'（無）');
+        }
+        function collectCtxHeader(){
+          var h={};
+          ['ctx-id','ctx-date','ctx-doc-type','ctx-company-code','ctx-company-name',
+           'ctx-tax-type','ctx-tax-rate','ctx-vendor-type','ctx-remark','ctx-status','ctx-process-amount']
+          .forEach(function(fid){
+            var el=document.getElementById(fid), key=fid.replace('ctx-','').replace(/-([a-z])/g,function(_,c){return c.toUpperCase();});
+            if(el) h[key]=el.value;
+          });
+          return h;
+        }
+        function bootstrapCoilTxList(cb){
+          if(!window.API||!window.API.getCoilTransactions){ if(cb) cb([]); return; }
           window.API.getCoilTransactions({}, function(rows){
-            var b=document.getElementById('ctx-list-body'), html='';
-            (rows||[]).forEach(function(r){
-              html+='<tr data-ctx-id="'+_esc(r.id)+'" onclick="selectCoilTxRow(this)" style="cursor:pointer;">' +
-                '<td><input type="radio" name="ctx-pick"></td>' +
-                '<td>'+_esc(r.id)+'</td><td>'+_esc(r.date)+'</td><td>'+_esc(r.docType)+'</td>' +
-                '<td>'+_esc(r.companyCode)+'</td><td>'+_esc(r.companyName)+'</td>' +
-                '<td>'+_esc(r.status)+'</td><td class="text-right">'+_num(r.processAmount,0)+'</td>' +
-                '<td>'+_esc(r.remark)+'</td></tr>';
-            });
-            b.innerHTML=html||'<tr><td colspan="9" style="text-align:center;color:#999;padding:8px;">（無資料）</td></tr>';
-          });
+            var ids=(rows||[]).map(function(r){ return r.id; });
+            if(cb) cb(ids);
+          }, function(){ if(cb) cb([]); });
         }
-        function _num(v,d){ return isNaN(Number(v))?'0':Number(v).toFixed(d||0).replace(/\B(?=(\d{3})+(?!\d))/g,','); }
-        function selectCoilTxRow(tr, id){
-          if(!id) id = tr.getAttribute('data-ctx-id');
-          tr.parentNode.querySelectorAll('tr').forEach(function(r){r.classList.remove('selected-row');});
-          tr.classList.add('selected-row');
-          var radio=tr.querySelector('input[type=radio]'); if(radio) radio.checked=true;
-          if(!window.API||!window.API.getCoilTransactionById) return;
-          window.API.getCoilTransactionById(id, function(data){
-            _ctxHeader=data.header||{}; _ctxCoils=data.coils||[]; _ctxItems=data.items||[];
-            renderCtxHeader(); renderCtxCoils(); renderCtxItems();
-          });
-        }
-        function renderCtxHeader(){
-          var h=_ctxHeader||{};
-          document.getElementById('ctx-id').value         = h.id||'';
-          document.getElementById('ctx-date').value       = h.date||'';
-          document.getElementById('ctx-doc-type').value   = h.docType||'1.委外加工';
-          document.getElementById('ctx-company-code').value = h.companyCode||'';
-          document.getElementById('ctx-company-name').value = h.companyName||'';
-          document.getElementById('ctx-tax-type').value   = h.taxType||'1.外加';
-          document.getElementById('ctx-tax-rate').value   = h.taxRate!=null?h.taxRate:5;
-          document.getElementById('ctx-vendor-type').value= h.vendorType||'1.廠商';
-          document.getElementById('ctx-remark').value     = h.remark||'';
-          document.getElementById('ctx-status').value     = h.status||'待處理';
-          document.getElementById('ctx-process-amount').value = h.processAmount||0;
-        }
-        function renderCtxCoils(){
+                function renderCtxCoils(){
           var rows=_ctxCoils||[], html='';
           if(!rows.length){ document.getElementById('ctx-coils-body').innerHTML='<tr><td colspan="27" style="text-align:center;color:#999;padding:8px;">（無鋼捲細項）</td></tr>'; return; }
           rows.forEach(function(c,i){
@@ -2845,45 +2854,6 @@ window.addEventListener('DOMContentLoaded', function(){
           if(_ctxHeader) _ctxHeader.processAmount=Math.round(total*100)/100;
           document.getElementById('ctx-process-amount').value=Math.round(total*100)/100;
         }
-        function newCoilTx(){
-          _ctxHeader={id:'',date:_nowLocal().split(' ')[0],docType:'1.委外加工',
-            companyCode:'',companyName:'',taxType:'1.外加',taxRate:5,
-            vendorType:'1.廠商',remark:'',processAmount:0,status:'待處理'};
-          _ctxCoils=[]; _ctxItems=[];
-          renderCtxHeader(); renderCtxCoils(); renderCtxItems();
-          document.getElementById('ctx-id').value='（儲存後自動產生）';
-        }
-        function saveCoilTx(){
-          if(!window.API||!window.API.saveCoilTransaction) return alert('後端未連線');
-          var h=_ctxHeader||{};
-          h.date = document.getElementById('ctx-date').value;
-          h.docType = document.getElementById('ctx-doc-type').value;
-          h.companyCode = document.getElementById('ctx-company-code').value;
-          h.companyName = document.getElementById('ctx-company-name').value;
-          h.taxType = document.getElementById('ctx-tax-type').value;
-          h.taxRate = parseFloat(document.getElementById('ctx-tax-rate').value)||5;
-          h.vendorType = document.getElementById('ctx-vendor-type').value;
-          h.remark = document.getElementById('ctx-remark').value;
-          h.status = document.getElementById('ctx-status').value;
-          if(!h.id) h.id = _ctxGenId();
-          window.API.saveCoilTransaction({header:h, coils:_ctxCoils, items:_ctxItems}, function(res){
-            alert('✅ 儲存成功：'+res.id);
-            _ctxHeader.id=res.id;
-            document.getElementById('ctx-id').value=res.id;
-            loadCoilTxList();
-          }, function(err){ alert('❌ 儲存失敗：'+(err&&err.message||err)); });
-        }
-        function deleteCoilTx(){
-          var id=document.getElementById('ctx-id').value;
-          if(!id||id==='（儲存後自動產生）') return alert('請先選取要刪除的單據');
-          if(!confirm('確定刪除鋼捲異動單 '+id+' 及所有細項？')) return;
-          window.API.deleteCoilTransaction(id, function(){
-            alert('✅ 已刪除');
-            _ctxHeader={}; _ctxCoils=[]; _ctxItems=[];
-            renderCtxHeader(); renderCtxCoils(); renderCtxItems();
-            loadCoilTxList();
-          }, function(err){ alert('❌ 刪除失敗：'+(err&&err.message||err)); });
-        }
         function addCtxCoilRow(){
           _ctxCoils.push({id:'',itemNo:'',dispatchNo:'',salesNo:'',outWarehouse:'鋼捲倉',inWarehouse:'委外派工倉',model:'',spec:'',batchNo:'',qty:1,outWeight:0,unit:'KG',outLength:0,returnWarehouse:'',stockWeight:0,returnWeight:0,processPrice:0,processAmount:0,returnDate:'',usedWeight:0,usedLength:0,remainLength:0,closed:0,purchaseNo:'',totalPerKg:0,priceBasis:'1.總尺/KG',remark:''});
           renderCtxCoils();
@@ -2915,7 +2885,13 @@ window.addEventListener('DOMContentLoaded', function(){
 
             // 切到鋼捲異動時，自動載入清單
             if (appId === 'coilTx') {
-                try { loadCoilTxList(); } catch(e){}
+                try {
+                  if (window.CoilTxNav) {
+                    bootstrapCoilTxList(function(ids){
+                      window.CoilTxNav.setList(ids, ids.length ? ids.length-1 : 0);
+                    });
+                  }
+                } catch(e){}
             }
 
             // 切到庫存管理時，自動從 Google 試算表載入 庫存主檔 / 倉庫存量 / 批號明細
@@ -6162,6 +6138,58 @@ window.addEventListener('DOMContentLoaded', function(){
 
     bootstrapOrderList(function(ids){ window.OrderNav.setList(ids, 0); });
     bootstrapPurchaseList(function(ids){ window.PurchaseNav.setList(ids, 0); });
+
+    // ── 鋼捲異動 RecordNav ──
+    window.CoilTxNav = RecordNav({
+      sysName: 'coilTx',
+      appId:      'coilTx-app',
+      toolbarId:  'coilTx-nav-toolbar',
+      counterId:  'coilTx-nav-counter',
+      idField:    'ctx-id',
+      onLoad: function(id){
+        if(!window.API||!window.API.getCoilTransactionById) return;
+        window.API.getCoilTransactionById(id, function(data){
+          data = data||{};
+          _ctxHeader = data.header||{id:id};
+          _ctxCoils  = data.coils||[];
+          _ctxItems  = data.items||[];
+          renderCtxHeader(_ctxHeader);
+          renderCtxCoils();
+          renderCtxItems();
+        });
+      },
+      onSave: function(id){
+        if(!window.API||!window.API.saveCoilTransaction) throw new Error('後端未連線');
+        var h = collectCtxHeader();
+        if(!h.id) h.id = id || _ctxGenId();
+        window.API.saveCoilTransaction({header:h, coils:_ctxCoils, items:_ctxItems}, function(res){
+          // update id in list in case it was new
+          var nav = window.CoilTxNav;
+          nav.list[nav.idx] = res.id||h.id;
+          document.getElementById('ctx-id').value = res.id||h.id;
+          nav.refresh();
+        }, function(err){ throw new Error(err&&err.message||String(err)); });
+      },
+      onAdd: function(){
+        var newId = _ctxGenId();
+        var today = _nowLocal?_nowLocal().split(' ')[0]:(new Date().toISOString().slice(0,10));
+        _ctxHeader={id:newId,date:today,docType:'1.委外加工',companyCode:'',companyName:'',
+          taxType:'1.外加',taxRate:5,vendorType:'1.廠商',remark:'',processAmount:0,status:'待處理'};
+        _ctxCoils=[]; _ctxItems=[];
+        renderCtxHeader(_ctxHeader);
+        renderCtxCoils(); renderCtxItems();
+        return newId;
+      },
+      onDelete: function(id){
+        if(!window.API||!window.API.deleteCoilTransaction) return;
+        window.API.deleteCoilTransaction(id, function(){}, function(err){ alert('刪除失敗：'+err); });
+      },
+      onSearch: function(kw){
+        var nav=window.CoilTxNav;
+        return nav.list.findIndex(function(x){ return String(x).indexOf(kw)>=0; });
+      },
+      onQuit: function(){ if(typeof switchMainApp==='function') switchMainApp('order',null); }
+    });
   }
 
   // -------- 鍵盤快捷鍵 (依目前可見的 app 派遣) --------
@@ -6170,6 +6198,8 @@ window.addEventListener('DOMContentLoaded', function(){
     var pur = document.getElementById('purchase-app');
     if (ord && ord.classList.contains('active-app')) return window.OrderNav;
     if (pur && pur.classList.contains('active-app')) return window.PurchaseNav;
+    var ctx = document.getElementById('coilTx-app');
+    if (ctx && ctx.classList.contains('active-app')) return window.CoilTxNav;
     return null;
   }
   document.addEventListener('keydown', function(e){
