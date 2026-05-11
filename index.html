@@ -2705,9 +2705,27 @@ function switchTopMode(mode) {
         // 4. 建立派工回單 (dispatch_returns)
         await _upsert('dispatch_returns',{
           id:drId, dispatchId:dspId, date:today,
+          partnerCode: hdr.companyCode||hdr.companycode||'',
+          partnerName: hdr.companyName||hdr.companyname||'',
           remark:'委外加工入庫自動回單 '+txId,
           status:'closed', createdAt:now, updatedAt:now,
         }).catch(function(){});
+
+        // 4b. 建立 dispatch_return_items（入庫明細）
+        for(var it of items){
+          var itModel=it.model||itemModel;
+          var itKg=parseFloat(it.totalKg)||0;
+          var itBn=it.batchNo||it.id;
+          await _upsert('dispatch_return_items',{
+            id:'DRI-'+it.id, returnId:drId, dispatchId:dspId,
+            orderId:it.orderNo||it.orderno||'',
+            orderItemNo:it.itemNo||it.itemno||'',
+            model:itModel, spec:it.spec||'',
+            qty:it.qty||1, totalWeight:itKg,
+            remark:'委外入庫 批號:'+itBn+' '+txId,
+            closed:1, createdAt:now,
+          }).catch(function(){});
+        }
 
         // 5. 回倉：把委外派工倉扣庫存，加回來源倉
         for(var c of coils){
