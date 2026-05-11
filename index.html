@@ -2678,6 +2678,7 @@ function switchTopMode(mode) {
         var dspId=hdr.dispatchId||('D'+txId);
         var drId='DR'+txId;   // 提前定義，stock_moves 會用到
         var now=_nowLocal(); var today=now.split(' ')[0];
+        var _errs=[];  // 收集非致命錯誤
         // 取第一筆鋼捲的 model / 回倉 作為入庫細項的預設
         var coil0=coils[0]||{};
         var itemModel=coil0.model||'';
@@ -2731,7 +2732,7 @@ function switchTopMode(mode) {
           partnerName: hdr.companyName||hdr.companyname||'',
           remark:'委外加工入庫自動回單 '+txId,
           status:'closed', createdAt:now, updatedAt:now,
-        }).catch(function(){});
+        }).catch(function(e){_errs.push('DR:'+String(e.message||e));});
 
         // 4b. 建立 dispatch_return_items（入庫明細）
         for(var it of items){
@@ -2744,9 +2745,10 @@ function switchTopMode(mode) {
             orderItemNo:it.itemNo||it.itemno||'',
             model:itModel, spec:it.spec||'',
             qty:it.qty||1, totalWeight:itKg,
+            inBatchNo:itBn,
             remark:'委外入庫 批號:'+itBn+' '+txId,
             closed:1, createdAt:now,
-          }).catch(function(){});
+          }).catch(function(e){_errs.push('DRI:'+String(e.message||e));});
         }
 
         // 5. 回倉：把委外派工倉扣庫存，加回來源倉
@@ -2808,7 +2810,7 @@ function switchTopMode(mode) {
             warehouse:cmWh, location:'',
             qty:cm.qty||1, total:cmKg, unit:cmUnit,
             createdAt:now,
-          }).catch(function(){});
+          }).catch(function(e){_errs.push('DRD:'+String(e.message||e));});
         }
 
         // 7. 更新鋼捲異動單狀態 → 已結案
@@ -2816,7 +2818,7 @@ function switchTopMode(mode) {
           status:'已結案', updatedAt:now
         }).catch(function(){});
 
-        return {ok:true, dispatchId:dspId, returnId:drId};
+        return {ok:true, dispatchId:dspId, returnId:drId, errors:_errs};
       })(), cb, errCb);
     },
     searchCoilStock: function(filter, cb, errCb){
@@ -6828,7 +6830,8 @@ window.addEventListener('DOMContentLoaded', function(){
           if(window.API.createOutsourceInbound){
             window.API.createOutsourceInbound(txData.header.id, function(res){
               setLoading(false);
-              setMsg('✅ 入庫完成，派工單：'+(res&&res.dispatchId||'已更新'));
+              var _em=(res&&res.errors&&res.errors.length)?'\n⚠️ '+res.errors.join(' | '):'';
+              setMsg('✅ 入庫完成，派工單：'+(res&&res.dispatchId||'已更新')+_em);
               setTxData(prev=>prev?{...prev,header:{...prev.header,status:'已入庫'}}:prev);
             }, function(err){ setLoading(false); setMsg('❌ '+(err&&err.message||err)); });
           } else {
