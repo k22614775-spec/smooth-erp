@@ -6302,183 +6302,389 @@ window.addEventListener('DOMContentLoaded', function(){
     // ══════════════════════════════════════════════════════════════
     // 委外加工出庫 App
     // ══════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════
+    //  委外加工出庫 App（手機界面）
+    //  流程：輸入異動單號 → 載入 → 逐筆核對鋼捲號 → 出庫過磅 → 確認出庫
+    // ══════════════════════════════════════════════════════════════
     function OutsourceOut(){
-      const [txNo, setTxNo] = React.useState('');
-      const [txData, setTxData] = React.useState(null);
-      const [loading, setLoading] = React.useState(false);
-      const [msg, setMsg] = React.useState('');
+      const { useState, useRef, useEffect } = React;
+      const [txNo, setTxNo]     = useState('');
+      const [txData, setTxData] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [msg, setMsg]       = useState('');
+      // per-coil state: { scanNo, weight, status }  status: ''|'ok'|'mismatch'
+      const [coilRows, setCoilRows] = useState([]);
+      const txRef = useRef(null);
+
+      useEffect(() => { if(txRef.current) txRef.current.focus(); }, []);
 
       const handleLoad = () => {
-        if(!txNo.trim()) return setMsg('請輸入鋼捲異動單號');
-        if(!window.API||!window.API.getCoilTransactionById) return setMsg('後端未連線');
+        const no = txNo.trim();
+        if(!no) return setMsg('請輸入鋼捲異動單號');
+        if(!window.API||!window.API.getCoilTransactionById) return setMsg('⚠️ 後端未連線');
         setLoading(true); setMsg('');
-        window.API.getCoilTransactionById(txNo.trim(), function(data){
+        window.API.getCoilTransactionById(no, function(data){
           setTxData(data); setLoading(false);
-          setMsg('已載入：'+data.header.docType+' / 狀態：'+data.header.status);
-        }, function(err){ setLoading(false); setMsg('❌ 找不到單號：'+txNo); setTxData(null); });
+          const rows = (data.coils||[]).map(c=>({ scanNo:'', weight: c.outWeight||'', status:'' }));
+          setCoilRows(rows);
+          setMsg('');
+        }, function(){ setLoading(false); setMsg('❌ 找不到單號：'+no); setTxData(null); setCoilRows([]); });
+      };
+
+      const updateRow = (i, field, val) => {
+        setCoilRows(prev => {
+          const rows = prev.map((r,idx) => idx===i ? {...r, [field]:val} : r);
+          return rows;
+        });
+      };
+
+      // 核對批號：輸入的 scanNo 是否 == 該筆的 batchNo
+      const checkMatch = (i) => {
+        const coil = txData.coils[i];
+        const scan = coilRows[i].scanNo.trim();
+        if(!scan) return;
+        const ok = scan === (coil.batchNo||'').trim();
+        setCoilRows(prev => prev.map((r,idx) => idx===i ? {...r, status: ok?'ok':'mismatch'} : r));
       };
 
       const handleConfirm = () => {
         if(!txData) return;
-        if(!window.API||!window.API.createOutsourceDispatch) return setMsg('後端未連線');
-        if(!confirm('確認建立委外出庫派工單 D'+txData.header.id+'？')) return;
+        // Check all scanned
+        const coils = txData.coils||[];
+        const allChecked = coilRows.every(r => r.status === 'ok');
+        if(!allChecked){
+          const unscanned = coilRows.filter(r=>r.status==='').length;
+          const mismatched = coilRows.filter(r=>r.status==='mismatch').length;
+          if(mismatched > 0) return setMsg('❌ 有 '+mismatched+' 筆鋼捲號碼不符，無法出庫');
+          if(unscanned > 0 && !confirm('有 '+unscanned+' 筆尚未核對捲號，確定繼續？')) return;
+        }
+        if(!window.API||!window.API.saveCoilTransaction) return setMsg('⚠️ 後端未連線');
+        if(!confirm('確認出庫過磅並建立委外派工單？')) return;
         setLoading(true);
-        window.API.createOutsourceDispatch(txData.header.id, function(res){
-          setLoading(false);
-          setMsg('✅ 派工單已建立：'+res.dispatchId);
-          setTxData(prev => prev ? {...prev, header:{...prev.header, status:'已出庫', dispatchId:res.dispatchId}} : prev);
-        }, function(err){ setLoading(false); setMsg('❌ 失敗：'+(err&&err.message||err)); });
+        // Update outWeight from coilRows
+        const updatedCoils = coils.map((c,i) => ({
+          ...c,
+          outWeight: parseFloat(coilRows[i].weight) || c.outWeight || 0
+        }));
+        const payload = {
+          header: {...txData.header, status:'已出庫'},
+          coils: updatedCoils,
+          items: txData.items||[]
+        };
+        window.API.saveCoilTransaction(payload, function(){
+          if(window.API.createOutsourceDispatch){
+            window.API.createOutsourceDispatch(txData.header.id, function(res){
+              setLoading(false);
+              setMsg('✅ 出庫完成，派工單：'+(res&&res.dispatchId||'已建立'));
+              setTxData(prev=>prev?{...prev,header:{...prev.header,status:'已出庫'}}:prev);
+            }, function(err){ setLoading(false); setMsg('❌ '+(err&&err.message||err)); });
+          } else {
+            setLoading(false); setMsg('✅ 出庫過磅已儲存');
+          }
+        }, function(err){ setLoading(false); setMsg('❌ '+(err&&err.message||err)); });
       };
 
       const h = txData && txData.header;
-      const coils = txData && txData.coils || [];
+      const coils = txData ? (txData.coils||[]) : [];
+      const allOk = coilRows.length > 0 && coilRows.every(r=>r.status==='ok');
+
       return (
-        <div className="p-4 flex flex-col gap-4 overflow-auto" style={{maxWidth:900}}>
-          <div className="text-lg font-bold text-red-800">🏭 委外加工出庫</div>
-          <div className="flex gap-2 items-center">
-            <input className="border border-gray-400 rounded px-3 py-1.5 text-sm" style={{width:200}}
-                   placeholder="輸入鋼捲異動單號" value={txNo}
+        <div style={{maxWidth:520, margin:'0 auto', padding:'12px 8px', fontFamily:'sans-serif', fontSize:15}}>
+          {/* 標題 */}
+          <div style={{background:'#b71c1c', color:'#fff', borderRadius:10, padding:'12px 16px', marginBottom:12, display:'flex', alignItems:'center', gap:10}}>
+            <span style={{fontSize:26}}>🏭</span>
+            <div>
+              <div style={{fontWeight:'bold', fontSize:18}}>委外加工出庫</div>
+              <div style={{fontSize:12, opacity:.85}}>核對鋼捲號碼・記錄出庫過磅重量</div>
+            </div>
+          </div>
+
+          {/* 輸入單號 */}
+          <div style={{background:'#fff', border:'1px solid #ddd', borderRadius:8, padding:'10px 12px', marginBottom:10, display:'flex', gap:8, alignItems:'center'}}>
+            <input ref={txRef} style={{flex:1, fontSize:16, padding:'8px 10px', border:'2px solid #b71c1c', borderRadius:6, outline:'none'}}
+                   placeholder="輸入鋼捲異動單號…" value={txNo}
                    onChange={e=>setTxNo(e.target.value)}
                    onKeyDown={e=>{if(e.key==='Enter') handleLoad();}} />
-            <button onClick={handleLoad} className="px-4 py-1.5 bg-blue-700 text-white rounded text-sm font-bold">載入</button>
-            {h && <button onClick={handleConfirm} className="px-4 py-1.5 bg-red-700 text-white rounded text-sm font-bold">確認出庫並建立派工單</button>}
+            <button onClick={handleLoad} disabled={loading}
+                    style={{background:'#1565c0', color:'#fff', border:'none', borderRadius:6, padding:'8px 18px', fontSize:15, fontWeight:'bold', cursor:'pointer'}}>
+              {loading ? '載入中…' : '載入'}
+            </button>
           </div>
-          {msg && <div className={`text-sm font-bold ${msg.startsWith('✅')?'text-green-700':'text-red-600'}`}>{msg}</div>}
-          {loading && <div className="text-blue-600 text-sm">處理中...</div>}
+
+          {/* 訊息 */}
+          {msg && <div style={{padding:'8px 12px', borderRadius:6, marginBottom:10, background: msg.startsWith('✅')?'#e8f5e9':'#ffebee', color: msg.startsWith('✅')?'#2e7d32':'#c62828', fontWeight:'bold', fontSize:14}}>{msg}</div>}
+
+          {/* 單頭資訊 */}
           {h && (
-            <div className="border border-gray-300 rounded p-3 bg-gray-50 text-sm grid grid-cols-4 gap-2">
-              <div><span className="text-gray-500">異動單號：</span><b>{h.id}</b></div>
-              <div><span className="text-gray-500">日期：</span>{h.date}</div>
-              <div><span className="text-gray-500">類別：</span><b>{h.docType}</b></div>
-              <div><span className="text-gray-500">狀態：</span><b style={{color:h.status==='已出庫'?'#e53935':'#333'}}>{h.status}</b></div>
-              <div><span className="text-gray-500">廠商：</span>{h.companyCode} {h.companyName}</div>
-              {h.dispatchId && <div className="col-span-3"><span className="text-gray-500">派工單：</span><b className="text-blue-700">{h.dispatchId}</b></div>}
+            <div style={{background:'#fff8e1', border:'1px solid #f9a825', borderRadius:8, padding:'10px 14px', marginBottom:12, fontSize:13}}>
+              <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'4px 16px'}}>
+                <div><span style={{color:'#888'}}>異動單號：</span><b>{h.id}</b></div>
+                <div><span style={{color:'#888'}}>日期：</span>{h.date}</div>
+                <div><span style={{color:'#888'}}>類別：</span><b>{h.docType}</b></div>
+                <div><span style={{color:'#888'}}>狀態：</span>
+                  <b style={{color: h.status==='已出庫'?'#e53935':h.status==='待處理'?'#f57c00':'#333'}}>{h.status}</b>
+                </div>
+                <div style={{gridColumn:'span 2'}}><span style={{color:'#888'}}>廠商：</span>{h.companyCode} {h.companyName}</div>
+              </div>
             </div>
           )}
+
+          {/* 鋼捲逐筆核對 */}
+          {coils.map((c,i) => {
+            const row = coilRows[i]||{scanNo:'',weight:'',status:''};
+            const statusColor = row.status==='ok'?'#2e7d32':row.status==='mismatch'?'#c62828':'#888';
+            const statusBg    = row.status==='ok'?'#e8f5e9':row.status==='mismatch'?'#ffebee':'#fafafa';
+            const statusIcon  = row.status==='ok'?'✅':row.status==='mismatch'?'❌':'○';
+            return (
+              <div key={i} style={{background:statusBg, border:'2px solid '+(row.status==='ok'?'#4caf50':row.status==='mismatch'?'#f44336':'#ddd'), borderRadius:10, padding:'12px 14px', marginBottom:10}}>
+                {/* 鋼捲資訊 */}
+                <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
+                  <div style={{fontWeight:'bold', fontSize:15, color:'#222'}}>#{i+1} 批號：<span style={{color:'#1565c0'}}>{c.batchNo||'（未填）'}</span></div>
+                  <div style={{fontSize:22}}>{statusIcon}</div>
+                </div>
+                <div style={{fontSize:12, color:'#666', marginBottom:8}}>
+                  {c.model} {c.spec && <span>／{c.spec}</span>}
+                  {c.outWarehouse && <span>  出倉：{c.outWarehouse}</span>}
+                </div>
+
+                {/* 核對捲號 */}
+                <div style={{marginBottom:8}}>
+                  <div style={{fontSize:12, color:'#555', marginBottom:3, fontWeight:'bold'}}>📷 掃描 / 輸入鋼捲批號核對</div>
+                  <div style={{display:'flex', gap:6, alignItems:'center'}}>
+                    <input style={{flex:1, fontSize:15, padding:'7px 10px', border:'2px solid #90a4ae', borderRadius:6, outline:'none', background:'#fff'}}
+                           placeholder={'預期：'+(c.batchNo||'－')}
+                           value={row.scanNo}
+                           onChange={e=>updateRow(i,'scanNo',e.target.value)}
+                           onKeyDown={e=>{if(e.key==='Enter') checkMatch(i);}} />
+                    <button onClick={()=>checkMatch(i)}
+                            style={{background:'#37474f', color:'#fff', border:'none', borderRadius:6, padding:'7px 14px', fontSize:14, cursor:'pointer', fontWeight:'bold'}}>
+                      核對
+                    </button>
+                  </div>
+                  {row.status==='mismatch' && <div style={{color:'#c62828', fontSize:12, marginTop:3}}>❌ 不符！預期：{c.batchNo}，輸入：{row.scanNo}</div>}
+                  {row.status==='ok' && <div style={{color:'#2e7d32', fontSize:12, marginTop:3}}>✅ 核對正確</div>}
+                </div>
+
+                {/* 出庫過磅 */}
+                <div>
+                  <div style={{fontSize:12, color:'#555', marginBottom:3, fontWeight:'bold'}}>⚖️ 出庫過磅重量 (KG)</div>
+                  <div style={{display:'flex', gap:6, alignItems:'center'}}>
+                    <input type="number" step="0.01"
+                           style={{width:130, fontSize:16, padding:'7px 10px', border:'2px solid #e57373', borderRadius:6, outline:'none', textAlign:'right', background:'#fff'}}
+                           value={row.weight}
+                           onChange={e=>updateRow(i,'weight',e.target.value)}
+                           placeholder={c.outWeight||'0'} />
+                    <span style={{fontSize:13, color:'#888'}}>KG（系統：{c.outWeight||0} KG）</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* 確認按鈕 */}
           {coils.length > 0 && (
-            <div className="overflow-auto">
-              <table className="text-xs border-collapse w-full">
-                <thead><tr className="bg-red-100">
-                  <th className="border border-gray-300 px-2 py-1">批號</th>
-                  <th className="border border-gray-300 px-2 py-1">型號</th>
-                  <th className="border border-gray-300 px-2 py-1">品名規格</th>
-                  <th className="border border-gray-300 px-2 py-1">出庫磅重</th>
-                  <th className="border border-gray-300 px-2 py-1">出倉</th>
-                  <th className="border border-gray-300 px-2 py-1">入倉</th>
-                </tr></thead>
-                <tbody>
-                  {coils.map((c,i) => (
-                    <tr key={i} className={i%2===0?'bg-white':'bg-red-50'}>
-                      <td className="border border-gray-300 px-2 py-1 font-bold">{c.batchNo}</td>
-                      <td className="border border-gray-300 px-2 py-1">{c.model}</td>
-                      <td className="border border-gray-300 px-2 py-1">{c.spec}</td>
-                      <td className="border border-gray-300 px-2 py-1 text-right">{c.outWeight} KG</td>
-                      <td className="border border-gray-300 px-2 py-1">{c.outWarehouse||'鋼捲倉'}</td>
-                      <td className="border border-gray-300 px-2 py-1">{c.inWarehouse||'委外派工倉'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <button onClick={handleConfirm} disabled={loading}
+                    style={{width:'100%', padding:'14px', fontSize:17, fontWeight:'bold', borderRadius:10, border:'none', cursor:'pointer', marginTop:4,
+                            background: allOk ? '#b71c1c' : '#ef9a9a', color:'#fff',
+                            boxShadow:'0 3px 8px rgba(183,28,28,.4)'}}>
+              {loading ? '處理中…' : (allOk ? '✅ 確認出庫過磅 + 建立派工單' : '⚠️ 確認出庫（部分未核對）')}
+            </button>
           )}
         </div>
       );
     }
 
     // ══════════════════════════════════════════════════════════════
-    // 委外加工入庫 App
+    //  委外加工入庫 App（手機界面）
+    //  流程：輸入異動單號 → 載入 → 逐筆核對鋼捲號 → 入庫過磅 → 確認入庫
     // ══════════════════════════════════════════════════════════════
     function OutsourceIn(){
-      const [txNo, setTxNo] = React.useState('');
-      const [txData, setTxData] = React.useState(null);
-      const [loading, setLoading] = React.useState(false);
-      const [msg, setMsg] = React.useState('');
+      const { useState, useRef, useEffect } = React;
+      const [txNo, setTxNo]     = useState('');
+      const [txData, setTxData] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [msg, setMsg]       = useState('');
+      const [coilRows, setCoilRows] = useState([]);
+      const txRef = useRef(null);
+
+      useEffect(() => { if(txRef.current) txRef.current.focus(); }, []);
 
       const handleLoad = () => {
-        if(!txNo.trim()) return setMsg('請輸入鋼捲異動單號');
-        if(!window.API||!window.API.getCoilTransactionById) return setMsg('後端未連線');
+        const no = txNo.trim();
+        if(!no) return setMsg('請輸入鋼捲異動單號');
+        if(!window.API||!window.API.getCoilTransactionById) return setMsg('⚠️ 後端未連線');
         setLoading(true); setMsg('');
-        window.API.getCoilTransactionById(txNo.trim(), function(data){
+        window.API.getCoilTransactionById(no, function(data){
           setTxData(data); setLoading(false);
-          setMsg('已載入：'+data.header.docType+' / 狀態：'+data.header.status);
-        }, function(err){ setLoading(false); setMsg('❌ 找不到單號：'+txNo); setTxData(null); });
+          const rows = (data.coils||[]).map(c=>({ scanNo:'', weight: c.returnWeight||'', status:'' }));
+          setCoilRows(rows);
+          setMsg('');
+        }, function(){ setLoading(false); setMsg('❌ 找不到單號：'+no); setTxData(null); setCoilRows([]); });
+      };
+
+      const updateRow = (i, field, val) => {
+        setCoilRows(prev => prev.map((r,idx) => idx===i ? {...r, [field]:val} : r));
+      };
+
+      const checkMatch = (i) => {
+        const coil = txData.coils[i];
+        const scan = coilRows[i].scanNo.trim();
+        if(!scan) return;
+        const ok = scan === (coil.batchNo||'').trim();
+        setCoilRows(prev => prev.map((r,idx) => idx===i ? {...r, status: ok?'ok':'mismatch'} : r));
       };
 
       const handleConfirm = () => {
         if(!txData) return;
-        if(!window.API||!window.API.createOutsourceInbound) return setMsg('後端未連線');
-        if(!confirm('確認完成委外入庫並寫入派工入庫明細？')) return;
+        const coils = txData.coils||[];
+        const mismatched = coilRows.filter(r=>r.status==='mismatch').length;
+        if(mismatched > 0) return setMsg('❌ 有 '+mismatched+' 筆鋼捲號碼不符，無法入庫');
+        const unscanned = coilRows.filter(r=>r.status==='').length;
+        if(unscanned > 0 && !confirm('有 '+unscanned+' 筆尚未核對捲號，確定繼續？')) return;
+        if(!window.API||!window.API.saveCoilTransaction) return setMsg('⚠️ 後端未連線');
+        if(!confirm('確認入庫過磅並寫入派工入庫明細？')) return;
         setLoading(true);
-        window.API.createOutsourceInbound(txData.header.id, function(res){
-          setLoading(false);
-          setMsg('✅ 入庫明細已寫入，派工單：'+res.dispatchId);
-          setTxData(prev => prev ? {...prev, header:{...prev.header, status:'已入庫'}} : prev);
-        }, function(err){ setLoading(false); setMsg('❌ 失敗：'+(err&&err.message||err)); });
+        const updatedCoils = coils.map((c,i) => ({
+          ...c,
+          returnWeight: parseFloat(coilRows[i].weight) || c.returnWeight || 0
+        }));
+        const payload = {
+          header: {...txData.header, status:'已入庫'},
+          coils: updatedCoils,
+          items: txData.items||[]
+        };
+        window.API.saveCoilTransaction(payload, function(){
+          if(window.API.createOutsourceInbound){
+            window.API.createOutsourceInbound(txData.header.id, function(res){
+              setLoading(false);
+              setMsg('✅ 入庫完成，派工單：'+(res&&res.dispatchId||'已更新'));
+              setTxData(prev=>prev?{...prev,header:{...prev.header,status:'已入庫'}}:prev);
+            }, function(err){ setLoading(false); setMsg('❌ '+(err&&err.message||err)); });
+          } else {
+            setLoading(false); setMsg('✅ 入庫過磅已儲存');
+          }
+        }, function(err){ setLoading(false); setMsg('❌ '+(err&&err.message||err)); });
       };
 
       const h = txData && txData.header;
-      const items = txData && txData.items || [];
+      const coils = txData ? (txData.coils||[]) : [];
+      const allOk = coilRows.length > 0 && coilRows.every(r=>r.status==='ok');
+
       return (
-        <div className="p-4 flex flex-col gap-4 overflow-auto" style={{maxWidth:900}}>
-          <div className="text-lg font-bold text-green-800">📦 委外加工入庫</div>
-          <div className="flex gap-2 items-center">
-            <input className="border border-gray-400 rounded px-3 py-1.5 text-sm" style={{width:200}}
-                   placeholder="輸入鋼捲異動單號" value={txNo}
+        <div style={{maxWidth:520, margin:'0 auto', padding:'12px 8px', fontFamily:'sans-serif', fontSize:15}}>
+          {/* 標題 */}
+          <div style={{background:'#1b5e20', color:'#fff', borderRadius:10, padding:'12px 16px', marginBottom:12, display:'flex', alignItems:'center', gap:10}}>
+            <span style={{fontSize:26}}>📦</span>
+            <div>
+              <div style={{fontWeight:'bold', fontSize:18}}>委外加工入庫</div>
+              <div style={{fontSize:12, opacity:.85}}>核對鋼捲號碼・記錄入庫過磅重量</div>
+            </div>
+          </div>
+
+          {/* 輸入單號 */}
+          <div style={{background:'#fff', border:'1px solid #ddd', borderRadius:8, padding:'10px 12px', marginBottom:10, display:'flex', gap:8, alignItems:'center'}}>
+            <input ref={txRef} style={{flex:1, fontSize:16, padding:'8px 10px', border:'2px solid #1b5e20', borderRadius:6, outline:'none'}}
+                   placeholder="輸入鋼捲異動單號…" value={txNo}
                    onChange={e=>setTxNo(e.target.value)}
                    onKeyDown={e=>{if(e.key==='Enter') handleLoad();}} />
-            <button onClick={handleLoad} className="px-4 py-1.5 bg-blue-700 text-white rounded text-sm font-bold">載入</button>
-            {h && <button onClick={handleConfirm} className="px-4 py-1.5 bg-green-700 text-white rounded text-sm font-bold">確認入庫並寫入明細</button>}
+            <button onClick={handleLoad} disabled={loading}
+                    style={{background:'#1565c0', color:'#fff', border:'none', borderRadius:6, padding:'8px 18px', fontSize:15, fontWeight:'bold', cursor:'pointer'}}>
+              {loading ? '載入中…' : '載入'}
+            </button>
           </div>
-          {msg && <div className={`text-sm font-bold ${msg.startsWith('✅')?'text-green-700':'text-red-600'}`}>{msg}</div>}
-          {loading && <div className="text-blue-600 text-sm">處理中...</div>}
+
+          {/* 訊息 */}
+          {msg && <div style={{padding:'8px 12px', borderRadius:6, marginBottom:10, background: msg.startsWith('✅')?'#e8f5e9':'#ffebee', color: msg.startsWith('✅')?'#2e7d32':'#c62828', fontWeight:'bold', fontSize:14}}>{msg}</div>}
+
+          {/* 單頭資訊 */}
           {h && (
-            <div className="border border-gray-300 rounded p-3 bg-gray-50 text-sm grid grid-cols-4 gap-2">
-              <div><span className="text-gray-500">異動單號：</span><b>{h.id}</b></div>
-              <div><span className="text-gray-500">日期：</span>{h.date}</div>
-              <div><span className="text-gray-500">類別：</span><b>{h.docType}</b></div>
-              <div><span className="text-gray-500">狀態：</span><b style={{color:h.status==='已入庫'?'#2e7d32':'#333'}}>{h.status}</b></div>
-              <div><span className="text-gray-500">廠商：</span>{h.companyCode} {h.companyName}</div>
-              {h.dispatchId && <div className="col-span-3"><span className="text-gray-500">出庫派工單：</span><b className="text-blue-700">{h.dispatchId}</b></div>}
+            <div style={{background:'#f1f8e9', border:'1px solid #aed581', borderRadius:8, padding:'10px 14px', marginBottom:12, fontSize:13}}>
+              <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'4px 16px'}}>
+                <div><span style={{color:'#888'}}>異動單號：</span><b>{h.id}</b></div>
+                <div><span style={{color:'#888'}}>日期：</span>{h.date}</div>
+                <div><span style={{color:'#888'}}>類別：</span><b>{h.docType}</b></div>
+                <div><span style={{color:'#888'}}>狀態：</span>
+                  <b style={{color: h.status==='已入庫'?'#2e7d32':h.status==='已出庫'?'#1565c0':'#f57c00'}}>{h.status}</b>
+                </div>
+                <div style={{gridColumn:'span 2'}}><span style={{color:'#888'}}>廠商：</span>{h.companyCode} {h.companyName}</div>
+                {h.dispatchId && <div style={{gridColumn:'span 2'}}><span style={{color:'#888'}}>出庫派工單：</span><b style={{color:'#1565c0'}}>{h.dispatchId}</b></div>}
+              </div>
             </div>
           )}
-          {items.length > 0 && (
-            <div className="overflow-auto">
-              <table className="text-xs border-collapse w-full">
-                <thead><tr className="bg-green-100">
-                  <th className="border border-gray-300 px-2 py-1">批號</th>
-                  <th className="border border-gray-300 px-2 py-1">型號</th>
-                  <th className="border border-gray-300 px-2 py-1">品名規格</th>
-                  <th className="border border-gray-300 px-2 py-1">數量</th>
-                  <th className="border border-gray-300 px-2 py-1">重量(KG)</th>
-                  <th className="border border-gray-300 px-2 py-1">倉庫</th>
-                  <th className="border border-gray-300 px-2 py-1">備註</th>
-                </tr></thead>
-                <tbody>
-                  {items.map((it,i) => (
-                    <tr key={i} className={i%2===0?'bg-white':'bg-green-50'}>
-                      <td className="border border-gray-300 px-2 py-1 font-bold">{it.batchNo}</td>
-                      <td className="border border-gray-300 px-2 py-1">{it.model}</td>
-                      <td className="border border-gray-300 px-2 py-1">{it.spec}</td>
-                      <td className="border border-gray-300 px-2 py-1 text-right">{it.qty}</td>
-                      <td className="border border-gray-300 px-2 py-1 text-right">{it.totalKg}</td>
-                      <td className="border border-gray-300 px-2 py-1">{it.warehouseCode||'委外派工倉'}</td>
-                      <td className="border border-gray-300 px-2 py-1">{it.remark}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+
+          {/* 鋼捲逐筆核對 */}
+          {coils.map((c,i) => {
+            const row = coilRows[i]||{scanNo:'',weight:'',status:''};
+            const statusBg   = row.status==='ok'?'#e8f5e9':row.status==='mismatch'?'#ffebee':'#fafafa';
+            const borderColor= row.status==='ok'?'#4caf50':row.status==='mismatch'?'#f44336':'#ddd';
+            const statusIcon = row.status==='ok'?'✅':row.status==='mismatch'?'❌':'○';
+            return (
+              <div key={i} style={{background:statusBg, border:'2px solid '+borderColor, borderRadius:10, padding:'12px 14px', marginBottom:10}}>
+                <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
+                  <div style={{fontWeight:'bold', fontSize:15}}>#{ i+1} 批號：<span style={{color:'#1565c0'}}>{c.batchNo||'（未填）'}</span></div>
+                  <div style={{fontSize:22}}>{statusIcon}</div>
+                </div>
+                <div style={{fontSize:12, color:'#666', marginBottom:8}}>
+                  {c.model} {c.spec && <span>／{c.spec}</span>}
+                  {c.returnWarehouse && <span>  回倉：{c.returnWarehouse}</span>}
+                </div>
+
+                {/* 核對捲號 */}
+                <div style={{marginBottom:8}}>
+                  <div style={{fontSize:12, color:'#555', marginBottom:3, fontWeight:'bold'}}>📷 掃描 / 輸入鋼捲批號核對</div>
+                  <div style={{display:'flex', gap:6}}>
+                    <input style={{flex:1, fontSize:15, padding:'7px 10px', border:'2px solid #90a4ae', borderRadius:6, outline:'none', background:'#fff'}}
+                           placeholder={'預期：'+(c.batchNo||'－')}
+                           value={row.scanNo}
+                           onChange={e=>updateRow(i,'scanNo',e.target.value)}
+                           onKeyDown={e=>{if(e.key==='Enter') checkMatch(i);}} />
+                    <button onClick={()=>checkMatch(i)}
+                            style={{background:'#37474f', color:'#fff', border:'none', borderRadius:6, padding:'7px 14px', fontSize:14, cursor:'pointer', fontWeight:'bold'}}>
+                      核對
+                    </button>
+                  </div>
+                  {row.status==='mismatch' && <div style={{color:'#c62828', fontSize:12, marginTop:3}}>❌ 不符！預期：{c.batchNo}，輸入：{row.scanNo}</div>}
+                  {row.status==='ok' && <div style={{color:'#2e7d32', fontSize:12, marginTop:3}}>✅ 核對正確</div>}
+                </div>
+
+                {/* 入庫過磅 */}
+                <div>
+                  <div style={{fontSize:12, color:'#555', marginBottom:3, fontWeight:'bold'}}>⚖️ 入庫過磅重量 (KG)</div>
+                  <div style={{display:'flex', gap:6, alignItems:'center'}}>
+                    <input type="number" step="0.01"
+                           style={{width:130, fontSize:16, padding:'7px 10px', border:'2px solid #66bb6a', borderRadius:6, outline:'none', textAlign:'right', background:'#fff'}}
+                           value={row.weight}
+                           onChange={e=>updateRow(i,'weight',e.target.value)}
+                           placeholder={c.returnWeight||'0'} />
+                    <span style={{fontSize:13, color:'#888'}}>KG</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* 無鋼捲細項提示 */}
+          {h && coils.length===0 && (
+            <div style={{textAlign:'center', padding:'24px', color:'#999', border:'2px dashed #ddd', borderRadius:10, fontSize:14}}>
+              此異動單尚無鋼捲細項<br/>請先至 ERP 鋼捲異動系統填入資料
             </div>
           )}
-          {items.length === 0 && h && (
-            <div className="text-sm text-gray-500 p-4 border border-dashed border-gray-300 rounded text-center">
-              此異動單尚無入庫細項，請先在 ERP 鋼捲異動系統的「入庫細項」tab 填入資料
-            </div>
+
+          {/* 確認按鈕 */}
+          {coils.length > 0 && (
+            <button onClick={handleConfirm} disabled={loading}
+                    style={{width:'100%', padding:'14px', fontSize:17, fontWeight:'bold', borderRadius:10, border:'none', cursor:'pointer', marginTop:4,
+                            background: allOk ? '#1b5e20' : '#a5d6a7', color:'#fff',
+                            boxShadow:'0 3px 8px rgba(27,94,32,.4)'}}>
+              {loading ? '處理中…' : (allOk ? '✅ 確認入庫過磅 + 寫入明細' : '⚠️ 確認入庫（部分未核對）')}
+            </button>
           )}
         </div>
       );
     }
 
-    function App() {
+
+        function App() {
       // 移除 cut_details, 加入 mobile_report
       const [mainTab, setMainTab] = useState('cut'); // 'cut' | 'progress' | 'labels' | 'mobile_report'
       const [currentView, setCurrentView] = useState('list'); // 'list' | 'detail_order' | 'detail_label'
