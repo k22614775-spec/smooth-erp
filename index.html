@@ -1421,6 +1421,17 @@ function switchTopMode(mode) {
     cutmethod:'cutMethod',
     // 額外別名補強（確保完整）
     unloadweight:'unloadWeight',loadweight:'loadWeight',
+    // coil_transactions 相關
+    transactionid:'transactionId', dispatchno:'dispatchNo',
+    outweight:'outWeight', outlength:'outLength',
+    returnwarehouse:'returnWarehouse', stockweight:'stockWeight',
+    returnweight:'returnWeight', processprice:'processPrice',
+    returndate:'returnDate', usedweight:'usedWeight',
+    usedlength:'usedLength', remainlength:'remainLength',
+    purchaseno:'purchaseNo', totalperkg:'totalPerKg',
+    orderno:'orderNo', warehousecode:'warehouseCode',
+    totalkg:'totalKg', companycode:'companyCode',
+    companyname:'companyName', vendortype:'vendorType',
   };
   function _normRow(row){
     const out={};
@@ -2494,7 +2505,7 @@ function switchTopMode(mode) {
     getCoilTransactions: function(filter, cb, errCb){
       var qs = {};
       if(filter && filter.id)      qs['id']      = 'eq.'+filter.id;
-      if(filter && filter.docType) qs['docType']  = 'eq.'+filter.docType;
+      if(filter && filter.docType) qs['doctype']  = 'eq.'+filter.docType;
       if(filter && filter.status)  qs['status']   = 'eq.'+filter.status;
       qs['order'] = 'id.desc'; qs['limit'] = '100';
       _cb(_get('coil_transactions', qs), cb, errCb);
@@ -2503,8 +2514,8 @@ function switchTopMode(mode) {
       _cb((async function(){
         var results = await Promise.all([
           _get('coil_transactions',     {'id':'eq.'+id}),
-          _get('coil_transaction_coils',{'transactionId':'eq.'+id,'order':'itemNo'}),
-          _get('coil_transaction_items',{'transactionId':'eq.'+id,'order':'itemNo'}),
+          _get('coil_transaction_coils',{'transactionid':'eq.'+id,'order':'itemno'}),
+          _get('coil_transaction_items',{'transactionid':'eq.'+id,'order':'itemno'}),
         ]);
         var hdr = results[0] && results[0][0];
         if(!hdr) throw new Error('找不到鋼捲異動單：'+id);
@@ -10771,22 +10782,4 @@ window.addEventListener('DOMContentLoaded', function(){
                 <div className="text-sm text-gray-700 whitespace-pre-line leading-relaxed mb-5">
                   {mesNotice.body}
                 </div>
-                <div className="flex justify-center">
-                  <button onClick={closeMesNotice}
-                          className="px-10 py-2 rounded-lg font-bold text-white shadow"
-                          style={{background: mesNotice.type === 'success' ? '#16a34a' : '#d97706'}}>
-                    確定
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-        </div>
-      );
-    }
-
-    window.mountMesApp = function(){ ReactDOM.createRoot(document.getElementById('mes-root')).render(<App />); };
-</script>
-</body>
-</html>
+  
