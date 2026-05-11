@@ -77,20 +77,21 @@
         .form-input:focus, .input-field:focus { background-color: var(--focus-color); outline: 1px solid blue; }
 
         /* 網格布局 */
-        #inventory-app .main-form, #order-app .form-section, #purchase-app .form-section, #dispatch-app .form-section, #dispatchReturn-app .form-section {
+        #inventory-app .main-form, #order-app .form-section, #purchase-app .form-section, #dispatch-app .form-section, #dispatchReturn-app .form-section, #coilTx-app .form-section {
             display: grid; grid-template-columns: 80px 1fr 80px 1fr 80px 1fr 80px 1fr; gap: 4px 8px; padding: 10px; border: 1px solid var(--border-color); background-color: var(--bg-color); margin-bottom: 5px; flex-shrink: 0; overflow-y: auto;
         }
 
-        #order-app .main-container, #purchase-app .main-container, #dispatch-app .main-container, #dispatchReturn-app .main-container {
+        #order-app .main-container, #purchase-app .main-container, #dispatch-app .main-container, #dispatchReturn-app .main-container, #coilTx-app .main-container {
             display: flex; gap: 10px; margin-bottom: 10px; flex-shrink: 0; flex-wrap: nowrap; min-width: 1200px;
         }
         #order-app .form-section { flex: 1; align-items: center; }
         #purchase-app .form-section { flex: 1; align-items: center; align-content: start; }
         #dispatch-app .form-section { flex: 1; align-items: center; align-content: start; }
         #dispatchReturn-app .form-section { flex: 1; align-items: center; align-content: start; }
+        #coilTx-app .form-section { flex: 1; align-items: center; align-content: start; }
 
         /* 合計區塊分離樣式：固定於右上方 */
-        #order-app .totals-section, #purchase-app .totals-section, #dispatch-app .totals-section, #dispatchReturn-app .totals-section {
+        #order-app .totals-section, #purchase-app .totals-section, #dispatch-app .totals-section, #dispatchReturn-app .totals-section, #coilTx-app .totals-section {
             flex: 1; max-width: 250px; min-width: 200px; background: #e4e4e4; border: 1px solid #999; padding: 10px 15px;
             display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; height: fit-content; align-items: end;
         }
