@@ -2564,8 +2564,9 @@ function switchTopMode(mode) {
         var r = await Promise.all([
           _get('coil_transactions',     {'id':'eq.'+txId}),
           _get('coil_transaction_coils',{'transactionid':'eq.'+txId}),
+          _get('coil_transaction_items',{'transactionid':'eq.'+txId,'order':'itemno'}),
         ]);
-        var hdr=r[0]&&r[0][0]; var coils=r[1]||[];
+        var hdr=r[0]&&r[0][0]; var coils=r[1]||[]; var items=r[2]||[];
         if(!hdr) throw new Error('找不到鋼捲異動單：'+txId);
         var dspId='D'+txId;
         var now=_nowLocal(); var today=now.split(' ')[0];
@@ -2635,7 +2636,28 @@ function switchTopMode(mode) {
           }
         }
 
-        // 3. 更新鋼捲異動單狀態
+        // 3. 建立派工單入庫預期明細（dispatch_production，委外後預計回入的鋼捲批號）
+        var coil0=coils[0]||{};
+        var itemModel=coil0.model||'';
+        var itemRetWh=coil0.returnWarehouse||coil0.outWarehouse||'鋼捲倉';
+        for(var it of items){
+          var itModel=it.model||itemModel;
+          var itWh=it.warehouseCode||itemRetWh;
+          var itKg=parseFloat(it.totalKg)||0;
+          var itBn=it.batchNo||it.id;
+          await _upsert('dispatch_production',{
+            id:'DP-'+it.id, dispatchId:dspId,
+            dispatchSeq:it.itemNo||it.itemno||'0010',
+            model:itModel, spec:it.spec||'',
+            qty:it.qty||1, kg:itKg, unit:'KG',
+            inBatchNo:itBn, inLocation:'',
+            warehouseCode:itWh,
+            remark:'委外入庫預期 批號:'+itBn, closed:0,
+            createdAt:now,
+          }).catch(function(){});
+        }
+
+        // 4. 更新鋼捲異動單狀態
         await _patch('coil_transactions',{'id':'eq.'+txId},{
           status:'已出庫', dispatchId:dspId, updatedAt:now
         }).catch(function(){});
@@ -2766,7 +2788,30 @@ function switchTopMode(mode) {
           }).catch(function(){});
         }
 
-        // 6. 更新鋼捲異動單狀態 → 已結案
+        // 6. 建立派工回單扣庫明細 (dispatch_return_deduct)
+        //    從 dispatch_coil_moves 讀出原料鋼捲，作為扣庫依據
+        var cmRows = await _get('dispatch_coil_moves',{'dispatchId':'eq.'+dspId}).catch(function(){return[];});
+        for(var cm of cmRows){
+          var cmModel  = cm.model||'';
+          var cmBn     = cm.outBatchNo||cm.outbatchno||cm.batchNo||cm.batchno||'';
+          var cmKg     = parseFloat(cm.unloadWeight||cm.unloadweight) ||
+                         parseFloat(cm.loadWeight||cm.loadweight) ||
+                         parseFloat(cm.total)||0;
+          var cmWh     = cm.inWarehouse||cm.inwarehouse||'委外派工倉';
+          var cmSpec   = cm.spec||'';
+          var cmUnit   = cm.unit||'KG';
+          if(!cmModel) continue;
+          await _upsert('dispatch_return_deduct',{
+            id:'DRD-'+cm.id, returnId:drId, dispatchId:dspId,
+            coilMoveId:cm.id||cm.moveId||cm.moveid,
+            model:cmModel, spec:cmSpec, batchNo:cmBn,
+            warehouse:cmWh, location:'',
+            qty:cm.qty||1, total:cmKg, unit:cmUnit,
+            createdAt:now,
+          }).catch(function(){});
+        }
+
+        // 7. 更新鋼捲異動單狀態 → 已結案
         await _patch('coil_transactions',{'id':'eq.'+txId},{
           status:'已結案', updatedAt:now
         }).catch(function(){});
