@@ -24,18 +24,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Inject version sha
+      - name: Inject secrets and version
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
           SHA=$(git rev-parse --short HEAD)
-          sed -i "s/__APP_VERSION__/${SHA}/g" index.html
-          echo "Injected SHA: ${SHA}"
-          grep "APP_VERSION" index.html | head -2
-
-      - name: Inject Supabase config
-        run: |
-          sed -i "s|https://YOUR_PROJECT_REF.supabase.co|${{ secrets.SUPABASE_URL }}|g" index.html
-          sed -i "s|YOUR_ANON_KEY_HERE|${{ secrets.SUPABASE_ANON_KEY }}|g" index.html
-          echo "Done"
+          python3 - << PYEOF
+import os
+sha = "$SHA"
+url = os.environ["SUPABASE_URL"]
+key = os.environ["SUPABASE_ANON_KEY"]
+content = open("index.html", "r", encoding="utf-8").read()
+content = content.replace("__APP_VERSION__", sha)
+content = content.replace("https://YOUR_PROJECT_REF.supabase.co", url)
+content = content.replace("YOUR_ANON_KEY_HERE", key)
+open("index.html", "w", encoding="utf-8").write(content)
+print(f"SHA={sha}, URL={url[:30]}..., KEY={key[:20]}...")
+PYEOF
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
