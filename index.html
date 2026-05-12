@@ -2391,7 +2391,7 @@ function switchTopMode(mode) {
           'coil_transaction_coils','coil_transaction_items','coil_transactions'];
         for(var t of DISP) await _del(t,{'id':'neq.__none__'}).catch(function(){});
 
-        // 1b. 重新植入鋼捲異動示範單 1150511001
+        // 1b. 重新植入鋼捲異動示範單 1150511001（全用小寫欄位名，符合 Supabase schema）
         var _simDate = '2026-05-11';
         var _coilSeedErrs = [];
         var _seedErr = function(label){ return function(e){
@@ -5131,7 +5131,7 @@ window.addEventListener('DOMContentLoaded', function(){
                   : '⚠️ 鋼捲異動示範單未建立\n' +
                     (r.coilTxErrMsg
                       ? '   錯誤：' + r.coilTxErrMsg + '\n'
-                      : '   → 請確認 Supabase 已執行 006_coil_tx_rls.sql\n');
+                      : '   → 請在 Supabase 執行 006_coil_tx_rls.sql\n');
                 alert('模擬資料已還原。\n\n' +
                       '清空：標籤 / 派工單 / 派工回單 / 派工入庫 / 派工扣庫\n' +
                       '已沖銷 STOCK_MOVES：' + (c.stockMovesRemoved || 0) + ' 列\n' +
@@ -11231,4 +11231,22 @@ window.addEventListener('DOMContentLoaded', function(){
                 <div className="text-sm text-gray-700 whitespace-pre-line leading-relaxed mb-5">
                   {mesNotice.body}
                 </div>
-                <div class
+                <div className="flex justify-center">
+                  <button onClick={closeMesNotice}
+                          className="px-10 py-2 rounded-lg font-bold text-white shadow"
+                          style={{background: mesNotice.type === 'success' ? '#16a34a' : '#d97706'}}>
+                    確定
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+        </div>
+      );
+    }
+
+    window.mountMesApp = function(){ ReactDOM.createRoot(document.getElementById('mes-root')).render(<App />); };
+</script>
+</body>
+</html>
