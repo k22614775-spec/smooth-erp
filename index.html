@@ -207,7 +207,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
   <span style="font-weight:bold;font-size:15px;color:#fbbf24;margin-right:14px">◆ ERP × MES 整合系統</span>
   <button id="mode-erp-btn" onclick="switchTopMode('erp')" style="background:#fff;color:#0055aa;border:0;padding:5px 18px;border-radius:4px;font-weight:bold;cursor:pointer">ERP 系統 (庫存/訂單/進貨/機台)</button>
   <button id="mode-mes-btn" onclick="switchTopMode('mes')" style="background:rgba(255,255,255,.18);color:#fff;border:1px solid rgba(255,255,255,.4);padding:5px 18px;border-radius:4px;font-weight:bold;cursor:pointer">MES 現場 (裁切/進度/標籤/條碼)</button>
-  <span id="ver-badge" style="margin-left:auto;font-size:11px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:2px 8px;cursor:default;font-family:monospace" title="目前部署版次 (git commit)">v0000000</span>
+  <span id="ver-badge" style="margin-left:auto;font-size:11px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:2px 8px;cursor:default;font-family:monospace" title="目前部署版次 (git commit)">v8868f16</span>
   <span style="font-size:12px;opacity:.75" id="sync-indicator"></span>
 </div>
 
@@ -1321,14 +1321,14 @@ function switchTopMode(mode) {
     const out = {};
     keys.forEach(function(k){
       if(k === k.toLowerCase() && hasUpper.has(k)) return; // lowercase 且有 camelCase 版 → 略過
-      if(r[k] === null || r[k] === undefined || r[k] === '') return; // 空值不送
+      if(r[k] === null || r[k] === undefined) return; // 允許空字串寫入，以滿足 DB 的 NOT NULL 限制
       out[k] = r[k];
     });
     return out;
   }
 
   // ── 系統版次 (每次 commit 自動更新) ──
-  var APP_VERSION = '0000000';  // __APP_VERSION__
+  var APP_VERSION = '8868f16';  // __APP_VERSION__
   (function(){ var el=document.getElementById('ver-badge'); if(el) el.textContent='v'+APP_VERSION; })();
 
   // camelCase 對照表（DB 小寫 → 前端 camelCase）
@@ -1767,13 +1767,13 @@ function switchTopMode(mode) {
             // 同步更新 dispatch_production
             if(r.dispatchId) {
               const dpFqs=Object.assign({},fqs,{'dispatchId':'eq.'+r.dispatchId});
-              await _patch('dispatch_production', dpFqs, patch).catch(function(){});
+              await _patch('dispatch_production', dpFqs, patch).catch(function(e){ console.warn('非致命寫入失敗:', e); });
             }
           } else {
             // 實際 ID → UPSERT
             await _upsert('cutting_details', Object.assign({}, r, patch));
             // 同步更新 dispatch_production（相同 id）
-            await _patch('dispatch_production',{'id':'eq.'+r.id}, patch).catch(function(){});
+            await _patch('dispatch_production',{'id':'eq.'+r.id}, patch).catch(function(e){ console.warn('非致命寫入失敗:', e); });
           }
           saved++;
         }
@@ -2001,14 +2001,14 @@ function switchTopMode(mode) {
           id:_uid('SM'), moveType:'OUT', refType:'DISPATCH_COIL', refId:dispatchId,
           warehouse:srcWH, location:srcLoc,
           remark:'上架出庫（鋼捲倉→產線倉）派工 '+dispatchId,
-        })).catch(function(){});
+        })).catch(function(e){ console.warn('非致命寫入失敗:', e); });
 
         // 3. stock_moves：IN 產線倉（調撥入庫）
         await _upsert('stock_moves', Object.assign({}, smBase, {
           id:_uid('SM'), moveType:'IN', refType:'DISPATCH_COIL', refId:dispatchId,
           warehouse:dstWH, location:dstLoc,
           remark:'上架入庫（產線倉←鋼捲倉）派工 '+dispatchId,
-        })).catch(function(){});
+        })).catch(function(e){ console.warn('非致命寫入失敗:', e); });
 
         // 4. warehouse_stock：鋼捲倉 −qty/−total
         await _adjustWarehouseStock(model, srcWH, -movQty, -movTotal);
@@ -2224,7 +2224,7 @@ function switchTopMode(mode) {
             originalRollNo:m.originalRollNo||m.originalrollno||'',
             operator:opts.operator||'',
             remark:'派工結束扣庫（產線倉），派工單 ' + dispatchId,
-          }).catch(function(){});
+          }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
 
           // ── 同步更新庫存三表（產線倉扣減）──────────────────────
           const _consumedQty   = parseFloat(m.qty||0);
@@ -2235,11 +2235,11 @@ function switchTopMode(mode) {
 
           // (A) 產線倉 warehouse_stock 扣減消耗量
           if (_consumedQty > 0 || _consumedTotal > 0)
-            await _adjustWarehouseStock(_model, _deductWarehouse, -_consumedQty, -_consumedTotal).catch(function(){});
+            await _adjustWarehouseStock(_model, _deductWarehouse, -_consumedQty, -_consumedTotal).catch(function(e){ console.warn('非致命寫入失敗:', e); });
 
           // (B) 產線倉 batch_detail 扣減消耗量
           if (_batchNo && (_consumedQty > 0 || _consumedTotal > 0))
-            await _adjustBatchDetail(_model, _deductWarehouse, _batchNo, _deductLoc, -_consumedQty, -_consumedTotal, null).catch(function(){});
+            await _adjustBatchDetail(_model, _deductWarehouse, _batchNo, _deductLoc, -_consumedQty, -_consumedTotal, null).catch(function(e){ console.warn('非致命寫入失敗:', e); });
 
           // (C) 若有下架剩料，歸回鋼捲倉
           const _srcWH = m.outWarehouse||m.outwarehouse||'鋼捲倉';
@@ -2255,9 +2255,9 @@ function switchTopMode(mode) {
               originalRollNo:m.originalRollNo||m.originalrollno||'',
               operator:opts.operator||'',
               remark:'派工剩料歸回鋼捲倉，回單 '+returnId,
-            }).catch(function(){});
-            await _adjustWarehouseStock(_model, _srcWH, 0, +_unloadKg).catch(function(){});
-            await _adjustBatchDetail(_model, _srcWH, _batchNo, _srcLoc, 0, +_unloadKg, null).catch(function(){});
+            }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+            await _adjustWarehouseStock(_model, _srcWH, 0, +_unloadKg).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+            await _adjustBatchDetail(_model, _srcWH, _batchNo, _srcLoc, 0, +_unloadKg, null).catch(function(e){ console.warn('非致命寫入失敗:', e); });
           }
           // ─────────────────────────────────────────────────────────
 
@@ -2279,7 +2279,7 @@ function switchTopMode(mode) {
         await _patch('dispatch_return_reporters',
           {'dispatchId':'eq.'+dispatchId,'status':'eq.active'},
           {status:'closed', endTime:nowLocal, updatedAt:_nowIso()}
-        ).catch(()=>{});
+        ).catch(function(e){ console.warn('非致命寫入失敗:', e); });
 
         // 取所有 sessions 計算有效工時
         const sessions = await _get('dispatch_return_reporters',{'dispatchId':'eq.'+dispatchId});
@@ -2389,7 +2389,7 @@ function switchTopMode(mode) {
           'dispatch_return_items','dispatch_returns','dispatch_coil_moves',
           'dispatch_production','dispatch_orders',
           'coil_transaction_coils','coil_transaction_items','coil_transactions'];
-        for(var t of DISP) await _del(t,{'id':'neq.__none__'}).catch(function(){});
+        for(var t of DISP) await _del(t,{'id':'neq.__none__'}).catch(function(e){ console.warn('非致命寫入失敗:', e); });
 
         // 1b. 重新植入鋼捲異動示範單 1150511001（全用小寫欄位名，符合 Supabase schema）
         var _simDate = '2026-05-11';
@@ -2433,18 +2433,18 @@ function switchTopMode(mode) {
         }).catch(_seedErr('coil_transaction_items CTI-B'));
 
         // 2. stock_moves 只保留 PURCHASE 相關
-        await _del('stock_moves',{'refType':'not.in.(PURCHASE,PURCHASE_REVERSE)'}).catch(function(){});
+        await _del('stock_moves',{'refType':'not.in.(PURCHASE,PURCHASE_REVERSE)'}).catch(function(e){ console.warn('非致命寫入失敗:', e); });
 
         // 3. 還原訂單/裁切細項狀態
-        await _patch('orders',{'status':'eq.已派工'},{status:'待派工',dispatchId:''}).catch(function(){});
+        await _patch('orders',{'status':'eq.已派工'},{status:'待派工',dispatchId:''}).catch(function(e){ console.warn('非致命寫入失敗:', e); });
         await _patch('cutting_details',{'id':'neq.__none__'},{
           dispatchId:'',dispatchSeq:'',topDone:0,bottomDone:0,
           closed:0,startTime:'',finishTime:'',reporter:'',reportedAt:'',
-          processNo:'',inboundNo:'',inLocation:'',inBatchNo:''}).catch(function(){});
+          processNo:'',inboundNo:'',inLocation:'',inBatchNo:''}).catch(function(e){ console.warn('非致命寫入失敗:', e); });
 
         // 4. 清空庫存表，從進貨資料重建
-        await _del('warehouse_stock',{'id':'gt.0'}).catch(function(){});
-        await _del('batch_detail',   {'id':'gt.0'}).catch(function(){});
+        await _del('warehouse_stock',{'id':'gt.0'}).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+        await _del('batch_detail',   {'id':'gt.0'}).catch(function(e){ console.warn('非致命寫入失敗:', e); });
 
         var results = await Promise.all([
           _get('purchases',      {'order':'id'}),
@@ -2496,8 +2496,8 @@ function switchTopMode(mode) {
 
         var whRows=Object.values(whMap);
         var batchRows=Object.values(batchMap);
-        if(whRows.length)    await _upsert('warehouse_stock', whRows).catch(function(){});
-        if(batchRows.length) await _upsert('batch_detail',   batchRows).catch(function(){});
+        if(whRows.length)    await _upsert('warehouse_stock', whRows).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+        if(batchRows.length) await _upsert('batch_detail',   batchRows).catch(function(e){ console.warn('非致命寫入失敗:', e); });
 
         var coilTxOk = 0;
         var coilTxErrMsg = '';
@@ -2542,27 +2542,32 @@ function switchTopMode(mode) {
       if(!h.createdAt) h.createdAt = _nowLocal();
       h.updatedAt = _nowLocal();
       _cb((async function(){
-        await _upsert('coil_transactions', h);
-        for(var c of coils){
-          if(!c.id) c.id=_uid('CTC');
-          c.transactionId=h.id;
-          if(!c.createdAt) c.createdAt=_nowLocal();
-          await _upsert('coil_transaction_coils', c).catch(function(){});
+        try {
+          await _upsert('coil_transactions', h);
+          for(var c of coils){
+            if(!c.id) c.id=_uid('CTC');
+            c.transactionId=h.id;
+            if(!c.createdAt) c.createdAt=_nowLocal();
+            await _upsert('coil_transaction_coils', c); // 明細失敗直接向上拋出，不允許孤兒資料
+          }
+          for(var it of items){
+            if(!it.id) it.id=_uid('CTI');
+            it.transactionId=h.id;
+            if(!it.createdAt) it.createdAt=_nowLocal();
+            await _upsert('coil_transaction_items', it); // 明細失敗直接向上拋出，不允許孤兒資料
+          }
+          return {ok:true, id:h.id};
+        } catch(e) {
+          console.error('saveCoilTransaction 寫入失敗，交易中止:', e);
+          throw e; // 確保 errCb 被觸發，外層得知失敗
         }
-        for(var it of items){
-          if(!it.id) it.id=_uid('CTI');
-          it.transactionId=h.id;
-          if(!it.createdAt) it.createdAt=_nowLocal();
-          await _upsert('coil_transaction_items', it).catch(function(){});
-        }
-        return {ok:true, id:h.id};
       })(), cb, errCb);
     },
     deleteCoilTransaction: function(id, cb, errCb){
       _cb((async function(){
-        await _del('coil_transaction_coils',{'transactionid':'eq.'+id}).catch(function(){});
-        await _del('coil_transaction_items',{'transactionid':'eq.'+id}).catch(function(){});
-        await _del('coil_transactions',     {'id':'eq.'+id}).catch(function(){});
+        await _del('coil_transaction_coils',{'transactionid':'eq.'+id}).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+        await _del('coil_transaction_items',{'transactionid':'eq.'+id}).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+        await _del('coil_transactions',     {'id':'eq.'+id}).catch(function(e){ console.warn('非致命寫入失敗:', e); });
         return {ok:true};
       })(), cb, errCb);
     },
@@ -2612,7 +2617,7 @@ function switchTopMode(mode) {
             inWarehouse:inWh,  inLocation:'',
             inBatchNo:'', loadWeight:kg, unloadWeight:0,
             createTime:now,
-          }).catch(function(){});
+          }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
 
           // 扣出倉庫存
           if(model){
@@ -2622,31 +2627,31 @@ function switchTopMode(mode) {
               await _patch('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+outWh},{
                 qty: Math.max(0,(wsOut[0].qty||0)-1),
                 total: Math.max(0,(wsOut[0].total||0)-kg)
-              }).catch(function(){});
+              }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
             }
             // 加入倉庫存
             var wsIn = await _get('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+inWh}).catch(function(){return[];});
             if(wsIn&&wsIn[0]){
               await _patch('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+inWh},{
                 qty:(wsIn[0].qty||0)+1, total:(wsIn[0].total||0)+kg
-              }).catch(function(){});
+              }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
             } else {
               await _upsert('warehouse_stock',{
                 model:model, warehouseNo:inWh, qty:1, total:kg, price:0, amount:0,
                 moveDate:today, remark:'委外出庫調撥 '+txId
-              }).catch(function(){});
+              }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
             }
             // stock_moves 記錄
             await _upsert('stock_moves',{
               id:'SM-OUT-'+c.id, model:model, warehouseNo:outWh, batchNo:bn,
               qty:-1, total:-kg, refType:'OUTSOURCE_OUT', refId:dspId,
               moveDate:today, remark:'委外出庫 '+txId, createdAt:now
-            }).catch(function(){});
+            }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
             await _upsert('stock_moves',{
               id:'SM-IN-'+c.id, model:model, warehouseNo:inWh, batchNo:bn,
               qty:1, total:kg, refType:'OUTSOURCE_OUT', refId:dspId,
               moveDate:today, remark:'委外入倉調撥 '+txId, createdAt:now
-            }).catch(function(){});
+            }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
           }
         }
 
@@ -2672,10 +2677,10 @@ function switchTopMode(mode) {
           }).catch(function(e){ console.error('委外出庫 dispatch_production 寫入失敗:', e); });
         }
 
-        // 4. 更新鋼捲異動單狀態
+        // 4. 更新鋼捲異動單狀態（關鍵狀態變更，失敗須中止）
         await _patch('coil_transactions',{'id':'eq.'+txId},{
           status:'已出庫', dispatchId:dspId, updatedAt:now
-        }).catch(function(){});
+        }).catch(function(e){ console.error('資料寫入失敗:', e); throw e; });
 
         return {ok:true, dispatchId:dspId};
       })(), cb, errCb);
@@ -2725,7 +2730,7 @@ function switchTopMode(mode) {
               id:'SM-ITM-'+it.id, model:itModel, warehouseNo:itWh, batchNo:itBn,
               qty:1, total:itKg, refType:'OUTSOURCE_IN', refId:drId,
               moveDate:today, remark:'委外入庫細項 '+txId, createdAt:now
-            }).catch(function(){});
+            }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
           }
         }
 
@@ -2734,14 +2739,14 @@ function switchTopMode(mode) {
           if(c.returnWeight){
             await _patch('dispatch_coil_moves',{'id':'eq.CM'+c.id},{
               unloadWeight: parseFloat(c.returnWeight)||0
-            }).catch(function(){});
+            }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
           }
         }
 
-        // 3. 自動結案派工單
+        // 3. 自動結案派工單（關鍵狀態變更，失敗須中止）
         await _patch('dispatch_orders',{'id':'eq.'+dspId},{
           status:'closed', finishTime:now, updatedAt:now
-        }).catch(function(){});
+        }).catch(function(e){ console.error('資料寫入失敗:', e); throw e; });
 
         // 4. 建立派工回單 (dispatch_returns)
         await _upsert('dispatch_returns',{
@@ -2783,30 +2788,30 @@ function switchTopMode(mode) {
           if(wsFrom&&wsFrom[0]){
             await _patch('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+inWh},{
               qty:Math.max(0,(wsFrom[0].qty||0)-1), total:Math.max(0,(wsFrom[0].total||0)-retKg)
-            }).catch(function(){});
+            }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
           }
           // 加回入庫倉（加工後批號可能不同，這裡仍用原批號）
           var wsTo = await _get('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+retWh}).catch(function(){return[];});
           if(wsTo&&wsTo[0]){
             await _patch('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+retWh},{
               qty:(wsTo[0].qty||0)+1, total:(wsTo[0].total||0)+retKg
-            }).catch(function(){});
+            }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
           } else {
             await _upsert('warehouse_stock',{
               model:model, warehouseNo:retWh, qty:1, total:retKg,
               price:0, amount:0, moveDate:today, remark:'委外入庫回倉 '+txId
-            }).catch(function(){});
+            }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
           }
           await _upsert('stock_moves',{
             id:'SM-RET-'+c.id, model:model, warehouseNo:inWh, batchNo:bn,
             qty:-1, total:-retKg, refType:'OUTSOURCE_IN', refId:drId,
             moveDate:today, remark:'委外回倉扣庫 '+txId, createdAt:now
-          }).catch(function(){});
+          }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
           await _upsert('stock_moves',{
             id:'SM-RTN-'+c.id, model:model, warehouseNo:retWh, batchNo:bn,
             qty:1, total:retKg, refType:'OUTSOURCE_IN', refId:drId,
             moveDate:today, remark:'委外回倉入庫 '+txId, createdAt:now
-          }).catch(function(){});
+          }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
         }
 
         // 6. 建立派工回單扣庫明細 (dispatch_return_deduct)
@@ -2832,10 +2837,10 @@ function switchTopMode(mode) {
           }).catch(function(e){_errs.push('DRD:'+String(e.message||e));});
         }
 
-        // 7. 更新鋼捲異動單狀態 → 已結案
+        // 7. 更新鋼捲異動單狀態 → 已結案（關鍵狀態變更，失敗須中止）
         await _patch('coil_transactions',{'id':'eq.'+txId},{
           status:'已結案', updatedAt:now
-        }).catch(function(){});
+        }).catch(function(e){ console.error('資料寫入失敗:', e); throw e; });
 
         return {ok:true, dispatchId:dspId, returnId:drId, itemCount:items.length, errors:_errs};
       })(), cb, errCb);
