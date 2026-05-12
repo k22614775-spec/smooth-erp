@@ -207,7 +207,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
   <span style="font-weight:bold;font-size:15px;color:#fbbf24;margin-right:14px">◆ ERP × MES 整合系統</span>
   <button id="mode-erp-btn" onclick="switchTopMode('erp')" style="background:#fff;color:#0055aa;border:0;padding:5px 18px;border-radius:4px;font-weight:bold;cursor:pointer">ERP 系統 (庫存/訂單/進貨/機台)</button>
   <button id="mode-mes-btn" onclick="switchTopMode('mes')" style="background:rgba(255,255,255,.18);color:#fff;border:1px solid rgba(255,255,255,.4);padding:5px 18px;border-radius:4px;font-weight:bold;cursor:pointer">MES 現場 (裁切/進度/標籤/條碼)</button>
-  <span id="ver-badge" style="margin-left:auto;font-size:11px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:2px 8px;cursor:default;font-family:monospace" title="目前部署版次 (git commit)">v8868f16</span>
+  <span id="ver-badge" style="margin-left:auto;font-size:11px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:2px 8px;cursor:default;font-family:monospace" title="目前部署版次 (git commit)">vaa1fddf</span>
   <span style="font-size:12px;opacity:.75" id="sync-indicator"></span>
 </div>
 
@@ -1328,7 +1328,7 @@ function switchTopMode(mode) {
   }
 
   // ── 系統版次 (每次 commit 自動更新) ──
-  var APP_VERSION = '8868f16';  // __APP_VERSION__
+  var APP_VERSION = 'aa1fddf';  // __APP_VERSION__
   (function(){ var el=document.getElementById('ver-badge'); if(el) el.textContent='v'+APP_VERSION; })();
 
   // camelCase 對照表（DB 小寫 → 前端 camelCase）
@@ -2391,7 +2391,7 @@ function switchTopMode(mode) {
           'coil_transaction_coils','coil_transaction_items','coil_transactions'];
         for(var t of DISP) await _del(t,{'id':'neq.__none__'}).catch(function(e){ console.warn('非致命寫入失敗:', e); });
 
-        // 1b. 重新植入鋼捲異動示範單 1150511001（全用小寫欄位名，符合 Supabase schema）
+        // 1b. 重新植入鋼捲異動示範單 1150511001（camelCase，交由 _upsert._cleanWriteObj 處理大小寫轉換）
         var _simDate = '2026-05-11';
         var _coilSeedErrs = [];
         var _seedErr = function(label){ return function(e){
@@ -2400,36 +2400,36 @@ function switchTopMode(mode) {
           console.error('[RESET seed] ' + label, e);
         }; };
         await _upsert('coil_transactions',{
-          id:'1150511001', date:_simDate, doctype:'1.委外加工',
-          companycode:'V001', companyname:'測試委外廠商', taxtype:'1.外加', taxrate:5,
-          vendortype:'1.廠商', remark:'示範委外加工單', processamount:0,
-          status:'待處理', dispatchid:null,
-          createdat:_simDate+' 08:00:00', updatedat:_simDate+' 08:00:00'
+          id:'1150511001', date:_simDate, docType:'1.委外加工',
+          companyCode:'V001', companyName:'測試委外廠商', taxType:'1.外加', taxRate:5,
+          vendorType:'1.廠商', remark:'示範委外加工單', processAmount:0,
+          status:'待處理', dispatchId:'',
+          createdAt:_simDate+' 08:00:00', updatedAt:_simDate+' 08:00:00'
         }).catch(_seedErr('coil_transactions hdr'));
         await _upsert('coil_transaction_coils',{
-          id:'CTC-1150511001-01', transactionid:'1150511001', itemno:'0010',
-          dispatchno:'', salesno:'', outwarehouse:'鋼捲倉', inwarehouse:'委外派工倉',
-          model:'ZBE0.500*0914R001', spec:'鍍鋅 0.5*914', batchno:'1001',
-          qty:1, outweight:5000, unit:'KG', outlength:2000,
-          returnwarehouse:'鋼捲倉', stockweight:5000, returnweight:0,
-          processprice:0, processamount:0, returndate:'', usedweight:0,
-          usedlength:0, remainlength:0, closed:0, purchaseno:'',
-          totalperkg:0, pricebasis:'1.總尺/KG', remark:'示範鋼捲',
-          createdat:_simDate+' 08:00:00'
+          id:'CTC-1150511001-01', transactionId:'1150511001', itemNo:'0010',
+          dispatchNo:'', salesNo:'', outWarehouse:'鋼捲倉', inWarehouse:'委外派工倉',
+          model:'ZBE0.500*0914R001', spec:'鍍鋅 0.5*914', batchNo:'1001',
+          qty:1, outWeight:5000, unit:'KG', outLength:2000,
+          returnWarehouse:'鋼捲倉', stockWeight:5000, returnWeight:0,
+          processPrice:0, processAmount:0, returnDate:'', usedWeight:0,
+          usedLength:0, remainLength:0, closed:0, purchaseNo:'',
+          totalPerKg:0, priceBasis:'1.總尺/KG', remark:'示範鋼捲',
+          createdAt:_simDate+' 08:00:00'
         }).catch(_seedErr('coil_transaction_coils CTC-01'));
         await _upsert('coil_transaction_items',{
-          id:'CTI-1150511001-A', transactionid:'1150511001', itemno:'0010',
-          orderno:'', warehousecode:'委外派工倉',
+          id:'CTI-1150511001-A', transactionId:'1150511001', itemNo:'0010',
+          orderNo:'', warehouseCode:'委外派工倉',
           model:'ZBE0.500*0914R001', spec:'鍍鋅 0.5*914 (分條A)',
-          qty:1, totalkg:2500, remark:'分條 A', batchno:'1001-A',
-          createdat:_simDate+' 08:00:00'
+          qty:1, totalKg:2500, remark:'分條 A', batchNo:'1001-A',
+          createdAt:_simDate+' 08:00:00'
         }).catch(_seedErr('coil_transaction_items CTI-A'));
         await _upsert('coil_transaction_items',{
-          id:'CTI-1150511001-B', transactionid:'1150511001', itemno:'0020',
-          orderno:'', warehousecode:'委外派工倉',
+          id:'CTI-1150511001-B', transactionId:'1150511001', itemNo:'0020',
+          orderNo:'', warehouseCode:'委外派工倉',
           model:'ZBE0.500*0914R001', spec:'鍍鋅 0.5*914 (分條B)',
-          qty:1, totalkg:2500, remark:'分條 B', batchno:'1001-B',
-          createdat:_simDate+' 08:00:00'
+          qty:1, totalKg:2500, remark:'分條 B', batchNo:'1001-B',
+          createdAt:_simDate+' 08:00:00'
         }).catch(_seedErr('coil_transaction_items CTI-B'));
 
         // 2. stock_moves 只保留 PURCHASE 相關
@@ -11253,5 +11253,4 @@ window.addEventListener('DOMContentLoaded', function(){
 
     window.mountMesApp = function(){ ReactDOM.createRoot(document.getElementById('mes-root')).render(<App />); };
 </script>
-</body>
-</html>
+<
