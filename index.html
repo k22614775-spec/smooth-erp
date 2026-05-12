@@ -11244,4 +11244,27 @@ window.addEventListener('DOMContentLoaded', function(){
             <div className="fixed inset-0 z-[9999] flex items-center justify-center" style={{background:'rgba(0,0,0,0.45)'}}>
               <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full mx-4 border-2"
                    style={{borderColor: mesNotice.type === 'success' ? '#16a34a' : '#d97706'}}>
-                <div className="text-lg font-bold mb-3" style={{color: mesNotice.type === 'succe
+                <div className="text-lg font-bold mb-3" style={{color: mesNotice.type === 'success' ? '#15803d' : '#b45309'}}>
+                  {mesNotice.title}
+                </div>
+                <div className="text-sm text-gray-700 whitespace-pre-line leading-relaxed mb-5">
+                  {mesNotice.body}
+                </div>
+                <div className="flex justify-center">
+                  <button onClick={closeMesNotice}
+                          className="px-10 py-2 rounded-lg font-bold text-white shadow"
+                          style={{background: mesNotice.type === 'success' ? '#16a34a' : '#d97706'}}>
+                    確定
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+        </div>
+      );
+    }
+
+    window.mountMesApp = function(){ ReactDOM.createRoot(document.getElementById('mes-root')).render(<App />); };
+</script>
+<
