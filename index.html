@@ -2393,38 +2393,44 @@ function switchTopMode(mode) {
 
         // 1b. 重新植入鋼捲異動示範單 1150511001
         var _simDate = '2026-05-11';
+        var _coilSeedErrs = [];
+        var _seedErr = function(label){ return function(e){
+          var msg = e && e.message ? e.message : String(e);
+          _coilSeedErrs.push(label + ': ' + msg);
+          console.error('[RESET seed] ' + label, e);
+        }; };
         await _upsert('coil_transactions',{
-          id:'1150511001', date:_simDate, docType:'1.委外加工',
-          companyCode:'V001', companyName:'測試委外廠商', taxType:'1.外加', taxRate:5,
-          vendorType:'1.廠商', remark:'示範委外加工單', processAmount:0,
-          status:'待處理', dispatchId:'',
-          createdAt:_simDate+' 08:00:00', updatedAt:_simDate+' 08:00:00'
-        }).catch(function(){});
+          id:'1150511001', date:_simDate, doctype:'1.委外加工',
+          companycode:'V001', companyname:'測試委外廠商', taxtype:'1.外加', taxrate:5,
+          vendortype:'1.廠商', remark:'示範委外加工單', processamount:0,
+          status:'待處理', dispatchid:null,
+          createdat:_simDate+' 08:00:00', updatedat:_simDate+' 08:00:00'
+        }).catch(_seedErr('coil_transactions hdr'));
         await _upsert('coil_transaction_coils',{
-          id:'CTC-1150511001-01', transactionId:'1150511001', itemNo:'0010',
-          dispatchNo:'', salesNo:'', outWarehouse:'鋼捲倉', inWarehouse:'委外派工倉',
-          model:'ZBE0.500*0914R001', spec:'鍍鋅 0.5*914', batchNo:'1001',
-          qty:1, outWeight:5000, unit:'KG', outLength:2000,
-          returnWarehouse:'鋼捲倉', stockWeight:5000, returnWeight:0,
-          processPrice:0, processAmount:0, returnDate:'', usedWeight:0,
-          usedLength:0, remainLength:0, closed:0, purchaseNo:'',
-          totalPerKg:0, priceBasis:'1.總尺/KG', remark:'示範鋼捲',
-          createdAt:_simDate+' 08:00:00'
-        }).catch(function(){});
+          id:'CTC-1150511001-01', transactionid:'1150511001', itemno:'0010',
+          dispatchno:'', salesno:'', outwarehouse:'鋼捲倉', inwarehouse:'委外派工倉',
+          model:'ZBE0.500*0914R001', spec:'鍍鋅 0.5*914', batchno:'1001',
+          qty:1, outweight:5000, unit:'KG', outlength:2000,
+          returnwarehouse:'鋼捲倉', stockweight:5000, returnweight:0,
+          processprice:0, processamount:0, returndate:'', usedweight:0,
+          usedlength:0, remainlength:0, closed:0, purchaseno:'',
+          totalperkg:0, pricebasis:'1.總尺/KG', remark:'示範鋼捲',
+          createdat:_simDate+' 08:00:00'
+        }).catch(_seedErr('coil_transaction_coils CTC-01'));
         await _upsert('coil_transaction_items',{
-          id:'CTI-1150511001-A', transactionId:'1150511001', itemNo:'0010',
-          orderNo:'', warehouseCode:'委外派工倉',
+          id:'CTI-1150511001-A', transactionid:'1150511001', itemno:'0010',
+          orderno:'', warehousecode:'委外派工倉',
           model:'ZBE0.500*0914R001', spec:'鍍鋅 0.5*914 (分條A)',
-          qty:1, totalKg:2500, remark:'分條 A', batchNo:'1001-A',
-          createdAt:_simDate+' 08:00:00'
-        }).catch(function(e){ console.error('[RESET] CTI-A 寫入失敗 (請確認006 RLS已套用):', e); });
+          qty:1, totalkg:2500, remark:'分條 A', batchno:'1001-A',
+          createdat:_simDate+' 08:00:00'
+        }).catch(_seedErr('coil_transaction_items CTI-A'));
         await _upsert('coil_transaction_items',{
-          id:'CTI-1150511001-B', transactionId:'1150511001', itemNo:'0020',
-          orderNo:'', warehouseCode:'委外派工倉',
+          id:'CTI-1150511001-B', transactionid:'1150511001', itemno:'0020',
+          orderno:'', warehousecode:'委外派工倉',
           model:'ZBE0.500*0914R001', spec:'鍍鋅 0.5*914 (分條B)',
-          qty:1, totalKg:2500, remark:'分條 B', batchNo:'1001-B',
-          createdAt:_simDate+' 08:00:00'
-        }).catch(function(e){ console.error('[RESET] CTI-B 寫入失敗 (請確認006 RLS已套用):', e); });
+          qty:1, totalkg:2500, remark:'分條 B', batchno:'1001-B',
+          createdat:_simDate+' 08:00:00'
+        }).catch(_seedErr('coil_transaction_items CTI-B'));
 
         // 2. stock_moves 只保留 PURCHASE 相關
         await _del('stock_moves',{'refType':'not.in.(PURCHASE,PURCHASE_REVERSE)'}).catch(function(){});
@@ -2494,17 +2500,20 @@ function switchTopMode(mode) {
         if(batchRows.length) await _upsert('batch_detail',   batchRows).catch(function(){});
 
         var coilTxOk = 0;
+        var coilTxErrMsg = '';
         try {
           var _chk = await _get('coil_transactions',{'id':'eq.1150511001'});
           coilTxOk = (_chk && _chk.length) ? 1 : 0;
-        } catch(e){}
+          if(!coilTxOk && _coilSeedErrs.length) coilTxErrMsg = _coilSeedErrs.join(' | ');
+        } catch(e){ coilTxErrMsg = String(e && e.message ? e.message : e); }
         return {ok:true, restored:{
           warehouseStock:whRows.length,
           batchDetail:batchRows.length,
           purchasesReplayed:purchases.length,
           ordersResetToPending: 0,
           cuttingsReset: 0,
-          coilTxSeeded: coilTxOk}};
+          coilTxSeeded: coilTxOk,
+          coilTxErrMsg: coilTxErrMsg}};
       })(), cb, errCb);
     },        // ── 鋼捲異動 CRUD ──────────────────────────────────────────────
     getCoilTransactions: function(filter, cb, errCb){
@@ -5119,7 +5128,10 @@ window.addEventListener('DOMContentLoaded', function(){
                 var r = res.restored || {};
                 var coilMsg = r.coilTxSeeded
                   ? '✅ 鋼捲異動示範單 1150511001 已建立\n'
-                  : '⚠️ 鋼捲異動示範單未建立（請確認 Supabase migration 005 已執行）\n';
+                  : '⚠️ 鋼捲異動示範單未建立\n' +
+                    (r.coilTxErrMsg
+                      ? '   錯誤：' + r.coilTxErrMsg + '\n'
+                      : '   → 請確認 Supabase 已執行 006_coil_tx_rls.sql\n');
                 alert('模擬資料已還原。\n\n' +
                       '清空：標籤 / 派工單 / 派工回單 / 派工入庫 / 派工扣庫\n' +
                       '已沖銷 STOCK_MOVES：' + (c.stockMovesRemoved || 0) + ' 列\n' +
@@ -11219,22 +11231,4 @@ window.addEventListener('DOMContentLoaded', function(){
                 <div className="text-sm text-gray-700 whitespace-pre-line leading-relaxed mb-5">
                   {mesNotice.body}
                 </div>
-                <div className="flex justify-center">
-                  <button onClick={closeMesNotice}
-                          className="px-10 py-2 rounded-lg font-bold text-white shadow"
-                          style={{background: mesNotice.type === 'success' ? '#16a34a' : '#d97706'}}>
-                    確定
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-        </div>
-      );
-    }
-
-    window.mountMesApp = function(){ ReactDOM.createRoot(document.getElementById('mes-root')).render(<App />); };
-</script>
-</body>
-</html>
+                <div class
