@@ -207,7 +207,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
   <span style="font-weight:bold;font-size:15px;color:#fbbf24;margin-right:14px">◆ ERP × MES 整合系統</span>
   <button id="mode-erp-btn" onclick="switchTopMode('erp')" style="background:#fff;color:#0055aa;border:0;padding:5px 18px;border-radius:4px;font-weight:bold;cursor:pointer">ERP 系統 (庫存/訂單/進貨/機台)</button>
   <button id="mode-mes-btn" onclick="switchTopMode('mes')" style="background:rgba(255,255,255,.18);color:#fff;border:1px solid rgba(255,255,255,.4);padding:5px 18px;border-radius:4px;font-weight:bold;cursor:pointer">MES 現場 (裁切/進度/標籤/條碼)</button>
-  <span id="ver-badge" style="margin-left:auto;font-size:11px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:2px 8px;cursor:default;font-family:monospace" title="目前部署版次 (git commit)">v__APP_VERSION__</span>
+  <span id="ver-badge" style="margin-left:auto;font-size:11px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:2px 8px;cursor:default;font-family:monospace" title="目前部署版次 (git commit)">v0000000</span>
   <span style="font-size:12px;opacity:.75" id="sync-indicator"></span>
 </div>
 
@@ -1846,14 +1846,12 @@ function switchTopMode(mode) {
     createDispatchFromOrder: function(orderId, opts, cb, errCb){
       opts=opts||{};
       _cb((async function(){
-        // ── Step 1: 讀取訂單 ──
         var orders;
         try { orders=await _get('orders',{'id':'eq.'+orderId,'limit':'1'}); }
         catch(e){ throw new Error('Step1 讀取訂單失敗: '+e.message); }
         const _oh=orders[0]||{};
         // 欄位大小寫兼容（未執行 003_fix 時欄位是小寫）
         const oh=new Proxy(_oh,{get:function(t,k){ return t[k]!==undefined?t[k]:t[String(k).toLowerCase()]; }});
-        // ── Step 2: 讀取最新派工單序號 ──
         var allDisp;
         try { allDisp=await _get('dispatch_orders',{'select':'id','order':'id.desc','limit':'1'}); }
         catch(e){ throw new Error('Step2 讀取dispatch_orders失敗（資料表未建立或CORS）: '+e.message); }
@@ -1873,20 +1871,16 @@ function switchTopMode(mode) {
           receiveTime:now,status:'active',createdAt:now,updatedAt:now,
           estimatedPickQty:opts.estimatedPickQty||0,estimatedInQty:opts.estimatedInQty||0,
           remark:opts.remark||'',dispatchRemark:opts.dispatchRemark||''};
-        // ── Step 3: 寫入 dispatch_orders ──
         try { await _upsert('dispatch_orders',disp); }
         catch(e){ throw new Error('Step3 寫入dispatch_orders失敗: '+e.message); }
-        // ── Step 4: 關聯 cutting_details ──
         if(opts.linkCuttings!==false){
           try { await _patch('cutting_details',{'orderId':'eq.'+orderId},{dispatchId:newId}); }
           catch(e){ throw new Error('Step4 更新cutting_details.dispatchId失敗: '+e.message); }
         }
-        // ── Step 5: patch orders 狀態 ──
         // patch orders：同時更新 camelCase 和 lowercase 欄位（確保相容）
         try {
           await _patch('orders',{'id':'eq.'+orderId},{status:'已派工',dispatchId:newId,updatedAt:now});
         } catch(e1) {
-          // fallback：若欄位是小寫
           try { await _patch('orders',{'id':'eq.'+orderId},{status:'已派工',dispatchid:newId,updatedat:now}); }
           catch(e2){ throw new Error('Step5 更新orders狀態失敗: '+e2.message); }
         }
@@ -11265,4 +11259,6 @@ window.addEventListener('DOMContentLoaded', function(){
       );
     }
 
-    window.mountMesApp = function(){ ReactDOM.createRoot(document.g
+    window.mountMesApp = function(){ ReactDOM.createRoot(document.getElementById('mes-root')).render(<App />); };
+</script>
+<
