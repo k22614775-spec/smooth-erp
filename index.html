@@ -1846,11 +1846,17 @@ function switchTopMode(mode) {
     createDispatchFromOrder: function(orderId, opts, cb, errCb){
       opts=opts||{};
       _cb((async function(){
-        const orders=await _get('orders',{'id':'eq.'+orderId,'limit':'1'});
+        // ── Step 1: 讀取訂單 ──
+        var orders;
+        try { orders=await _get('orders',{'id':'eq.'+orderId,'limit':'1'}); }
+        catch(e){ throw new Error('Step1 讀取訂單失敗: '+e.message); }
         const _oh=orders[0]||{};
         // 欄位大小寫兼容（未執行 003_fix 時欄位是小寫）
         const oh=new Proxy(_oh,{get:function(t,k){ return t[k]!==undefined?t[k]:t[String(k).toLowerCase()]; }});
-        const allDisp=await _get('dispatch_orders',{'select':'id','order':'id.desc','limit':'1'});
+        // ── Step 2: 讀取最新派工單序號 ──
+        var allDisp;
+        try { allDisp=await _get('dispatch_orders',{'select':'id','order':'id.desc','limit':'1'}); }
+        catch(e){ throw new Error('Step2 讀取dispatch_orders失敗（資料表未建立或CORS）: '+e.message); }
         const d=new Date();
         const y=d.getFullYear()-1911;
         const mm=String(d.getMonth()+1).padStart(2,'0');
@@ -1867,14 +1873,22 @@ function switchTopMode(mode) {
           receiveTime:now,status:'active',createdAt:now,updatedAt:now,
           estimatedPickQty:opts.estimatedPickQty||0,estimatedInQty:opts.estimatedInQty||0,
           remark:opts.remark||'',dispatchRemark:opts.dispatchRemark||''};
-        await _upsert('dispatch_orders',disp);
-        if(opts.linkCuttings!==false) await _patch('cutting_details',{'orderId':'eq.'+orderId},{dispatchId:newId});
+        // ── Step 3: 寫入 dispatch_orders ──
+        try { await _upsert('dispatch_orders',disp); }
+        catch(e){ throw new Error('Step3 寫入dispatch_orders失敗: '+e.message); }
+        // ── Step 4: 關聯 cutting_details ──
+        if(opts.linkCuttings!==false){
+          try { await _patch('cutting_details',{'orderId':'eq.'+orderId},{dispatchId:newId}); }
+          catch(e){ throw new Error('Step4 更新cutting_details.dispatchId失敗: '+e.message); }
+        }
+        // ── Step 5: patch orders 狀態 ──
         // patch orders：同時更新 camelCase 和 lowercase 欄位（確保相容）
         try {
           await _patch('orders',{'id':'eq.'+orderId},{status:'已派工',dispatchId:newId,updatedAt:now});
         } catch(e1) {
           // fallback：若欄位是小寫
-          await _patch('orders',{'id':'eq.'+orderId},{status:'已派工',dispatchid:newId,updatedat:now});
+          try { await _patch('orders',{'id':'eq.'+orderId},{status:'已派工',dispatchid:newId,updatedat:now}); }
+          catch(e2){ throw new Error('Step5 更新orders狀態失敗: '+e2.message); }
         }
 
         // 同步 cutting_details → dispatch_production（供 ERP 派工入庫明細顯示）
@@ -11230,27 +11244,4 @@ window.addEventListener('DOMContentLoaded', function(){
             <div className="fixed inset-0 z-[9999] flex items-center justify-center" style={{background:'rgba(0,0,0,0.45)'}}>
               <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full mx-4 border-2"
                    style={{borderColor: mesNotice.type === 'success' ? '#16a34a' : '#d97706'}}>
-                <div className="text-lg font-bold mb-3" style={{color: mesNotice.type === 'success' ? '#15803d' : '#b45309'}}>
-                  {mesNotice.title}
-                </div>
-                <div className="text-sm text-gray-700 whitespace-pre-line leading-relaxed mb-5">
-                  {mesNotice.body}
-                </div>
-                <div className="flex justify-center">
-                  <button onClick={closeMesNotice}
-                          className="px-10 py-2 rounded-lg font-bold text-white shadow"
-                          style={{background: mesNotice.type === 'success' ? '#16a34a' : '#d97706'}}>
-                    確定
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-        </div>
-      );
-    }
-
-    window.mountMesApp = function(){ ReactDOM.createRoot(document.getElementById('mes-root')).render(<App />); };
-</script>
-<
+                <div className="text-lg font-bold mb-3" style={{color: mesNotice.type === 'succe
