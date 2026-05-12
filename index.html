@@ -19,16 +19,9 @@
     // trim() 防止 Secret 含換行符
     if(window.SUPABASE_URL)      window.SUPABASE_URL      = window.SUPABASE_URL.trim();
     if(window.SUPABASE_ANON_KEY) window.SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY.trim();
-    // 正向驗證：URL 必須含 supabase.co 且不含佔位符；KEY 必須以 eyJ 開頭且長度 >100
-    var validUrl = window.SUPABASE_URL &&
-                   window.SUPABASE_URL.indexOf('supabase.co') !== -1 &&
-                   window.SUPABASE_URL.indexOf('YOUR_PROJECT_REF') === -1;
-    var validKey = window.SUPABASE_ANON_KEY &&
-                   window.SUPABASE_ANON_KEY.length > 100 &&
-                   window.SUPABASE_ANON_KEY.indexOf('eyJ') === 0 &&
-                   window.SUPABASE_ANON_KEY !== 'YOUR_ANON_KEY_HERE';
-    var badUrl = !validUrl;
-    var badKey = !validKey;
+    // 精確比對：只攔截真正未被替換的佔位符字串
+    var badUrl = (window.SUPABASE_URL === 'https://YOUR_PROJECT_REF.supabase.co');
+    var badKey = (window.SUPABASE_ANON_KEY === 'YOUR_ANON_KEY_HERE');
     if(badUrl || badKey){
       // 標記全域旗標，供 _get/_upsert 等函式攔截
       window.__SUPABASE_CONFIG_INVALID__ = true;
