@@ -44,7 +44,7 @@ jobs:
           python3 -c 'import os,sys; f="index.html"; sha=sys.argv[1]; su=os.environ.get("SUPABASE_URL","MISSING_URL"); sk=os.environ.get("SUPABASE_ANON_KEY","MISSING_KEY"); print("WARNING: Secrets missing! su="+su[:30]+" sk="+sk[:10]) if ("MISSING" in su or "MISSING" in sk) else None; c=open(f,encoding="utf-8").read(); c=c.replace("__APP_VERSION__",sha).replace("https://YOUR_PROJECT_REF.supabase.co",su).replace("YOUR_ANON_KEY_HERE",sk); open(f,"w",encoding="utf-8").write(c); print("OK sha="+sha+" url="+su[:40])' "$SHA"
 
       - name: Setup Pages
-        uses: actions/configure-pages@v4
+        uses: actions/configure-pages@v5
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
