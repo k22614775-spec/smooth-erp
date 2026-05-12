@@ -16,12 +16,16 @@
 
   // ── 前端終極防呆攔截 (Pre-flight Block) ──
   (function(){
+    // trim() 防止 Secret 含換行符
+    if(window.SUPABASE_URL)      window.SUPABASE_URL      = window.SUPABASE_URL.trim();
+    if(window.SUPABASE_ANON_KEY) window.SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY.trim();
     var badUrl = !window.SUPABASE_URL ||
                  window.SUPABASE_URL.indexOf('YOUR_PROJECT_REF') !== -1 ||
                  window.SUPABASE_URL.indexOf('MISSING_') !== -1;
     var badKey = !window.SUPABASE_ANON_KEY ||
                  window.SUPABASE_ANON_KEY === 'YOUR_ANON_KEY_HERE' ||
-                 window.SUPABASE_ANON_KEY.indexOf('MISSING_') !== -1;
+                 window.SUPABASE_ANON_KEY.indexOf('MISSING_') !== -1 ||
+                 window.SUPABASE_ANON_KEY.length < 100;
     if(badUrl || badKey){
       // 標記全域旗標，供 _get/_upsert 等函式攔截
       window.__SUPABASE_CONFIG_INVALID__ = true;
@@ -35,6 +39,8 @@
           'display:flex','flex-direction:column','align-items:center','justify-content:center',
           'font-family:sans-serif','padding:40px','box-sizing:border-box','text-align:center'
         ].join(';');
+        var keyLen = (window.SUPABASE_ANON_KEY||'').length;
+        var keyPfx = (window.SUPABASE_ANON_KEY||'').substring(0,12);
         div.innerHTML = [
           '<div style="font-size:48px;margin-bottom:16px">⚠️</div>',
           '<h1 style="font-size:24px;font-weight:bold;margin-bottom:16px">【系統錯誤】資料庫金鑰未正確注入！</h1>',
@@ -45,8 +51,10 @@
           '<code style="background:rgba(0,0,0,.3);padding:4px 12px;border-radius:4px;margin:8px 4px;display:inline-block">SUPABASE_ANON_KEY</code>',
           '</p>',
           '<p style="margin-top:24px;font-size:13px;opacity:.8">',
-          '目前偵測到的 URL：<code style="background:rgba(0,0,0,.3);padding:2px 8px;border-radius:4px">' +
-          (window.SUPABASE_URL||'(空)') + '</code></p>',
+          'URL：<code style="background:rgba(0,0,0,.3);padding:2px 8px;border-radius:4px">' + (window.SUPABASE_URL||'(空)') + '</code></p>',
+          '<p style="margin-top:6px;font-size:13px;opacity:.8">',
+          'KEY 長度：<code style="background:rgba(0,0,0,.3);padding:2px 8px;border-radius:4px">' + keyLen + '</code>　',
+          '前12字：<code style="background:rgba(0,0,0,.3);padding:2px 8px;border-radius:4px">' + keyPfx + '</code></p>',
           '<p style="margin-top:8px;font-size:12px;opacity:.6">設定完成後請重新 Push 觸發 GitHub Actions 部署。</p>'
         ].join('');
         document.body.appendChild(div);
