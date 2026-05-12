@@ -19,13 +19,16 @@
     // trim() 防止 Secret 含換行符
     if(window.SUPABASE_URL)      window.SUPABASE_URL      = window.SUPABASE_URL.trim();
     if(window.SUPABASE_ANON_KEY) window.SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY.trim();
-    var badUrl = !window.SUPABASE_URL ||
-                 window.SUPABASE_URL.indexOf('YOUR_PROJECT_REF') !== -1 ||
-                 window.SUPABASE_URL.indexOf('MISSING_') !== -1;
-    var badKey = !window.SUPABASE_ANON_KEY ||
-                 window.SUPABASE_ANON_KEY === 'YOUR_ANON_KEY_HERE' ||
-                 window.SUPABASE_ANON_KEY.indexOf('MISSING_') !== -1 ||
-                 window.SUPABASE_ANON_KEY.length < 100;
+    // 正向驗證：URL 必須含 supabase.co 且不含佔位符；KEY 必須以 eyJ 開頭且長度 >100
+    var validUrl = window.SUPABASE_URL &&
+                   window.SUPABASE_URL.indexOf('supabase.co') !== -1 &&
+                   window.SUPABASE_URL.indexOf('YOUR_PROJECT_REF') === -1;
+    var validKey = window.SUPABASE_ANON_KEY &&
+                   window.SUPABASE_ANON_KEY.length > 100 &&
+                   window.SUPABASE_ANON_KEY.indexOf('eyJ') === 0 &&
+                   window.SUPABASE_ANON_KEY !== 'YOUR_ANON_KEY_HERE';
+    var badUrl = !validUrl;
+    var badKey = !validKey;
     if(badUrl || badKey){
       // 標記全域旗標，供 _get/_upsert 等函式攔截
       window.__SUPABASE_CONFIG_INVALID__ = true;
