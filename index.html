@@ -13,6 +13,46 @@
   window.SUPABASE_ANON_KEY = "YOUR_ANON_KEY_HERE";
   // Edge Function 端點 (部署後自動為此格式)
   window.ERP_API_URL = window.SUPABASE_URL + "/functions/v1/erp-api";
+
+  // ── 前端終極防呆攔截 (Pre-flight Block) ──
+  (function(){
+    var badUrl = !window.SUPABASE_URL ||
+                 window.SUPABASE_URL.indexOf('YOUR_PROJECT_REF') !== -1 ||
+                 window.SUPABASE_URL.indexOf('MISSING_') !== -1;
+    var badKey = !window.SUPABASE_ANON_KEY ||
+                 window.SUPABASE_ANON_KEY === 'YOUR_ANON_KEY_HERE' ||
+                 window.SUPABASE_ANON_KEY.indexOf('MISSING_') !== -1;
+    if(badUrl || badKey){
+      // 標記全域旗標，供 _get/_upsert 等函式攔截
+      window.__SUPABASE_CONFIG_INVALID__ = true;
+      // 顯示全螢幕紅色錯誤覆蓋
+      document.addEventListener('DOMContentLoaded', function(){
+        var div = document.createElement('div');
+        div.id = 'preflight-error';
+        div.style.cssText = [
+          'position:fixed','top:0','left:0','width:100vw','height:100vh',
+          'background:#b91c1c','color:#fff','z-index:99999',
+          'display:flex','flex-direction:column','align-items:center','justify-content:center',
+          'font-family:sans-serif','padding:40px','box-sizing:border-box','text-align:center'
+        ].join(';');
+        div.innerHTML = [
+          '<div style="font-size:48px;margin-bottom:16px">⚠️</div>',
+          '<h1 style="font-size:24px;font-weight:bold;margin-bottom:16px">【系統錯誤】資料庫金鑰未正確注入！</h1>',
+          '<p style="font-size:15px;line-height:1.8;max-width:600px">',
+          '請至 <strong>GitHub → Settings → Secrets and variables → Actions</strong>',
+          ' 確認已設定：<br>',
+          '<code style="background:rgba(0,0,0,.3);padding:4px 12px;border-radius:4px;margin:8px 4px;display:inline-block">SUPABASE_URL</code>',
+          '<code style="background:rgba(0,0,0,.3);padding:4px 12px;border-radius:4px;margin:8px 4px;display:inline-block">SUPABASE_ANON_KEY</code>',
+          '</p>',
+          '<p style="margin-top:24px;font-size:13px;opacity:.8">',
+          '目前偵測到的 URL：<code style="background:rgba(0,0,0,.3);padding:2px 8px;border-radius:4px">' +
+          (window.SUPABASE_URL||'(空)') + '</code></p>',
+          '<p style="margin-top:8px;font-size:12px;opacity:.6">設定完成後請重新 Push 觸發 GitHub Actions 部署。</p>'
+        ].join('');
+        document.body.appendChild(div);
+      });
+    }
+  })();
 </script>
 
 
@@ -1300,7 +1340,12 @@ function switchTopMode(mode) {
 
 // === 統一資料層（Supabase REST 直接版，不需要 Edge Function）===
 (function(){
-  function _base(){ return window.SUPABASE_URL + '/rest/v1'; }
+  function _base(){
+    if(window.__SUPABASE_CONFIG_INVALID__){
+      throw new Error('【設定錯誤】SUPABASE_URL 或 SUPABASE_ANON_KEY 未正確注入。請至 GitHub Settings > Secrets and variables > Actions 設定金鑰後重新部署。');
+    }
+    return window.SUPABASE_URL + '/rest/v1';
+  }
   function _hdr(extra){
     return Object.assign({
       'apikey': window.SUPABASE_ANON_KEY,

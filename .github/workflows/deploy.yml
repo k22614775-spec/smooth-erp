@@ -30,7 +30,21 @@ jobs:
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
           SHA=$(git rev-parse --short HEAD)
-          python3 -c 'import os,sys; f="index.html"; c=open(f,encoding="utf-8").read(); c=c.replace("__APP_VERSION__",sys.argv[1]).replace("https://YOUR_PROJECT_REF.supabase.co",os.environ["SUPABASE_URL"]).replace("YOUR_ANON_KEY_HERE",os.environ["SUPABASE_ANON_KEY"]); open(f,"w",encoding="utf-8").write(c); print("OK sha="+sys.argv[1])' "$SHA"
+          python3 -c '
+import os, sys
+f = "index.html"
+sha = sys.argv[1]
+su  = os.environ.get("SUPABASE_URL",    "MISSING_URL")
+sk  = os.environ.get("SUPABASE_ANON_KEY","MISSING_KEY")
+if "MISSING" in su or "MISSING" in sk:
+    print("WARNING: Secrets are missing! su=" + su[:30] + " sk=" + sk[:10])
+c = open(f, encoding="utf-8").read()
+c = c.replace("__APP_VERSION__", sha)
+c = c.replace("https://YOUR_PROJECT_REF.supabase.co", su)
+c = c.replace("YOUR_ANON_KEY_HERE", sk)
+open(f, "w", encoding="utf-8").write(c)
+print("OK sha=" + sha + " url=" + su[:40])
+' "$SHA"
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
