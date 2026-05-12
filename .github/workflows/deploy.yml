@@ -30,18 +30,7 @@ jobs:
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
           SHA=$(git rev-parse --short HEAD)
-          python3 - << PYEOF
-import os
-sha = "$SHA"
-url = os.environ["SUPABASE_URL"]
-key = os.environ["SUPABASE_ANON_KEY"]
-content = open("index.html", "r", encoding="utf-8").read()
-content = content.replace("__APP_VERSION__", sha)
-content = content.replace("https://YOUR_PROJECT_REF.supabase.co", url)
-content = content.replace("YOUR_ANON_KEY_HERE", key)
-open("index.html", "w", encoding="utf-8").write(content)
-print(f"SHA={sha}, URL={url[:30]}..., KEY={key[:20]}...")
-PYEOF
+          python3 -c 'import os,sys; f="index.html"; c=open(f,encoding="utf-8").read(); c=c.replace("__APP_VERSION__",sys.argv[1]).replace("https://YOUR_PROJECT_REF.supabase.co",os.environ["SUPABASE_URL"]).replace("YOUR_ANON_KEY_HERE",os.environ["SUPABASE_ANON_KEY"]); open(f,"w",encoding="utf-8").write(c); print("OK sha="+sys.argv[1])' "$SHA"
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
