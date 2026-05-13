@@ -8734,6 +8734,12 @@ window.addEventListener('DOMContentLoaded', function(){
                 <span className="text-red-500 mr-2">♦</span> MES 系統
              </div>
              <button
+               onClick={() => setMainTab('coil_sale')}
+               className={`px-5 py-2.5 font-bold transition-colors flex items-center rounded-t-lg mx-0.5 whitespace-nowrap ${mainTab === 'coil_sale' ? 'bg-[#fce4ec] text-red-900' : 'hover:bg-gray-700 text-gray-300 bg-gray-800'}`}
+             >
+               💰 鋼捲售出
+             </button>
+             <button
                onClick={() => { setMainTab('cut'); setCurrentView('list'); }}
                className={`px-5 py-2.5 font-bold transition-colors flex items-center rounded-t-lg mx-0.5 whitespace-nowrap ${mainTab === 'cut' ? 'bg-[#cfe2ff] text-blue-900' : 'hover:bg-gray-700 text-gray-300 bg-gray-800'}`}
              >
@@ -8787,12 +8793,6 @@ window.addEventListener('DOMContentLoaded', function(){
                className={`px-5 py-2.5 font-bold transition-colors flex items-center rounded-t-lg mx-0.5 whitespace-nowrap ${mainTab === 'inhouse_slitting' ? 'bg-[#e3f2fd] text-blue-900' : 'hover:bg-gray-700 text-gray-300 bg-gray-800'}`}
              >
                ✂️ 廠內分條
-             </button>
-             <button
-               onClick={() => setMainTab('coil_sale')}
-               className={`px-5 py-2.5 font-bold transition-colors flex items-center rounded-t-lg mx-0.5 whitespace-nowrap ${mainTab === 'coil_sale' ? 'bg-[#fce4ec] text-red-900' : 'hover:bg-gray-700 text-gray-300 bg-gray-800'}`}
-             >
-               💰 鋼捲售出
              </button>
           </div>
 
