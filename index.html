@@ -3012,7 +3012,7 @@ function switchTopMode(mode) {
           totalBabyKg += babyKg;
 
           await _upsert('dispatch_production',{
-            id:'DP-SLT-'+baby.itemId, dispatchId:dspId,
+            id:'DP-SLT-'+baby.itemId,
             dispatchSeq:String(bi+1).padStart(4,'0')+'0',
             orderId:'', orderItemNo:'',
             model:babyMod, spec:baby.spec||'',
