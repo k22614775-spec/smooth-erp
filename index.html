@@ -3016,10 +3016,9 @@ function switchTopMode(mode) {
             dispatchSeq:String(bi+1).padStart(4,'0')+'0',
             orderId:'', orderItemNo:'',
             model:babyMod||'', spec:baby.spec||'',
-            qty:1, kg:babyKg||0, unit:'KG',
-            inBatchNo:babyBn||'', inLocation:'',
-            warehouseCode:babyWh||'',
-            remark:baby.formula?'廠內分條 公式:'+baby.formula:'廠內分條',
+            qty:1, kg:babyKg||0,
+            topUnfinish:1, topDone:0, bottomUnfinish:1, bottomDone:0, mesUnfinish:1,
+            remark:'廠內分條 | 批號:'+(babyBn||'')+' | 倉:'+(babyWh||'')+(baby.formula?' | 公式:'+baby.formula:''),
             closed:1,
           }).catch(function(e){ _errs.push('DP-'+bi+':'+String(e.message||e)); });
 
