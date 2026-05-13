@@ -6906,7 +6906,7 @@ window.addEventListener('DOMContentLoaded', function(){
 <!-- 其他非-babel 的 MES script -->
 
 <!-- MES React 主程式 (Babel 編譯) -->
-<script type="text/babel">
+<script type="text/babel" data-plugins="transform-object-rest-spread">
 
     const { useState, useEffect } = React;
 
@@ -12351,6 +12351,4 @@ window.addEventListener('DOMContentLoaded', function(){
       );
     }
 
-    window.mountMesApp = function(){ ReactDOM.createRoot(document.getElementById('mes-root')).render(<App />); };
-</script>
-<
+    window.mountMesApp = function(){ ReactDOM.createRoot(document.getElementById(
