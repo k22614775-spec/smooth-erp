@@ -2946,10 +2946,9 @@ function switchTopMode(mode) {
         // Step 3：建立回報人員 session
         await _upsert('dispatch_return_reporters',{
           id:'RPT-'+txId, dispatchId:dspId,
-          operator:operatorStr||'',
-          startTime:now, endTime:now,
-          workHours:'00:00:00', status:'active',
-          createdAt:now,
+          reporters:operatorStr||'', machine:'',
+          startTime:now, endTime:now, status:'active',
+          updatedAt:now,
         }).catch(function(e){ _errs.push('RPT:'+String(e.message||e)); });
 
         // Step 4：母捲移轉 dispatch_coil_moves + 庫存調撥
@@ -2990,14 +2989,14 @@ function switchTopMode(mode) {
               }).catch(function(e){ _errs.push('WS-INS:'+String(e.message||e)); });
             }
             await _upsert('stock_moves',{
-              id:'SM-SLT-OUT-'+c.id, model:model, warehouseNo:outWh, batchNo:bn,
+              id:'SM-SLT-OUT-'+c.id, model:model, warehouse:outWh,
               qty:-1, total:-kg, refType:'INHOUSE_SLITTING', refId:dspId,
-              moveDate:today, remark:'廠內分條出倉 '+txId, createdAt:now
+              moveDate:today, remark:'廠內分條出倉 '+txId
             }).catch(function(e){ _errs.push('SM-OUT:'+String(e.message||e)); });
             await _upsert('stock_moves',{
-              id:'SM-SLT-IN-'+c.id, model:model, warehouseNo:inWh, batchNo:bn,
+              id:'SM-SLT-IN-'+c.id, model:model, warehouse:inWh,
               qty:1, total:kg, refType:'INHOUSE_SLITTING', refId:dspId,
-              moveDate:today, remark:'廠內分條入產線倉 '+txId, createdAt:now
+              moveDate:today, remark:'廠內分條入產線倉 '+txId
             }).catch(function(e){ _errs.push('SM-IN:'+String(e.message||e)); });
           }
         }
@@ -3029,9 +3028,9 @@ function switchTopMode(mode) {
             await _adjustBatchDetail(babyMod, babyWh, babyBn, '', 1, babyKg,
               {remark:'廠內分條入庫 '+txId, createdAt:now});
             await _upsert('stock_moves',{
-              id:'SM-SLT-BABY-'+baby.itemId, model:babyMod, warehouseNo:babyWh, batchNo:babyBn,
+              id:'SM-SLT-BABY-'+baby.itemId, model:babyMod, warehouse:babyWh,
               qty:1, total:babyKg, refType:'INHOUSE_SLITTING', refId:drId,
-              moveDate:today, remark:'廠內分條子捲入庫 '+txId, createdAt:now
+              moveDate:today, remark:'廠內分條子捲入庫 '+txId
             }).catch(function(e){ _errs.push('SM-BABY:'+String(e.message||e)); });
           }
         }
@@ -3063,9 +3062,9 @@ function switchTopMode(mode) {
             }).catch(function(e){ _errs.push('WS-DEDUCT:'+String(e.message||e)); });
           }
           await _upsert('stock_moves',{
-            id:'SM-SLT-DED-'+cm.id, model:cmModel, warehouseNo:cmInWh, batchNo:cmBn,
+            id:'SM-SLT-DED-'+cm.id, model:cmModel, warehouse:cmInWh,
             qty:-1, total:-cmKg, refType:'INHOUSE_SLITTING', refId:drId,
-            moveDate:today, remark:'廠內分條產線倉扣庫 '+txId, createdAt:now
+            moveDate:today, remark:'廠內分條產線倉扣庫 '+txId
           }).catch(function(e){ _errs.push('SM-DED:'+String(e.message||e)); });
           await _upsert('dispatch_return_deduct',{
             id:'DRD-SLT-'+cm.id, returnId:drId, dispatchId:dspId,
