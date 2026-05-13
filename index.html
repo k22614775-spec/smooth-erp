@@ -3056,12 +3056,14 @@ function switchTopMode(mode) {
           status:'closed', createdAt:now, updatedAt:now,
         }).catch(function(e){ _errs.push('DR:'+String(e.message||e)); });
 
-        var cmRows = await _get('dispatch_coil_moves',{'dispatchid':'eq.'+dspId}).catch(function(){return[];});
-        for(var cm of cmRows){
-          var cmModel = cm.model||'';
-          var cmBn    = cm.outBatchNo||cm.outbatchno||'';
-          var cmKg    = parseFloat(loadWeight)||parseFloat(cm.loadWeight||cm.loadweight)||0;
-          var cmInWh  = cm.inWarehouse||cm.inwarehouse||'產線倉';
+        // 用原始 coils 資料直接扣庫（不依賴讀回 dispatch_coil_moves，避免 _get 失敗靜默跳過）
+        for(var ci=0;ci<coils.length;ci++){
+          var c6   = coils[ci];
+          var cmModel = c6.model||'';
+          var cmBn    = c6.batchNo||c6.batchno||'';
+          var cmKg    = parseFloat(loadWeight)||parseFloat(c6.outWeight||c6.outweight)||0;
+          var cmInWh  = c6.inWarehouse||c6.inwarehouse||'產線倉';
+          var cmUnit  = c6.unit||'KG';
           if(!cmModel) continue;
           var wsPL = await _get('warehouse_stock',{model:'eq.'+cmModel,warehouseNo:'eq.'+cmInWh}).catch(function(){return[];});
           if(wsPL&&wsPL[0]){
@@ -3071,16 +3073,16 @@ function switchTopMode(mode) {
             }).catch(function(e){ _errs.push('WS-DEDUCT:'+String(e.message||e)); });
           }
           await _upsert('stock_moves',{
-            id:'SM-SLT-DED-'+cm.id, model:cmModel, warehouse:cmInWh,
+            id:'SM-SLT-DED-'+c6.id, model:cmModel, warehouse:cmInWh,
             qty:-1, total:-cmKg, refType:'INHOUSE_SLITTING', refId:drId,
             moveDate:today, remark:'廠內分條產線倉扣庫 '+txId
           }).catch(function(e){ _errs.push('SM-DED:'+String(e.message||e)); });
           await _upsert('dispatch_return_deduct',{
-            id:'DRD-SLT-'+cm.id, returnId:drId, dispatchId:dspId,
-            coilMoveId:cm.id,
+            id:'DRD-SLT-'+c6.id, returnId:drId, dispatchId:dspId,
+            coilMoveId:'CM-SLT-'+c6.id,
             model:cmModel, batchNo:cmBn,
             warehouse:cmInWh, location:'',
-            qty:cm.qty||1, total:cmKg, unit:cm.unit||'KG',
+            qty:c6.qty||1, total:cmKg, unit:cmUnit,
             createdAt:now,
           }).catch(function(e){ _errs.push('DRD:'+String(e.message||e)); });
         }
