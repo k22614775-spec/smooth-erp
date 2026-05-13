@@ -3203,33 +3203,6 @@ function switchTopMode(mode) {
       })(), cb, errCb);
     },
 
-      filter=filter||{};
-      const qs={};
-      if(filter.model) qs['model']='ilike.*'+filter.model+'*';
-      if(filter.batchNo) qs['batchNo']='eq.'+filter.batchNo;
-      if(filter.warehouse) qs['warehouseNo']='eq.'+filter.warehouse;
-      // keyword 可同時搜 model 或 batchNo
-      if(filter.keyword && !filter.batchNo && !filter.model){
-        qs['or']='(model.ilike.*'+filter.keyword+'*,batchNo.ilike.*'+filter.keyword+'*)';
-      }
-      _cb(_get('batch_detail',qs).then(function(rows){
-        // 加入前端期望的別名欄位
-        return (rows||[]).map(function(r){
-          return Object.assign({},r,{
-            availableKg:    parseFloat(r.total||r.qty||0),   // 前端讀 availableKg
-            availablePieces:parseFloat(r.qty||0),
-            rollNo:         r.originalRollNo||r.originalrollno||'',
-            coilNo:         r.batchNo||r.batchno||'',        // 批號當 coilNo
-            factory:        r.vendor||'',                    // 供應商當廠別
-            material:       r.model||'',
-            warehouse:      r.warehouseNo||r.warehouseno||'',
-            spec:           r.model||'',
-            color:          '',
-            size:           (r.thickness||'')+'x'+(r.width||''),
-          });
-        });
-      }), cb, errCb);
-    },
     searchCoilStock: function(filter, cb, errCb){
       filter=filter||{};
       const qs={};
