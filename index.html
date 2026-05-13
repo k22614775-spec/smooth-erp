@@ -2545,6 +2545,20 @@ function switchTopMode(mode) {
         if(whRows.length)    await _upsert('warehouse_stock', whRows).catch(function(e){ console.warn('非致命寫入失敗:', e); });
         if(batchRows.length) await _upsert('batch_detail',   batchRows).catch(function(e){ console.warn('非致命寫入失敗:', e); });
 
+        // 5b. 廠內分條示範母捲庫存（非進貨資料，在進貨重建後手動補入鋼捲倉）
+        await _upsert('warehouse_stock',{
+          model:'ZBE0.500*1219R001', warehouseNo:'鋼捲倉',
+          qty:1, total:6000, price:0, amount:0,
+          moveDate:_simDate2, remark:'廠內分條示範母捲'
+        }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+        await _upsert('batch_detail',{
+          model:'ZBE0.500*1219R001', warehouseNo:'鋼捲倉', batchNo:'1002',
+          location:'', qty:1, total:6000, originalRollNo:'', vendor:'',
+          thickness:0.5, width:1219, density:7.85, lengthM:2400,
+          innerRing:'', coilDirection:'', price:0,
+          detailRemark:'廠內分條示範母捲'
+        }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+
         var coilTxOk = 0; var coilTxOk2 = 0;
         var coilTxErrMsg = '';
         try {
