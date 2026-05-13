@@ -3012,13 +3012,13 @@ function switchTopMode(mode) {
           totalBabyKg += babyKg;
 
           await _upsert('dispatch_production',{
-            id:'DP-SLT-'+baby.itemId,
+            id:'DP-SLT-'+baby.itemId, dispatchId:dspId,
             dispatchSeq:String(bi+1).padStart(4,'0')+'0',
             orderId:'', orderItemNo:'',
-            model:babyMod, spec:baby.spec||'',
-            qty:1, kg:babyKg, unit:'KG',
-            inBatchNo:babyBn, inLocation:'',
-            warehouseCode:babyWh,
+            model:babyMod||'', spec:baby.spec||'',
+            qty:1, kg:babyKg||0, unit:'KG',
+            inBatchNo:babyBn||'', inLocation:'',
+            warehouseCode:babyWh||'',
             remark:baby.formula?'廠內分條 公式:'+baby.formula:'廠內分條',
             closed:1,
           }).catch(function(e){ _errs.push('DP-'+bi+':'+String(e.message||e)); });
