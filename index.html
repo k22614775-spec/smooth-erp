@@ -3022,6 +3022,16 @@ function switchTopMode(mode) {
             closed:1,
           }).catch(function(e){ _errs.push('DP-'+bi+':'+String(e.message||e)); });
 
+          // Step 5b: 建立回單入庫明細 (dispatch_return_items)
+          await _upsert('dispatch_return_items',{
+            id:'DRI-SLT-'+baby.itemId, returnId:drId, dispatchId:dspId,
+            orderId:'', orderItemNo:'',
+            model:babyMod||'', spec:baby.spec||'',
+            qty:1, totalWeight:babyKg||0, totalLen:0,
+            remark:'廠內分條 | 批號:'+(babyBn||'')+' | 倉:'+(babyWh||'')+(baby.formula?' | 公式:'+baby.formula:''),
+            closed:1,
+          }).catch(function(e){ _errs.push('DRI-'+bi+':'+String(e.message||e)); });
+
           if(babyMod && babyKg>0){
             await _adjustWarehouseStock(babyMod, babyWh, 1, babyKg);
             await _adjustBatchDetail(babyMod, babyWh, babyBn, '', 1, babyKg,
@@ -3068,7 +3078,7 @@ function switchTopMode(mode) {
           await _upsert('dispatch_return_deduct',{
             id:'DRD-SLT-'+cm.id, returnId:drId, dispatchId:dspId,
             coilMoveId:cm.id,
-            model:cmModel, spec:cm.spec||'', batchNo:cmBn,
+            model:cmModel, batchNo:cmBn,
             warehouse:cmInWh, location:'',
             qty:cm.qty||1, total:cmKg, unit:cm.unit||'KG',
             createdAt:now,
