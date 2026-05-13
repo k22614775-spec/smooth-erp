@@ -208,7 +208,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
   <span style="font-weight:bold;font-size:15px;color:#fbbf24;margin-right:14px">◆ ERP × MES 整合系統</span>
   <button id="mode-erp-btn" onclick="switchTopMode('erp')" style="background:#fff;color:#0055aa;border:0;padding:5px 18px;border-radius:4px;font-weight:bold;cursor:pointer">ERP 系統 (庫存/訂單/進貨/機台)</button>
   <button id="mode-mes-btn" onclick="switchTopMode('mes')" style="background:rgba(255,255,255,.18);color:#fff;border:1px solid rgba(255,255,255,.4);padding:5px 18px;border-radius:4px;font-weight:bold;cursor:pointer">MES 現場 (裁切/進度/標籤/條碼)</button>
-  <span id="ver-badge" style="margin-left:auto;font-size:11px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:2px 8px;cursor:default;font-family:monospace" title="目前部署版次 (git commit)">v0117ed4</span>
+  <span id="ver-badge" style="margin-left:auto;font-size:11px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:2px 8px;cursor:default;font-family:monospace" title="目前部署版次 (git commit)">v9b4b719</span>
   <span style="font-size:12px;opacity:.75" id="sync-indicator"></span>
 </div>
 
@@ -3136,6 +3136,7 @@ function switchTopMode(mode) {
 
 
     // ── 鋼捲售出結算 ─────────────────────────────────────────────
+    // ── 鋼捲售出結算（無派工單，只建立派工回單）───────────────────
     processCoilSale: function(txData, actualWeight, operatorStr, startTime, endTime, cb, errCb){
       _cb((async function(){
         var now    = new Date().toISOString().replace('T',' ').slice(0,19);
@@ -3152,90 +3153,56 @@ function switchTopMode(mode) {
         var outWh  = c0.outWarehouse || c0.outwarehouse || '鋼捲倉';
         var sysKg  = parseFloat(c0.outWeight || c0.outweight || 0);
         var kg     = parseFloat(actualWeight) || sysKg;
+        var drId   = 'DR1-SALE-' + txId;  // 只有回單，無派工單
 
-        var dspId = 'DSP-SALE-' + txId;
-        var drId  = 'DR1-SALE-' + txId;
-        var cmId  = 'CM-SALE-'  + txId;
-
-        // Step 1: dispatch_orders（欄位對齊 DB schema，無 model/batchNo/warehouse/qty/totalWeight）
-        await _upsert('dispatch_orders',{
-          id:dspId, date:today,
-          docCategory:'3', docType:'3.鋼捲售出',
-          source:'鋼捲異動', orderId:'',
-          partnerCode:'C001', partnerName:h.companyName||h.companyname||'',
-          operator:operatorStr||'', machine:'', phase:'',
-          receiveTime:now, finishTime:'', workHours:0, printCount:0,
-          status:'open',
-          remark:'鋼捲售出 批號:'+batchNo+' 型號:'+model+' 重量:'+kg+'kg 來源:'+txId,
-          createdAt:now, updatedAt:now,
-        }).catch(function(e){ _errs.push('DSP:'+String(e.message||e)); });
-
-        // Step 2: dispatch_coil_moves（欄位對齊 DB schema，無 batchNo/returnWeight/moveDate）
-        await _upsert('dispatch_coil_moves',{
-          id:cmId, dispatchId:dspId,
-          outBatchNo:batchNo, coilNo:batchNo,
-          model:model, spec:c0.spec||model,
-          qty:1, total:kg, unit:'KG',
-          outWarehouse:outWh, outLocation:'',
-          inWarehouse:'售出', inLocation:'',
-          inBatchNo:'', loadWeight:kg, unloadWeight:0,
-          createTime:now,
-        }).catch(function(e){ _errs.push('CM:'+String(e.message||e)); });
-
-        // Step 3: dispatch_return_reporters（reporters, machine, startTime, endTime, status, updatedAt）
+        // Step 1: dispatch_return_reporters（人員 + 時間）
         await _upsert('dispatch_return_reporters',{
-          id:'RPT-SALE-'+txId, dispatchId:dspId,
+          id:'RPT-SALE-'+txId, dispatchId:drId,
           reporters:operatorStr||'', machine:'',
           startTime:startTime||now, endTime:endTime||now,
           status:'active', updatedAt:now,
         }).catch(function(e){ _errs.push('RPT:'+String(e.message||e)); });
 
-        // Step 4: stock_moves 出倉（warehouse 非 warehouseNo，無 batchNo/createdAt）
+        // Step 2: stock_moves 出倉（warehouse 非 warehouseNo，無 batchNo/createdAt）
         await _upsert('stock_moves',{
           id:'SM-SALE-OUT-'+txId, model:model, warehouse:outWh,
-          qty:-1, total:-kg, refType:'COIL_SALE', refId:dspId,
+          qty:-1, total:-kg, refType:'COIL_SALE', refId:drId,
           moveDate:today, remark:'鋼捲售出出倉 '+txId,
         }).catch(function(e){ _errs.push('SM-OUT:'+String(e.message||e)); });
 
-        // Step 5: warehouse_stock + batch_detail 扣減
+        // Step 3: warehouse_stock + batch_detail 扣減
         await _adjustWarehouseStock(model, outWh, -1, -kg)
           .catch(function(e){ _errs.push('WS:'+String(e.message||e)); });
         await _adjustBatchDetail(model, outWh, batchNo, '', -1, -kg, null)
           .catch(function(e){ _errs.push('BD:'+String(e.message||e)); });
 
-        // Step 6: dispatch_return_deduct（無 spec 欄位）
+        // Step 4: dispatch_return_deduct 扣庫明細（對齊廠內分條欄位，無 spec）
         await _upsert('dispatch_return_deduct',{
-          id:'DRD-SALE-'+txId, returnId:drId, dispatchId:dspId,
-          coilMoveId:cmId,
+          id:'DRD-SALE-'+txId, returnId:drId, dispatchId:drId,
+          coilMoveId:'',
           model:model, batchNo:batchNo,
           warehouse:outWh, location:'',
           qty:1, total:kg, unit:'KG',
           createdAt:now,
         }).catch(function(e){ _errs.push('DRD:'+String(e.message||e)); });
 
-        // Step 7: dispatch_returns（欄位對齊 DB schema，無 docType/totalWeight）
+        // Step 5: dispatch_returns 回單主表（對齊廠內分條欄位：無 docType/totalWeight）
         await _upsert('dispatch_returns',{
-          id:drId, dispatchId:dspId, date:today,
-          partnerCode:'C001', partnerName:h.companyName||h.companyname||'',
+          id:drId, dispatchId:drId, date:today,
+          partnerCode:'', partnerName:h.companyName||h.companyname||'',
           remark:'鋼捲售出 批號:'+batchNo+' 型號:'+model+' '+kg+'kg',
           status:'closed', createdAt:now, updatedAt:now,
         }).catch(function(e){ _errs.push('DR:'+String(e.message||e)); });
 
-        // Step 8: dispatch_orders 關單
-        await _patch('dispatch_orders',{'id':'eq.'+dspId},{
-          status:'done', updatedAt:now,
-        }).catch(function(e){ _errs.push('DSP-CLOSE:'+String(e.message||e)); });
-
-        // Step 9: coil_transactions 已結案
+        // Step 6: coil_transactions 已結案
         await _patch('coil_transactions',{'id':'eq.'+txId},{
-          status:'已結案', dispatchId:dspId, updatedAt:now,
+          status:'已結案', updatedAt:now,
         }).catch(function(e){ _errs.push('TX-CLOSE:'+String(e.message||e)); });
 
-        return {ok:true, dispatchId:dspId, returnId:drId, kg:kg, errors:_errs};
+        return {ok:true, returnId:drId, kg:kg, errors:_errs};
       })(), cb, errCb);
     },
 
-    searchCoilStock: function(filter, cb, errCb){
       filter=filter||{};
       const qs={};
       if(filter.model) qs['model']='ilike.*'+filter.model+'*';
@@ -8177,8 +8144,7 @@ window.addEventListener('DOMContentLoaded', function(){
           function(res){
             setLoading(false);
             var errs = res&&res.errors&&res.errors.length ? '\n⚠️ '+res.errors.slice(0,3).join(' | ') : '';
-            setMsg('✅ 結算完成\n派工單：'+(res&&res.dispatchId||'-')+
-                   '\n回單：'+(res&&res.returnId||'-')+
+            setMsg('✅ 結算完成\n回單：'+(res&&res.returnId||'-')+
                    '\n售出重量：'+parseFloat(res&&res.kg||0).toFixed(1)+' kg'+errs);
             setPhase('done');
           },
