@@ -208,7 +208,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
   <span style="font-weight:bold;font-size:15px;color:#fbbf24;margin-right:14px">◆ ERP × MES 整合系統</span>
   <button id="mode-erp-btn" onclick="switchTopMode('erp')" style="background:#fff;color:#0055aa;border:0;padding:5px 18px;border-radius:4px;font-weight:bold;cursor:pointer">ERP 系統 (庫存/訂單/進貨/機台)</button>
   <button id="mode-mes-btn" onclick="switchTopMode('mes')" style="background:rgba(255,255,255,.18);color:#fff;border:1px solid rgba(255,255,255,.4);padding:5px 18px;border-radius:4px;font-weight:bold;cursor:pointer">MES 現場 (裁切/進度/標籤/條碼)</button>
-  <span id="ver-badge" style="margin-left:auto;font-size:11px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:2px 8px;cursor:default;font-family:monospace" title="目前部署版次 (git commit)">v0000000</span>
+  <span id="ver-badge" style="margin-left:auto;font-size:11px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:2px 8px;cursor:default;font-family:monospace" title="目前部署版次 (git commit)">v03ed768</span>
   <span style="font-size:12px;opacity:.75" id="sync-indicator"></span>
 </div>
 
@@ -2478,6 +2478,27 @@ function switchTopMode(mode) {
           createdAt:_simDate2+' 08:00:00'
         }).catch(_seedErr('coil_transaction_items CTI-1002-B'));
 
+        // 1d. 鋼捲售出示範單 1150513003
+        var _simDate3 = '2026-05-13';
+        await _upsert('coil_transactions',{
+          id:'1150513003', date:_simDate3, docType:'3.鋼捲售出',
+          companyCode:'C001', companyName:'鼎基鋼鐵', taxType:'1.外加', taxRate:5,
+          vendorType:'2.客戶', remark:'示範鋼捲售出單', processAmount:0,
+          status:'待處理', dispatchId:'',
+          createdAt:_simDate3+' 08:00:00', updatedAt:_simDate3+' 08:00:00'
+        }).catch(_seedErr('coil_transactions sale hdr'));
+        await _upsert('coil_transaction_coils',{
+          id:'CTC-1150513003-01', transactionId:'1150513003', itemNo:'0010',
+          dispatchNo:'', salesNo:'SO-2026-0001', outWarehouse:'鋼捲倉', inWarehouse:'售出',
+          model:'ZBE0.800*1219R001', spec:'鍍鋅 0.8*1219', batchNo:'1003',
+          qty:1, outWeight:8000, unit:'KG', outLength:0,
+          returnWarehouse:'', stockWeight:8000, returnWeight:0,
+          processPrice:0, processAmount:0, returnDate:'', usedWeight:0,
+          usedLength:0, remainLength:0, closed:0, purchaseNo:'',
+          totalPerKg:0, priceBasis:'1.總尺/KG', remark:'示範售出鋼捲',
+          createdAt:_simDate3+' 08:00:00'
+        }).catch(_seedErr('coil_transaction_coils CTC-1003'));
+
         // 2. stock_moves 只保留 PURCHASE 相關
         await _del('stock_moves',{'refType':'not.in.(PURCHASE,PURCHASE_REVERSE)'}).catch(function(e){ console.warn('非致命寫入失敗:', e); });
 
@@ -2559,14 +2580,30 @@ function switchTopMode(mode) {
           detailRemark:'廠內分條示範母捲'
         }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
 
-        var coilTxOk = 0; var coilTxOk2 = 0;
+        // 5c. 鋼捲售出示範批號 1003
+        await _upsert('warehouse_stock',{
+          model:'ZBE0.800*1219R001', warehouseNo:'鋼捲倉',
+          qty:1, total:8000, price:0, amount:0,
+          moveDate:_simDate3, remark:'鋼捲售出示範批號1003'
+        }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+        await _upsert('batch_detail',{
+          model:'ZBE0.800*1219R001', warehouseNo:'鋼捲倉', batchNo:'1003',
+          location:'', qty:1, total:8000, originalRollNo:'', vendor:'鼎基鋼鐵',
+          thickness:0.8, width:1219, density:7.85, lengthM:0,
+          innerRing:'', coilDirection:'', price:0,
+          detailRemark:'鋼捲售出示範批號1003'
+        }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+
+        var coilTxOk = 0; var coilTxOk2 = 0; var coilTxOk3 = 0;
         var coilTxErrMsg = '';
         try {
           var _chk  = await _get('coil_transactions',{'id':'eq.1150511001'});
           var _chk2 = await _get('coil_transactions',{'id':'eq.1150512002'});
+          var _chk3 = await _get('coil_transactions',{'id':'eq.1150513003'});
           coilTxOk  = (_chk  && _chk.length)  ? 1 : 0;
           coilTxOk2 = (_chk2 && _chk2.length) ? 1 : 0;
-          if((!coilTxOk || !coilTxOk2) && _coilSeedErrs.length) coilTxErrMsg = _coilSeedErrs.join(' | ');
+          coilTxOk3 = (_chk3 && _chk3.length) ? 1 : 0;
+          if((!coilTxOk || !coilTxOk2 || !coilTxOk3) && _coilSeedErrs.length) coilTxErrMsg = _coilSeedErrs.join(' | ');
         } catch(e){ coilTxErrMsg = String(e && e.message ? e.message : e); }
         return {ok:true, restored:{
           warehouseStock:whRows.length,
@@ -2576,6 +2613,7 @@ function switchTopMode(mode) {
           cuttingsReset: 0,
           coilTxSeeded: coilTxOk,
           coilTxSeeded2: coilTxOk2,
+          coilTxSeeded3: coilTxOk3,
           coilTxErrMsg: coilTxErrMsg}};
       })(), cb, errCb);
     },        // ── 鋼捲異動 CRUD ──────────────────────────────────────────────
@@ -3093,6 +3131,99 @@ function switchTopMode(mode) {
 
         return {ok:true, dispatchId:dspId, returnId:drId,
                 babyCount:babyItems.length, totalBabyKg:totalBabyKg, errors:_errs};
+      })(), cb, errCb);
+    },
+
+
+    // ── 鋼捲售出結算 ─────────────────────────────────────────────
+    processCoilSale: function(txData, actualWeight, operatorStr, startTime, endTime, cb, errCb){
+      _cb((async function(){
+        var now    = new Date().toISOString().replace('T',' ').slice(0,19);
+        var today  = now.slice(0,10);
+        var _errs  = [];
+        var h      = txData && txData.header;
+        var coils  = (txData && txData.coils) || [];
+        if(!h || !coils.length) throw new Error('異動單資料不完整');
+
+        var txId   = h.id;
+        var c0     = coils[0];
+        var model  = c0.model  || '';
+        var batchNo= c0.batchNo|| c0.batchno|| '';
+        var outWh  = c0.outWarehouse || c0.outwarehouse || '鋼捲倉';
+        var sysKg  = parseFloat(c0.outWeight || c0.outweight || 0);
+        var kg     = parseFloat(actualWeight) || sysKg;
+
+        var dspId = 'DSP-SALE-' + txId;
+        var drId  = 'DR1-SALE-' + txId;
+        var cmId  = 'CM-SALE-'  + txId;
+
+        // Step 1: dispatch_orders
+        await _upsert('dispatch_orders',{
+          id:dspId, docType:'3.鋼捲售出',
+          model:model, batchNo:batchNo, warehouse:outWh,
+          qty:1, totalWeight:kg,
+          status:'open', remark:'鋼捲售出 來源異動單 '+txId,
+          createdAt:now, updatedAt:now,
+        }).catch(function(e){ _errs.push('DSP:'+String(e.message||e)); });
+
+        // Step 2: dispatch_coil_moves
+        await _upsert('dispatch_coil_moves',{
+          id:cmId, dispatchId:dspId,
+          model:model, batchNo:batchNo,
+          outWarehouse:outWh, inWarehouse:'售出',
+          outWeight:kg, returnWeight:0,
+          moveDate:today,
+        }).catch(function(e){ _errs.push('CM:'+String(e.message||e)); });
+
+        // Step 3: dispatch_return_reporters（reporters, machine, startTime, endTime, status, updatedAt）
+        await _upsert('dispatch_return_reporters',{
+          id:'RPT-SALE-'+txId, dispatchId:dspId,
+          reporters:operatorStr||'', machine:'',
+          startTime:startTime||now, endTime:endTime||now,
+          status:'active', updatedAt:now,
+        }).catch(function(e){ _errs.push('RPT:'+String(e.message||e)); });
+
+        // Step 4: stock_moves 出倉（warehouse 非 warehouseNo，無 batchNo/createdAt）
+        await _upsert('stock_moves',{
+          id:'SM-SALE-OUT-'+txId, model:model, warehouse:outWh,
+          qty:-1, total:-kg, refType:'COIL_SALE', refId:dspId,
+          moveDate:today, remark:'鋼捲售出出倉 '+txId,
+        }).catch(function(e){ _errs.push('SM-OUT:'+String(e.message||e)); });
+
+        // Step 5: warehouse_stock + batch_detail 扣減
+        await _adjustWarehouseStock(model, outWh, -1, -kg)
+          .catch(function(e){ _errs.push('WS:'+String(e.message||e)); });
+        await _adjustBatchDetail(model, outWh, batchNo, '', -1, -kg, null)
+          .catch(function(e){ _errs.push('BD:'+String(e.message||e)); });
+
+        // Step 6: dispatch_return_deduct（無 spec 欄位）
+        await _upsert('dispatch_return_deduct',{
+          id:'DRD-SALE-'+txId, returnId:drId, dispatchId:dspId,
+          coilMoveId:cmId,
+          model:model, batchNo:batchNo,
+          warehouse:outWh, location:'',
+          qty:1, total:kg, unit:'KG',
+          createdAt:now,
+        }).catch(function(e){ _errs.push('DRD:'+String(e.message||e)); });
+
+        // Step 7: dispatch_returns
+        await _upsert('dispatch_returns',{
+          id:drId, dispatchId:dspId, docType:'3.鋼捲售出',
+          status:'done', totalWeight:kg,
+          createdAt:now, updatedAt:now,
+        }).catch(function(e){ _errs.push('DR:'+String(e.message||e)); });
+
+        // Step 8: dispatch_orders 關單
+        await _patch('dispatch_orders',{'id':'eq.'+dspId},{
+          status:'done', updatedAt:now,
+        }).catch(function(e){ _errs.push('DSP-CLOSE:'+String(e.message||e)); });
+
+        // Step 9: coil_transactions 已結案
+        await _patch('coil_transactions',{'id':'eq.'+txId},{
+          status:'已結案', dispatchId:dspId, updatedAt:now,
+        }).catch(function(e){ _errs.push('TX-CLOSE:'+String(e.message||e)); });
+
+        return {ok:true, dispatchId:dspId, returnId:drId, kg:kg, errors:_errs};
       })(), cb, errCb);
     },
 
@@ -7982,6 +8113,294 @@ window.addEventListener('DOMContentLoaded', function(){
     }
 
 
+    //  鋼捲售出 MES App（手機界面）Phase A→B→C
+    // ══════════════════════════════════════════════════════════════
+    function CoilSaleApp(){
+      var useState = React.useState; var useRef = React.useRef; var useEffect = React.useEffect;
+      var ACCENT = '#b71c1c'; var DARK = '#7f0000';
+      var ps = useState('A'); var phase = ps[0]; var setPhase = ps[1];
+      var tnS = useState(''); var txNo = tnS[0]; var setTxNo = tnS[1];
+      var tdS = useState(null); var txData = tdS[0]; var setTxData = tdS[1];
+      var ldS = useState(false); var loading = ldS[0]; var setLoading = ldS[1];
+      var mgS = useState(''); var msg = mgS[0]; var setMsg = mgS[1];
+      var opS = useState(''); var operator = opS[0]; var setOperator = opS[1];
+      var stS = useState(''); var startTime = stS[0]; var setStartTime = stS[1];
+      var etS = useState(''); var endTime = etS[0]; var setEndTime = etS[1];
+      var awS = useState(''); var actualWeight = awS[0]; var setActualWeight = awS[1];
+      var txRef = useRef(null);
+      useEffect(function(){ if(txRef.current) txRef.current.focus(); }, []);
+      useEffect(function(){
+        var now = new Date().toISOString().slice(0,16);
+        setStartTime(now); setEndTime(now);
+      }, []);
+
+      var handleLoad = function(){
+        var no = txNo.trim();
+        if(!no) return setMsg('請輸入鋼捲異動單號');
+        if(!window.API||!window.API.getCoilTransactionById) return setMsg('⚠️ 後端未連線');
+        setLoading(true); setMsg('');
+        window.API.getCoilTransactionById(no, function(data){
+          setLoading(false);
+          var h = data&&data.header;
+          if(!h) return setMsg('❌ 找不到單號：'+no);
+          var dt = h.docType||h.doctype||'';
+          if(dt.indexOf('鋼捲售出') < 0) return setMsg('❌ 此單非鋼捲售出，類別：'+dt);
+          if(h.status==='已結案') return setMsg('⚠️ 此單已結案，無法重複處理');
+          setTxData(data);
+          var c0 = (data.coils||[])[0]||{};
+          var sysKg = parseFloat(c0.outWeight||c0.outweight||0);
+          if(sysKg>0) setActualWeight(String(sysKg));
+          setMsg('');
+        }, function(){ setLoading(false); setMsg('❌ 找不到單號：'+no); setTxData(null); });
+      };
+
+      var handleSubmit = function(){
+        if(!txData) return;
+        if(!window.API||!window.API.processCoilSale) return setMsg('⚠️ 後端未連線');
+        var kg = parseFloat(actualWeight);
+        if(isNaN(kg)||kg<=0) return setMsg('請輸入有效售出重量');
+        if(!operator.trim()) return setMsg('請輸入操作人員');
+        if(!window.confirm('確認鋼捲售出結算？\n售出重量：'+kg+' kg\n人員：'+operator)) return;
+        setLoading(true); setMsg('');
+        var stISO = (startTime||'').replace('T',' ')+':00';
+        var etISO = (endTime  ||'').replace('T',' ')+':00';
+        window.API.processCoilSale(
+          txData, kg, operator, stISO, etISO,
+          function(res){
+            setLoading(false);
+            var errs = res&&res.errors&&res.errors.length ? '\n⚠️ '+res.errors.slice(0,3).join(' | ') : '';
+            setMsg('✅ 結算完成\n派工單：'+(res&&res.dispatchId||'-')+
+                   '\n回單：'+(res&&res.returnId||'-')+
+                   '\n售出重量：'+parseFloat(res&&res.kg||0).toFixed(1)+' kg'+errs);
+            setPhase('done');
+          },
+          function(err){ setLoading(false); setMsg('❌ '+(err&&err.message||err)); }
+        );
+      };
+
+      var card = {background:'#fff',borderRadius:14,padding:'12px 14px',marginBottom:12,boxShadow:'0 1px 6px rgba(0,0,0,0.09)'};
+      var secLabel = function(c){ return {fontSize:11,fontWeight:'bold',color:c||ACCENT,marginBottom:8,letterSpacing:.8}; };
+      var btnPrimary = function(disabled){ return {
+        width:'100%',padding:'13px',fontSize:15,fontWeight:'bold',borderRadius:12,border:'none',
+        cursor:disabled?'not-allowed':'pointer',
+        background:disabled?'#bdbdbd':'linear-gradient(135deg,'+ACCENT+','+DARK+')',
+        color:'#fff',letterSpacing:.4,boxShadow:disabled?'none':'0 4px 14px rgba(183,28,28,.35)',
+      }; };
+
+      var h  = txData&&txData.header;
+      var c0 = txData&&(txData.coils||[])[0]||{};
+      var custName = h&&(h.companyName||h.companyname||'－');
+
+      var phases = ['A','B','C']; var phaseLabels = {A:'掃描',B:'填報',C:'確認'};
+      var PhaseBar = function(){
+        return React.createElement('div',
+          {style:{display:'flex',gap:6,padding:'10px 14px',background:'#fff',borderBottom:'1px solid #e0e0e0',flexShrink:0}},
+          phases.map(function(p,i){
+            var done=phases.indexOf(phase)>i||phase==='done'; var active=phase===p;
+            var bg=done?'#43a047':active?ACCENT:'#e0e0e0'; var col=done||active?'#fff':'#999';
+            return React.createElement('div',{key:p,style:{flex:1,textAlign:'center'}},
+              React.createElement('div',{style:{width:28,height:28,borderRadius:'50%',background:bg,color:col,fontWeight:'bold',fontSize:13,margin:'0 auto 3px',display:'flex',alignItems:'center',justifyContent:'center'}},done?'✓':p),
+              React.createElement('div',{style:{fontSize:10,color:active?ACCENT:done?'#43a047':'#aaa',fontWeight:active||done?'bold':'normal'}},phaseLabels[p])
+            );
+          })
+        );
+      };
+
+      return (
+        <div className="flex-1 bg-gray-100 flex items-center justify-center p-4">
+          <div className="w-[400px] h-[800px] bg-gray-800 rounded-[3rem] p-4 shadow-2xl relative border-4 border-gray-700 flex flex-col">
+            <div className="absolute top-0 inset-x-0 h-6 flex justify-center z-20">
+              <div className="w-40 h-6 bg-black rounded-b-3xl"></div>
+            </div>
+            <div className="flex-1 bg-[#f8fafc] rounded-[2rem] overflow-hidden flex flex-col mt-4 relative" style={{fontSize:14,fontFamily:'sans-serif'}}>
+              <div style={{background:'linear-gradient(135deg,'+DARK+' 0%,'+ACCENT+' 100%)',color:'#fff',padding:'14px 16px',display:'flex',alignItems:'center',gap:12,flexShrink:0}}>
+                <div style={{width:46,height:46,borderRadius:'50%',background:'rgba(255,255,255,0.18)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:24,flexShrink:0}}>💰</div>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:'bold',fontSize:19,letterSpacing:.3}}>鋼捲售出</div>
+                  <div style={{fontSize:12,opacity:.8,marginTop:2}}>掃描異動單・填報資料・直接扣庫</div>
+                </div>
+                {h && <div style={{background:'rgba(255,255,255,0.2)',borderRadius:20,padding:'4px 12px',fontSize:12,fontWeight:'bold',whiteSpace:'nowrap'}}>{h.status||'待處理'}</div>}
+              </div>
+              <PhaseBar />
+              {msg && (
+                <div style={{padding:'10px 14px',margin:'8px 12px 0',borderRadius:10,
+                  background:msg.startsWith('✅')?'#e8f5e9':'#ffebee',
+                  color:msg.startsWith('✅')?'#2e7d32':'#c62828',
+                  fontWeight:'bold',fontSize:13,boxShadow:'0 1px 5px rgba(0,0,0,0.08)',whiteSpace:'pre-line'}}>
+                  {msg}
+                </div>
+              )}
+              <div style={{flex:1,overflowY:'auto',padding:'10px 12px 4px'}}>
+                {phase==='A' && (
+                  <div>
+                    <div style={card}>
+                      <div style={secLabel()}>📋 鋼捲異動單號</div>
+                      <div style={{display:'flex',gap:8}}>
+                        <input ref={txRef}
+                          style={{flex:1,fontSize:16,padding:'11px 13px',border:'2px solid #e0e0e0',borderRadius:10,outline:'none',background:'#fafafa'}}
+                          placeholder="輸入或掃描單號…" value={txNo}
+                          onChange={function(e){setTxNo(e.target.value);}}
+                          onKeyDown={function(e){if(e.key==='Enter') handleLoad();}} />
+                        <button onClick={handleLoad} disabled={loading}
+                          style={{background:loading?'#90a4ae':ACCENT,color:'#fff',border:'none',borderRadius:10,padding:'11px 22px',fontSize:15,fontWeight:'bold',cursor:loading?'not-allowed':'pointer',flexShrink:0}}>
+                          {loading?'⏳':'載入'}
+                        </button>
+                      </div>
+                    </div>
+                    {h && (
+                      <div style={card}>
+                        <div style={secLabel()}>── 異動單資訊 ──</div>
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+                          <div style={{background:'#f7f7f7',borderRadius:9,padding:'7px 10px'}}>
+                            <div style={{fontSize:11,color:'#aaa'}}>單號</div>
+                            <div style={{fontWeight:'bold',color:'#222',fontSize:13}}>{h.id}</div>
+                          </div>
+                          <div style={{background:'#f7f7f7',borderRadius:9,padding:'7px 10px'}}>
+                            <div style={{fontSize:11,color:'#aaa'}}>類別</div>
+                            <div style={{fontWeight:'bold',color:ACCENT,fontSize:13}}>{h.docType||h.doctype}</div>
+                          </div>
+                          <div style={{gridColumn:'span 2',background:'#fff3e0',border:'1px solid #ffb74d',borderRadius:9,padding:'7px 10px'}}>
+                            <div style={{fontSize:11,color:'#aaa'}}>客戶</div>
+                            <div style={{fontWeight:'bold',color:'#e65100',fontSize:14}}>{custName}</div>
+                          </div>
+                          <div style={{gridColumn:'span 2',background:'#fce4ec',border:'1px solid #f48fb1',borderRadius:9,padding:'7px 10px'}}>
+                            <div style={{fontSize:11,color:'#aaa'}}>售出鋼捲</div>
+                            <div style={{fontWeight:'bold',color:DARK,fontSize:13}}>{c0.spec||c0.model||'（未填）'}&nbsp;·&nbsp;批號：{c0.batchNo||c0.batchno||'－'}</div>
+                            <div style={{fontSize:12,color:'#888',marginTop:3}}>出倉：{c0.outWarehouse||c0.outwarehouse||'鋼捲倉'}&nbsp;系統重量：{parseFloat(c0.outWeight||c0.outweight||0).toFixed(1)} kg</div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {phase==='B' && (
+                  <div>
+                    <div style={card}>
+                      <div style={secLabel()}>👷 操作人員</div>
+                      <input autoFocus
+                        style={{width:'100%',fontSize:15,padding:'11px 13px',boxSizing:'border-box',border:'2px solid #e0e0e0',borderRadius:10,outline:'none',background:'#fafafa'}}
+                        placeholder="輸入姓名（多人用；分隔）"
+                        value={operator} onChange={function(e){setOperator(e.target.value);}} />
+                    </div>
+                    <div style={card}>
+                      <div style={secLabel()}>🕐 作業時間</div>
+                      <div style={{marginBottom:10}}>
+                        <div style={{fontSize:12,color:'#888',marginBottom:4}}>開始時間</div>
+                        <input type="datetime-local"
+                          style={{width:'100%',fontSize:14,padding:'9px 12px',boxSizing:'border-box',border:'2px solid #e0e0e0',borderRadius:10,outline:'none'}}
+                          value={startTime} onChange={function(e){setStartTime(e.target.value);}} />
+                      </div>
+                      <div>
+                        <div style={{fontSize:12,color:'#888',marginBottom:4}}>結束時間</div>
+                        <input type="datetime-local"
+                          style={{width:'100%',fontSize:14,padding:'9px 12px',boxSizing:'border-box',border:'2px solid #e0e0e0',borderRadius:10,outline:'none'}}
+                          value={endTime} onChange={function(e){setEndTime(e.target.value);}} />
+                      </div>
+                    </div>
+                    <div style={card}>
+                      <div style={secLabel('#b71c1c')}>⚖️ 實際售出重量（kg）</div>
+                      <div style={{display:'flex',gap:10,alignItems:'center'}}>
+                        <input type="number" step="0.01"
+                          style={{flex:1,fontSize:28,padding:'10px 14px',border:'2px solid #ef9a9a',borderRadius:10,outline:'none',textAlign:'right',background:'#fff',fontWeight:'bold',color:DARK}}
+                          placeholder={String(parseFloat(c0.outWeight||c0.outweight||0))+' (系統)'}
+                          value={actualWeight} onChange={function(e){setActualWeight(e.target.value);}} />
+                        <div style={{flexShrink:0,textAlign:'center'}}>
+                          <div style={{fontWeight:'bold',color:'#555',fontSize:15}}>KG</div>
+                          <div style={{fontSize:11,color:'#aaa',marginTop:2}}>系統：{parseFloat(c0.outWeight||c0.outweight||0).toFixed(1)}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {phase==='C' && (
+                  <div style={card}>
+                    <div style={secLabel('#b71c1c')}>📊 結算確認</div>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:8}}>
+                      <div style={{background:'#f7f7f7',borderRadius:9,padding:'7px 10px'}}>
+                        <div style={{fontSize:11,color:'#aaa'}}>異動單號</div>
+                        <div style={{fontWeight:'bold',color:'#222',fontSize:13}}>{h&&h.id}</div>
+                      </div>
+                      <div style={{background:'#fff3e0',border:'1px solid #ffb74d',borderRadius:9,padding:'7px 10px'}}>
+                        <div style={{fontSize:11,color:'#aaa'}}>客戶</div>
+                        <div style={{fontWeight:'bold',color:'#e65100',fontSize:13}}>{custName}</div>
+                      </div>
+                      <div style={{background:'#f7f7f7',borderRadius:9,padding:'7px 10px'}}>
+                        <div style={{fontSize:11,color:'#aaa'}}>批號</div>
+                        <div style={{fontWeight:'bold',color:'#222',fontSize:13}}>{c0.batchNo||c0.batchno||'－'}</div>
+                      </div>
+                      <div style={{background:'#f7f7f7',borderRadius:9,padding:'7px 10px'}}>
+                        <div style={{fontSize:11,color:'#aaa'}}>操作人員</div>
+                        <div style={{color:'#222',fontSize:13}}>{operator||'（未填）'}</div>
+                      </div>
+                      <div style={{gridColumn:'span 2',background:'#fce4ec',border:'2px solid '+ACCENT,borderRadius:9,padding:'10px'}}>
+                        <div style={{fontSize:11,color:'#aaa'}}>售出重量</div>
+                        <div style={{fontWeight:'bold',color:DARK,fontSize:26,textAlign:'right'}}>{parseFloat(actualWeight||0).toFixed(1)} <span style={{fontSize:14}}>kg</span></div>
+                        <div style={{fontSize:12,color:'#888',marginTop:2,textAlign:'right'}}>差量：{(parseFloat(actualWeight||0)-parseFloat(c0.outWeight||c0.outweight||0)).toFixed(1)} kg（實際-系統）</div>
+                      </div>
+                      <div style={{gridColumn:'span 2',background:'#f7f7f7',borderRadius:9,padding:'7px 10px'}}>
+                        <div style={{fontSize:11,color:'#aaa'}}>作業時間</div>
+                        <div style={{fontSize:13,color:'#333'}}>{(startTime||'').replace('T',' ')} ～ {(endTime||'').replace('T',' ')}</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {phase==='done' && (
+                  <div style={{background:'#fff',borderRadius:14,padding:'24px 16px',marginBottom:12,boxShadow:'0 1px 6px rgba(0,0,0,0.09)',textAlign:'center'}}>
+                    <div style={{fontSize:48,marginBottom:8}}>🎉</div>
+                    <div style={{fontWeight:'bold',fontSize:18,color:'#2e7d32',marginBottom:8}}>鋼捲售出完成！</div>
+                    <div style={{fontSize:13,color:'#555',whiteSpace:'pre-line',lineHeight:1.7}}>{msg.replace(/^✅\s*/,'')}</div>
+                    <button onClick={function(){setPhase('A');setTxNo('');setTxData(null);setActualWeight('');setOperator('');setMsg('');}}
+                      style={{marginTop:18,padding:'10px 28px',background:ACCENT,color:'#fff',border:'none',borderRadius:10,fontSize:14,fontWeight:'bold',cursor:'pointer'}}>
+                      處理下一張單
+                    </button>
+                  </div>
+                )}
+              </div>
+              {phase!=='done' && (
+                <div style={{background:'rgba(255,255,255,0.96)',backdropFilter:'blur(8px)',padding:'10px 12px',borderTop:'1px solid #eee',flexShrink:0}}>
+                  {phase==='A' && (
+                    <button onClick={function(){if(!h)return setMsg('請先載入鋼捲異動單');setMsg('');setPhase('B');}}
+                      disabled={!h||loading} style={btnPrimary(!h||loading)}>
+                      {loading?'⏳ 載入中…':'下一步：填報資料 →'}
+                    </button>
+                  )}
+                  {phase==='B' && (
+                    <div style={{display:'flex',gap:8}}>
+                      <button onClick={function(){setPhase('A');}}
+                        style={{flex:'0 0 80px',padding:'13px',borderRadius:12,border:'1px solid #ccc',background:'#fff',color:'#555',fontSize:14,cursor:'pointer',fontWeight:'bold'}}>
+                        ← 返回
+                      </button>
+                      <button onClick={function(){
+                          var kg=parseFloat(actualWeight);
+                          if(isNaN(kg)||kg<=0) return setMsg('請輸入有效售出重量');
+                          if(!operator.trim()) return setMsg('請輸入操作人員');
+                          setMsg('');setPhase('C');
+                        }}
+                        style={Object.assign({},btnPrimary(false),{flex:1})}>
+                        下一步：確認結算 →
+                      </button>
+                    </div>
+                  )}
+                  {phase==='C' && (
+                    <div style={{display:'flex',gap:8}}>
+                      <button onClick={function(){setPhase('B');}}
+                        style={{flex:'0 0 80px',padding:'13px',borderRadius:12,border:'1px solid #ccc',background:'#fff',color:'#555',fontSize:14,cursor:'pointer',fontWeight:'bold'}}>
+                        ← 返回
+                      </button>
+                      <button onClick={handleSubmit} disabled={loading}
+                        style={Object.assign({},btnPrimary(loading),{flex:1})}>
+                        {loading?'⏳ 結算中…':'💰 確認售出結算'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
         function App() {
       // 移除 cut_details, 加入 mobile_report
       const [mainTab, setMainTab] = useState('cut'); // 'cut' | 'progress' | 'labels' | 'mobile_report'
@@ -8367,6 +8786,12 @@ window.addEventListener('DOMContentLoaded', function(){
              >
                ✂️ 廠內分條
              </button>
+             <button
+               onClick={() => setMainTab('coil_sale')}
+               className={`px-5 py-2.5 font-bold transition-colors flex items-center rounded-t-lg mx-0.5 whitespace-nowrap ${mainTab === 'coil_sale' ? 'bg-[#fce4ec] text-red-900' : 'hover:bg-gray-700 text-gray-300 bg-gray-800'}`}
+             >
+               💰 鋼捲售出
+             </button>
           </div>
 
           {isLoading && (
@@ -8447,6 +8872,7 @@ window.addEventListener('DOMContentLoaded', function(){
           {mainTab === 'outsource_out'    && <OutsourceOut />}
           {mainTab === 'outsource_in'     && <OutsourceIn  />}
           {mainTab === 'inhouse_slitting' && <InhouseSlittingApp />}
+          {mainTab === 'coil_sale' && <CoilSaleApp />}
 
           {/* ── 全域鋼捲上架 Modal ── */}
           {appShowCoilModal && (
