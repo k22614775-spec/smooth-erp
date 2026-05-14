@@ -208,7 +208,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
   <span style="font-weight:bold;font-size:15px;color:#fbbf24;margin-right:14px">◆ ERP × MES 整合系統</span>
   <button id="mode-erp-btn" onclick="switchTopMode('erp')" style="background:#fff;color:#0055aa;border:0;padding:5px 18px;border-radius:4px;font-weight:bold;cursor:pointer">ERP 系統 (庫存/訂單/進貨/機台)</button>
   <button id="mode-mes-btn" onclick="switchTopMode('mes')" style="background:rgba(255,255,255,.18);color:#fff;border:1px solid rgba(255,255,255,.4);padding:5px 18px;border-radius:4px;font-weight:bold;cursor:pointer">MES 現場 (裁切/進度/標籤/條碼)</button>
-  <span id="ver-badge" style="margin-left:auto;font-size:11px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:2px 8px;cursor:default;font-family:monospace" title="目前部署版次 (git commit)">vPATCHED</span>
+  <span id="ver-badge" style="margin-left:auto;font-size:11px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:2px 8px;cursor:default;font-family:monospace" title="目前部署版次 (git commit)">v184f43c</span>
   <span style="font-size:12px;opacity:.75" id="sync-indicator"></span>
 </div>
 
@@ -1537,10 +1537,10 @@ function switchTopMode(mode) {
   async function _adjustWarehouseStock(model, warehouseNo, dQty, dTotal) {
     try {
       const rows = await _get('warehouse_stock',
-        {'model':'eq.'+model,'warehouseNo':'eq.'+warehouseNo});
+        {'model':'eq.'+model,'warehouseno':'eq.'+warehouseNo});
       if (rows.length) {
         await _patch('warehouse_stock',
-          {'model':'eq.'+model,'warehouseNo':'eq.'+warehouseNo},
+          {'model':'eq.'+model,'warehouseno':'eq.'+warehouseNo},
           { qty:   Math.max(0,(parseFloat(rows[0].qty)||0)+dQty),
             total: Math.max(0,(parseFloat(rows[0].total)||0)+dTotal),
             moveDate: _nowLocal() });
@@ -1557,10 +1557,10 @@ function switchTopMode(mode) {
   async function _adjustBatchDetail(model, warehouseNo, batchNo, location, dQty, dTotal, baseFields) {
     try {
       const rows = await _get('batch_detail',
-        {'model':'eq.'+model,'warehouseNo':'eq.'+warehouseNo,'batchNo':'eq.'+batchNo});
+        {'model':'eq.'+model,'warehouseno':'eq.'+warehouseNo,'batchno':'eq.'+batchNo});
       if (rows.length) {
         await _patch('batch_detail',
-          {'model':'eq.'+model,'warehouseNo':'eq.'+warehouseNo,'batchNo':'eq.'+batchNo},
+          {'model':'eq.'+model,'warehouseno':'eq.'+warehouseNo,'batchno':'eq.'+batchNo},
           { qty:   Math.max(0,(parseFloat(rows[0].qty)||0)+dQty),
             total: Math.max(0,(parseFloat(rows[0].total)||0)+dTotal) });
       } else if (dQty > 0) {
@@ -2030,7 +2030,7 @@ function switchTopMode(mode) {
 
         // 7. batch_detail：產線倉批號 增加（批號隨鋼捲調撥過來）
         const srcBatches = await _get('batch_detail',
-          {'model':'eq.'+model,'warehouseNo':'eq.'+srcWH,'batchNo':'eq.'+batchNo}
+          {'model':'eq.'+model,'warehouseno':'eq.'+srcWH,'batchno':'eq.'+batchNo}
         ).catch(function(){ return []; });
         const srcBatch = srcBatches[0] || {};
         await _adjustBatchDetail(model, dstWH, batchNo, dstLoc, +movQty, +movTotal, {
@@ -2723,17 +2723,17 @@ function switchTopMode(mode) {
           // 扣出倉庫存
           if(model){
             var wkOut=model+'|'+outWh;
-            var wsOut = await _get('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+outWh}).catch(function(){return[];});
+            var wsOut = await _get('warehouse_stock',{model:'eq.'+model,warehouseno:'eq.'+outWh}).catch(function(){return[];});
             if(wsOut&&wsOut[0]){
-              await _patch('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+outWh},{
+              await _patch('warehouse_stock',{model:'eq.'+model,warehouseno:'eq.'+outWh},{
                 qty: Math.max(0,(wsOut[0].qty||0)-1),
                 total: Math.max(0,(wsOut[0].total||0)-kg)
               }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
             }
             // 加入倉庫存
-            var wsIn = await _get('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+inWh}).catch(function(){return[];});
+            var wsIn = await _get('warehouse_stock',{model:'eq.'+model,warehouseno:'eq.'+inWh}).catch(function(){return[];});
             if(wsIn&&wsIn[0]){
-              await _patch('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+inWh},{
+              await _patch('warehouse_stock',{model:'eq.'+model,warehouseno:'eq.'+inWh},{
                 qty:(wsIn[0].qty||0)+1, total:(wsIn[0].total||0)+kg
               }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
             } else {
@@ -2885,16 +2885,16 @@ function switchTopMode(mode) {
           var bn    = c.batchNo||'';
           if(!model) continue;
           // 扣委外派工倉
-          var wsFrom = await _get('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+inWh}).catch(function(){return[];});
+          var wsFrom = await _get('warehouse_stock',{model:'eq.'+model,warehouseno:'eq.'+inWh}).catch(function(){return[];});
           if(wsFrom&&wsFrom[0]){
-            await _patch('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+inWh},{
+            await _patch('warehouse_stock',{model:'eq.'+model,warehouseno:'eq.'+inWh},{
               qty:Math.max(0,(wsFrom[0].qty||0)-1), total:Math.max(0,(wsFrom[0].total||0)-retKg)
             }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
           }
           // 加回入庫倉（加工後批號可能不同，這裡仍用原批號）
-          var wsTo = await _get('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+retWh}).catch(function(){return[];});
+          var wsTo = await _get('warehouse_stock',{model:'eq.'+model,warehouseno:'eq.'+retWh}).catch(function(){return[];});
           if(wsTo&&wsTo[0]){
-            await _patch('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+retWh},{
+            await _patch('warehouse_stock',{model:'eq.'+model,warehouseno:'eq.'+retWh},{
               qty:(wsTo[0].qty||0)+1, total:(wsTo[0].total||0)+retKg
             }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
           } else {
@@ -3023,16 +3023,16 @@ function switchTopMode(mode) {
           }).catch(function(e){ _errs.push('CM:'+String(e.message||e)); });
 
           if(model){
-            var wsOut = await _get('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+outWh}).catch(function(){return[];});
+            var wsOut = await _get('warehouse_stock',{model:'eq.'+model,warehouseno:'eq.'+outWh}).catch(function(){return[];});
             if(wsOut&&wsOut[0]){
-              await _patch('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+outWh},{
+              await _patch('warehouse_stock',{model:'eq.'+model,warehouseno:'eq.'+outWh},{
                 qty:Math.max(0,(wsOut[0].qty||0)-1),
                 total:Math.max(0,(wsOut[0].total||0)-actualUsedKg)
               }).catch(function(e){ _errs.push('WS-OUT:'+String(e.message||e)); });
             }
-            var wsIn = await _get('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+inWh}).catch(function(){return[];});
+            var wsIn = await _get('warehouse_stock',{model:'eq.'+model,warehouseno:'eq.'+inWh}).catch(function(){return[];});
             if(wsIn&&wsIn[0]){
-              await _patch('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+inWh},{
+              await _patch('warehouse_stock',{model:'eq.'+model,warehouseno:'eq.'+inWh},{
                 qty:(wsIn[0].qty||0)+1, total:(wsIn[0].total||0)+actualUsedKg
               }).catch(function(e){ _errs.push('WS-IN:'+String(e.message||e)); });
             } else {
@@ -3071,8 +3071,8 @@ function switchTopMode(mode) {
             inBatchNo:'', loadWeight:acKg, unloadWeight:0, createTime:now,
           }).catch(function(e){ _errs.push('CM-ADD-'+ai+':'+String(e.message||e)); });
           if(acMd && acKg>0){
-            var wsAcOut=await _get('warehouse_stock',{model:'eq.'+acMd,warehouseNo:'eq.'+acWh}).catch(function(){return[];});
-            if(wsAcOut&&wsAcOut[0]) await _patch('warehouse_stock',{model:'eq.'+acMd,warehouseNo:'eq.'+acWh},{qty:Math.max(0,(wsAcOut[0].qty||0)-1),total:Math.max(0,(wsAcOut[0].total||0)-acKg)}).catch(function(e){_errs.push('WS-ADD-OUT-'+ai+':'+String(e.message||e));});
+            var wsAcOut=await _get('warehouse_stock',{model:'eq.'+acMd,warehouseno:'eq.'+acWh}).catch(function(){return[];});
+            if(wsAcOut&&wsAcOut[0]) await _patch('warehouse_stock',{model:'eq.'+acMd,warehouseno:'eq.'+acWh},{qty:Math.max(0,(wsAcOut[0].qty||0)-1),total:Math.max(0,(wsAcOut[0].total||0)-acKg)}).catch(function(e){_errs.push('WS-ADD-OUT-'+ai+':'+String(e.message||e));});
             await _upsert('stock_moves',{id:'SM-SLT-ADD-OUT-'+txId+'-'+ai,model:acMd,warehouse:acWh,qty:-1,total:-acKg,refType:'INHOUSE_SLITTING',refId:dspId,moveDate:today,remark:'廠內分條追加出倉 批號:'+acBn+' '+txId}).catch(function(e){_errs.push('SM-ADD-OUT:'+String(e.message||e));});
             await _upsert('stock_moves',{id:'SM-SLT-ADD-IN-'+txId+'-'+ai,model:acMd,warehouse:acIn,qty:1,total:acKg,refType:'INHOUSE_SLITTING',refId:dspId,moveDate:today,remark:'廠內分條追加入產線倉 批號:'+acBn+' '+txId}).catch(function(e){_errs.push('SM-ADD-IN:'+String(e.message||e));});
             await _adjustBatchDetail(acMd, acWh, acBn, '', -1, -acKg, null).catch(function(e){_errs.push('BD-ADD-OUT-'+ai+':'+String(e.message||e));});
@@ -3091,8 +3091,8 @@ function switchTopMode(mode) {
           if(rcNewBn && rcNewKg>0){
             await _upsert('dispatch_coil_moves',{id:'CM-SLT-RPL-'+txId+'-'+ri,dispatchId:dspId,outBatchNo:rcNewBn,coilNo:rcNewBn,model:rcMd,spec:rc.spec||'',qty:1,total:rcNewKg,unit:'KG',outWarehouse:rcNewWh,outLocation:'',inWarehouse:rcInWh,inLocation:'',inBatchNo:'',loadWeight:rcNewKg,unloadWeight:0,createTime:now}).catch(function(e){_errs.push('CM-RPL-'+ri+':'+String(e.message||e));});
             if(rcMd){
-              var wsRcOut=await _get('warehouse_stock',{model:'eq.'+rcMd,warehouseNo:'eq.'+rcNewWh}).catch(function(){return[];});
-              if(wsRcOut&&wsRcOut[0]) await _patch('warehouse_stock',{model:'eq.'+rcMd,warehouseNo:'eq.'+rcNewWh},{qty:Math.max(0,(wsRcOut[0].qty||0)-1),total:Math.max(0,(wsRcOut[0].total||0)-rcNewKg)}).catch(function(e){_errs.push('WS-RPL-OUT-'+ri+':'+String(e.message||e));});
+              var wsRcOut=await _get('warehouse_stock',{model:'eq.'+rcMd,warehouseno:'eq.'+rcNewWh}).catch(function(){return[];});
+              if(wsRcOut&&wsRcOut[0]) await _patch('warehouse_stock',{model:'eq.'+rcMd,warehouseno:'eq.'+rcNewWh},{qty:Math.max(0,(wsRcOut[0].qty||0)-1),total:Math.max(0,(wsRcOut[0].total||0)-rcNewKg)}).catch(function(e){_errs.push('WS-RPL-OUT-'+ri+':'+String(e.message||e));});
               await _upsert('stock_moves',{id:'SM-SLT-RPL-OUT-'+txId+'-'+ri,model:rcMd,warehouse:rcNewWh,qty:-1,total:-rcNewKg,refType:'INHOUSE_SLITTING',refId:dspId,moveDate:today,remark:'廠內分條更換出倉 批號:'+rcNewBn+' '+txId}).catch(function(e){_errs.push('SM-RPL-OUT:'+String(e.message||e));});
               await _upsert('stock_moves',{id:'SM-SLT-RPL-IN-'+txId+'-'+ri,model:rcMd,warehouse:rcInWh,qty:1,total:rcNewKg,refType:'INHOUSE_SLITTING',refId:dspId,moveDate:today,remark:'廠內分條更換入產線倉 批號:'+rcNewBn+' '+txId}).catch(function(e){_errs.push('SM-RPL-IN:'+String(e.message||e));});
               await _adjustBatchDetail(rcMd, rcNewWh, rcNewBn, '', -1, -rcNewKg, null).catch(function(e){_errs.push('BD-RPL-OUT-'+ri+':'+String(e.message||e));});
@@ -3177,9 +3177,9 @@ function switchTopMode(mode) {
           var cmInWh  = c6.inWarehouse||c6.inwarehouse||'產線倉';
           var cmUnit  = c6.unit||'KG';
           if(!cmModel) continue;
-          var wsPL = await _get('warehouse_stock',{model:'eq.'+cmModel,warehouseNo:'eq.'+cmInWh}).catch(function(){return[];});
+          var wsPL = await _get('warehouse_stock',{model:'eq.'+cmModel,warehouseno:'eq.'+cmInWh}).catch(function(){return[];});
           if(wsPL&&wsPL[0]){
-            await _patch('warehouse_stock',{model:'eq.'+cmModel,warehouseNo:'eq.'+cmInWh},{
+            await _patch('warehouse_stock',{model:'eq.'+cmModel,warehouseno:'eq.'+cmInWh},{
               qty:Math.max(0,(wsPL[0].qty||0)-1),
               total:Math.max(0,(wsPL[0].total||0)-actualUsedCmKg)
             }).catch(function(e){ _errs.push('WS-DEDUCT:'+String(e.message||e)); });
@@ -3287,8 +3287,8 @@ function switchTopMode(mode) {
       filter=filter||{};
       const qs={};
       if(filter.model) qs['model']='ilike.*'+filter.model+'*';
-      if(filter.batchNo) qs['batchNo']='eq.'+filter.batchNo;
-      if(filter.warehouse) qs['warehouseNo']='eq.'+filter.warehouse;
+      if(filter.batchNo) qs['batchno']='eq.'+filter.batchNo;
+      if(filter.warehouse) qs['warehouseno']='eq.'+filter.warehouse;
       // keyword 可同時搜 model 或 batchNo
       if(filter.keyword && !filter.batchNo && !filter.model){
         qs['or']='(model.ilike.*'+filter.keyword+'*,batchNo.ilike.*'+filter.keyword+'*)';
