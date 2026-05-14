@@ -2463,7 +2463,7 @@ function switchTopMode(mode) {
         }).catch(_seedErr('coil_transaction_coils CTC-1002'));
         await _upsert('coil_transaction_items',{
           id:'CTI-1150512002-A', transactionId:'1150512002', itemNo:'0010',
-          orderNo:'', warehouseCode:'成品倉',
+          orderNo:'', warehouseCode:'鋼捲倉',
           model:'ZBE0.500*0255R001', spec:'鍍鋅 0.5*255 (子捲A)',
           qty:1, totalKg:0, batchNo:'1002-A',
           remark:'子捲A 公式:0.5*255*7.85',
@@ -2471,7 +2471,7 @@ function switchTopMode(mode) {
         }).catch(_seedErr('coil_transaction_items CTI-1002-A'));
         await _upsert('coil_transaction_items',{
           id:'CTI-1150512002-B', transactionId:'1150512002', itemNo:'0020',
-          orderNo:'', warehouseCode:'成品倉',
+          orderNo:'', warehouseCode:'鋼捲倉',
           model:'ZBE0.500*0255R001', spec:'鍍鋅 0.5*255 (子捲B)',
           qty:1, totalKg:0, batchNo:'1002-B',
           remark:'子捲B 公式:0.5*255*7.85',
@@ -3085,7 +3085,7 @@ function switchTopMode(mode) {
         for(var bi=0; bi<allBabyItems.length; bi++){
           var baby = allBabyItems[bi];
           var babyKg  = parseFloat(baby.actualKg)||0;
-          var babyWh  = baby.warehouseCode||'成品倉';
+          var babyWh  = baby.warehouseCode||'鋼捲倉';
           var babyMod = baby.model||coil0.model||'';
           var babyBn  = baby.batchNo||'';
           totalBabyKg += babyKg;
@@ -7876,7 +7876,7 @@ window.addEventListener('DOMContentLoaded', function(){
         var _txId=txData&&txData.header&&txData.header.id||'TX';
         setAddedBabyRows(function(prev){ return prev.concat([{
           batchNo:_txId+'-X'+(prev.length+1), model:_c0.model||'',
-          spec:'', warehouseCode:'成品倉', actualKg:'',
+          spec:'', warehouseCode:'鋼捲倉', actualKg:'',
         }]); });
       };
       var updateAddedBabyRow = function(i, field, val){
@@ -7910,14 +7910,14 @@ window.addEventListener('DOMContentLoaded', function(){
             batchNo: it.batchNo||it.batchno||'',
             model: it.model||'',
             spec: it.spec||'',
-            warehouseCode: it.warehouseCode||it.warehousecode||'成品倉',
+            warehouseCode: it.warehouseCode||it.warehousecode||'鋼捲倉',
             actualKg: parseFloat((babyRows[i]||{}).actualKg)||0,
             formula: (babyRows[i]||{}).formula||'',
           };
         });
         var addedBabyItems = addedBabyRows.map(function(r){
           return {batchNo:r.batchNo||'',model:r.model||'',spec:r.spec||'',
-                  warehouseCode:r.warehouseCode||'成品倉',actualKg:parseFloat(r.actualKg)||0};
+                  warehouseCode:r.warehouseCode||'鋼捲倉',actualKg:parseFloat(r.actualKg)||0};
         });
         var opts = {startTime:startTime, endTime:endTime,
                     motherUnloadWeight:parseFloat(unloadWeight)||0,
