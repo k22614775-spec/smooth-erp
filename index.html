@@ -2950,7 +2950,7 @@ function switchTopMode(mode) {
     //    loadWeight     : 母捲上架磅重 (number kg)
     //    babyItems      : [{itemId, batchNo, model, spec, warehouseCode, actualKg, formula}]
     //    operatorStr    : 操作人員字串 (e.g. '張三;李四')
-    //    opts (optional): { startTime, endTime, appendedCoils, replacedCoils, addedBabyItems }
+    //    opts (optional): { motherUnloadWeight, startTime, endTime, appendedCoils, replacedCoils, addedBabyItems }
     processInhouseSlitting: function(txData, loadWeight, babyItems, operatorStr, opts, cb, errCb){
       if(typeof opts === 'function'){ errCb = cb; cb = opts; opts = {}; }
       opts = opts || {};
@@ -2969,6 +2969,7 @@ function switchTopMode(mode) {
         var workStartStr   = opts.startTime || now.slice(11,16);
         var workEndStr     = opts.endTime   || now.slice(11,16);
         var workRemark     = '工時 '+workStartStr+' ~ '+workEndStr;
+        var motherUnloadWeight = parseFloat(opts.motherUnloadWeight)||0;
         var appendedCoils  = opts.appendedCoils  || [];
         var replacedCoils  = opts.replacedCoils  || [];
         var addedBabyItems = opts.addedBabyItems || [];
@@ -3015,7 +3016,7 @@ function switchTopMode(mode) {
             qty:c.qty||1, total:kg, unit:c.unit||'KG',
             outWarehouse:outWh, outLocation:'',
             inWarehouse:inWh, inLocation:'',
-            inBatchNo:'', loadWeight:kg, unloadWeight:0,
+            inBatchNo:'', loadWeight:kg, unloadWeight:motherUnloadWeight,
             createTime:now,
           }).catch(function(e){ _errs.push('CM:'+String(e.message||e)); });
 
@@ -7758,6 +7759,7 @@ window.addEventListener('DOMContentLoaded', function(){
       var msgState = useState(''); var msg = msgState[0]; var setMsg = msgState[1];
       var operatorState = useState(''); var operator = operatorState[0]; var setOperator = operatorState[1];
       var loadWeightState = useState(''); var loadWeight = loadWeightState[0]; var setLoadWeight = loadWeightState[1];
+      var unloadWeightState = useState(''); var unloadWeight = unloadWeightState[0]; var setUnloadWeight = unloadWeightState[1];
       var babyRowsState = useState([]); var babyRows = babyRowsState[0]; var setBabyRows = babyRowsState[1];
       var txRef = useRef(null);
       // ── 新增：捲號驗證 {coilId:{input,status}} status=''|'ok'|'fail'
@@ -7910,7 +7912,7 @@ window.addEventListener('DOMContentLoaded', function(){
         if(!txData) return;
         if(!window.API||!window.API.processInhouseSlitting) return setMsg('⚠️ 後端未連線');
         var _totalBaby = babyRows.length+addedBabyRows.length;
-        if(!window.confirm('確認廠內分條結算？\n母捲上架：'+loadWeight+' kg\n追加母捲：'+appendedCoils.length+' 筆\n更換母捲：'+replacedCoils.length+' 筆\n子捲合計：'+_totalBaby+' 筆')) return;
+        if(!window.confirm('確認廠內分條結算？\n母捲上架：'+loadWeight+' kg\n母捲下架：'+(unloadWeight||'0')+' kg\n追加母捲：'+appendedCoils.length+' 筆\n更換母捲：'+replacedCoils.length+' 筆\n子捲合計：'+_totalBaby+' 筆')) return;
         setLoading(true); setMsg('');
         var items = txData.items||[];
         var babyItems = items.map(function(it,i){
@@ -7929,6 +7931,7 @@ window.addEventListener('DOMContentLoaded', function(){
                   warehouseCode:r.warehouseCode||'成品倉',actualKg:parseFloat(r.actualKg)||0};
         });
         var opts = {startTime:startTime, endTime:endTime,
+                    motherUnloadWeight:parseFloat(unloadWeight)||0,
                     appendedCoils:appendedCoils, replacedCoils:replacedCoils,
                     addedBabyItems:addedBabyItems};
         window.API.processInhouseSlitting(
@@ -8169,6 +8172,21 @@ window.addEventListener('DOMContentLoaded', function(){
                         </div>
                       </div>
                     </div>
+                    {/* ── 下架磅重 ── */}
+                    <div style={card}>
+                      <div style={secLabel('#4a148c')}>⚖️ 下架磅重（kg）</div>
+                      <div style={{display:'flex',gap:10,alignItems:'center',overflow:'hidden'}}>
+                        <input type='number' step='0.01'
+                               style={{flex:1,minWidth:0,boxSizing:'border-box',fontSize:22,padding:'10px 12px',border:'2px solid #ce93d8',borderRadius:10,outline:'none',textAlign:'right',background:'#fff',fontWeight:'bold',color:'#4a148c'}}
+                               placeholder='0.00（可留空）'
+                               value={unloadWeight}
+                               onChange={function(e){setUnloadWeight(e.target.value);}} />
+                        <div style={{flexShrink:0,textAlign:'center'}}>
+                          <div style={{fontWeight:'bold',color:'#555',fontSize:15}}>KG</div>
+                          <div style={{fontSize:11,color:'#aaa',marginTop:2}}>剩料回倉</div>
+                        </div>
+                      </div>
+                    </div>
                     {/* ── 工時 ── */}
                     <div style={card}>
                       <div style={secLabel('#1565c0')}>⏱ 工時記錄</div>
@@ -8267,9 +8285,9 @@ window.addEventListener('DOMContentLoaded', function(){
                           </div>
                           <div style={{background:'rgba(0,0,0,0.03)',borderRadius:10,padding:'9px 10px'}}>
                             <div style={{fontSize:11,color:'#777',fontWeight:'bold',letterSpacing:.6,marginBottom:6}}>② 實際磅重（kg）</div>
-                            <div style={{display:'flex',gap:10,alignItems:'center'}}>
+                            <div style={{display:'flex',gap:10,alignItems:'center',overflow:'hidden'}}>
                               <input type='number' step='0.001'
-                                     style={{flex:1,fontSize:22,padding:'9px 12px',border:'2px solid '+(filled?'#a5d6a7':'#e0e0e0'),borderRadius:9,outline:'none',textAlign:'right',background:'#fff',fontWeight:'bold',color:'#1b5e20'}}
+                                     style={{flex:1,minWidth:0,boxSizing:'border-box',fontSize:22,padding:'9px 12px',border:'2px solid '+(filled?'#a5d6a7':'#e0e0e0'),borderRadius:9,outline:'none',textAlign:'right',background:'#fff',fontWeight:'bold',color:'#1b5e20'}}
                                      value={row.actualKg} placeholder='0.000'
                                      onChange={function(e){updateBabyRow(i,'actualKg',e.target.value);}} />
                               <div style={{flexShrink:0,fontWeight:'bold',color:'#555'}}>KG</div>
@@ -8304,9 +8322,9 @@ window.addEventListener('DOMContentLoaded', function(){
                                      value={r.warehouseCode} onChange={function(e){updateAddedBabyRow(i,'warehouseCode',e.target.value);}} />
                             </div>
                           </div>
-                          <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                          <div style={{display:'flex',gap:8,alignItems:'center',overflow:'hidden'}}>
                             <input type='number' step='0.001'
-                                   style={{flex:1,fontSize:22,padding:'8px 10px',border:'2px solid '+(filled?'#a5d6a7':'#ffd54f'),borderRadius:9,outline:'none',textAlign:'right',background:'#fff',fontWeight:'bold',color:'#1b5e20'}}
+                                   style={{flex:1,minWidth:0,boxSizing:'border-box',fontSize:22,padding:'8px 10px',border:'2px solid '+(filled?'#a5d6a7':'#ffd54f'),borderRadius:9,outline:'none',textAlign:'right',background:'#fff',fontWeight:'bold',color:'#1b5e20'}}
                                    value={r.actualKg} placeholder='0.000'
                                    onChange={function(e){updateAddedBabyRow(i,'actualKg',e.target.value);}} />
                             <div style={{flexShrink:0,fontWeight:'bold',color:'#555'}}>KG</div>
@@ -8340,6 +8358,10 @@ window.addEventListener('DOMContentLoaded', function(){
                       <div style={{background:'#f7f7f7',borderRadius:9,padding:'7px 10px'}}>
                         <div style={{fontSize:11,color:'#aaa'}}>上架磅重</div>
                         <div style={{fontWeight:'bold',color:'#b71c1c',fontSize:13}}>{parseFloat(loadWeight).toFixed(1)} kg</div>
+                      </div>
+                      <div style={{background:'#f3e5f5',borderRadius:9,padding:'7px 10px'}}>
+                        <div style={{fontSize:11,color:'#aaa'}}>下架磅重</div>
+                        <div style={{fontWeight:'bold',color:'#4a148c',fontSize:13}}>{unloadWeight?(parseFloat(unloadWeight).toFixed(1)+' kg'):'－'}</div>
                       </div>
                       <div style={{gridColumn:'span 2',background:'#e3f2fd',borderRadius:9,padding:'7px 10px',display:'flex',alignItems:'center',gap:8}}>
                         <span style={{fontSize:15}}>⏱</span>
@@ -8411,7 +8433,7 @@ window.addEventListener('DOMContentLoaded', function(){
                     <div style={{fontWeight:'bold',fontSize:18,color:'#2e7d32',marginBottom:8}}>廠內分條完成！</div>
                     <div style={{fontSize:12,color:'#555',whiteSpace:'pre-line',lineHeight:1.5,maxHeight:180,overflowY:'auto',wordBreak:'break-all'}}>{msg.replace(/^✅\s*/,'')}</div>
                     <button onClick={function(){
-                      setPhase('A');setTxNo('');setTxData(null);setLoadWeight('');setBabyRows([]);setOperator('');setMsg('');
+                      setPhase('A');setTxNo('');setTxData(null);setLoadWeight('');setUnloadWeight('');setBabyRows([]);setOperator('');setMsg('');
                       setCoilScan({});setStartTime('');setEndTime('');
                       setAppendedCoils([]);setShowAddCoil(false);setAddCoilForm({batchNo:'',kg:'',warehouse:'鋼捲倉',spec:''});
                       setReplacedCoils([]);setReplaceTarget(null);setReplaceForm({usedKg:'',newBatchNo:'',newKg:'',warehouse:'鋼捲倉'});
