@@ -208,7 +208,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
   <span style="font-weight:bold;font-size:15px;color:#fbbf24;margin-right:14px">◆ ERP × MES 整合系統</span>
   <button id="mode-erp-btn" onclick="switchTopMode('erp')" style="background:#fff;color:#0055aa;border:0;padding:5px 18px;border-radius:4px;font-weight:bold;cursor:pointer">ERP 系統 (庫存/訂單/進貨/機台)</button>
   <button id="mode-mes-btn" onclick="switchTopMode('mes')" style="background:rgba(255,255,255,.18);color:#fff;border:1px solid rgba(255,255,255,.4);padding:5px 18px;border-radius:4px;font-weight:bold;cursor:pointer">MES 現場 (裁切/進度/標籤/條碼)</button>
-  <span id="ver-badge" style="margin-left:auto;font-size:11px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:2px 8px;cursor:default;font-family:monospace" title="目前部署版次 (git commit)">v184f43c</span>
+  <span id="ver-badge" style="margin-left:auto;font-size:11px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:2px 8px;cursor:default;font-family:monospace" title="目前部署版次 (git commit)">v75e8792</span>
   <span style="font-size:12px;opacity:.75" id="sync-indicator"></span>
 </div>
 
@@ -2947,10 +2947,20 @@ function switchTopMode(mode) {
       })(), cb, errCb);
     },
     // ── 廠內分條結算：傳入異動單資料 + 母捲上架磅重 + 子捲磅重陣列 + 操作人員
-    //    loadWeight   : 母捲上架磅重 (number kg)
-    //    babyItems    : [{itemId, batchNo, model, spec, warehouseCode, actualKg, formula}]
-    //    operatorStr  : 操作人員字串 (e.g. '張三;李四')
-    processInhouseSlitting: function(txData, loadWeight, babyItems, operatorStr, cb, errCb){
+    //    loadWeight     : 母捲上架磅重 (number kg)
+    //    babyItems      : [{itemId, batchNo, model, spec, warehouseCode, actualKg, formula}]
+    //    operatorStr    : 操作人員字串 (e.g. '張三;李四')
+    //    opts (optional): {
+    //      startTime    : '08:30'  開始工時
+    //      endTime      : '10:45'  結束工時
+    //      appendedCoils: [{batchNo, model, spec, warehouse, kg}]  追加母捲
+    //      replacedCoils: [{oldCoilId, oldBatchNo, usedKg, newBatchNo, newKg, warehouse}] 更換母捲
+    //      addedBabyItems:[{batchNo, model, spec, warehouseCode, actualKg}]  追加子捲
+    //    }
+    processInhouseSlitting: function(txData, loadWeight, babyItems, operatorStr, opts, cb, errCb){
+      // 向後相容：舊呼叫方式 (opts 為 callback)
+      if(typeof opts === 'function'){ errCb = cb; cb = opts; opts = {}; }
+      opts = opts || {};
       _cb((async function(){
         var hdr    = txData.header||{};
         var coils  = txData.coils||[];
@@ -2963,12 +2973,20 @@ function switchTopMode(mode) {
         var today = now.split(' ')[0];
         var _errs = [];
 
+        // 工時字串（格式 HH:MM ~ HH:MM）
+        var workStartStr = opts.startTime || now.slice(11,16);
+        var workEndStr   = opts.endTime   || now.slice(11,16);
+        var workRemark   = '工時 '+workStartStr+' ~ '+workEndStr;
+        var appendedCoils  = opts.appendedCoils  || [];
+        var replacedCoils  = opts.replacedCoils  || [];
+        var addedBabyItems = opts.addedBabyItems || [];
+
         // Step 1：更新異動單 → 處理中
         await _patch('coil_transactions',{'id':'eq.'+txId},{
           status:'處理中', dispatchId:dspId, updatedAt:now
         });
 
-        // Step 2：建立派工單 (廠內分條)
+        // Step 2：建立派工單 (廠內分條)，記錄實際工時
         var coil0 = coils[0]||{};
         await _upsert('dispatch_orders',{
           id:dspId, date:hdr.date||today, docCategory:'4',
@@ -2976,8 +2994,9 @@ function switchTopMode(mode) {
           source:'鋼捲異動', orderId:'',
           partnerCode:'', partnerName:'',
           operator:operatorStr||'', machine:'', phase:'',
-          receiveTime:now, finishTime:'', workHours:0, printCount:0,
-          status:'open', remark:'廠內分條 來源異動單 '+txId,
+          receiveTime:today+' '+workStartStr+':00',
+          finishTime:'', workHours:0, printCount:0,
+          status:'open', remark:'廠內分條 來源異動單 '+txId+' | '+workRemark,
           createdAt:now, updatedAt:now,
         });
 
@@ -2985,11 +3004,12 @@ function switchTopMode(mode) {
         await _upsert('dispatch_return_reporters',{
           id:'RPT-'+txId, dispatchId:dspId,
           reporters:operatorStr||'', machine:'',
-          startTime:now, endTime:now, status:'active',
-          updatedAt:now,
+          startTime:today+' '+workStartStr+':00',
+          endTime:today+' '+workEndStr+':00',
+          status:'active', updatedAt:now,
         }).catch(function(e){ _errs.push('RPT:'+String(e.message||e)); });
 
-        // Step 4：母捲移轉 dispatch_coil_moves + 庫存調撥
+        // Step 4：原始母捲移轉 dispatch_coil_moves + 庫存調撥
         for(var c of coils){
           var outWh  = c.outWarehouse||c.outwarehouse||'鋼捲倉';
           var inWh   = c.inWarehouse||c.inwarehouse||'產線倉';
@@ -3039,10 +3059,100 @@ function switchTopMode(mode) {
           }
         }
 
-        // Step 5：子捲 dispatch_production + 入庫庫存
+        // Step 4b：追加母捲（生產途中補入新鋼捲）
+        for(var ai=0; ai<appendedCoils.length; ai++){
+          var ac   = appendedCoils[ai];
+          var acBn = ac.batchNo||'';
+          var acMd = ac.model||coil0.model||'';
+          var acWh = ac.warehouse||'鋼捲倉';
+          var acIn = coil0.inWarehouse||coil0.inwarehouse||'產線倉';
+          var acKg = parseFloat(ac.kg)||0;
+          await _upsert('dispatch_coil_moves',{
+            id:'CM-SLT-ADD-'+txId+'-'+ai, dispatchId:dspId,
+            outBatchNo:acBn, coilNo:acBn, model:acMd, spec:ac.spec||'',
+            qty:1, total:acKg, unit:'KG',
+            outWarehouse:acWh, outLocation:'',
+            inWarehouse:acIn, inLocation:'',
+            inBatchNo:'', loadWeight:acKg, unloadWeight:0,
+            createTime:now,
+          }).catch(function(e){ _errs.push('CM-ADD-'+ai+':'+String(e.message||e)); });
+          if(acMd && acKg>0){
+            var wsAcOut = await _get('warehouse_stock',{model:'eq.'+acMd,warehouseNo:'eq.'+acWh}).catch(function(){return[];});
+            if(wsAcOut&&wsAcOut[0]){
+              await _patch('warehouse_stock',{model:'eq.'+acMd,warehouseNo:'eq.'+acWh},{
+                qty:Math.max(0,(wsAcOut[0].qty||0)-1),
+                total:Math.max(0,(wsAcOut[0].total||0)-acKg)
+              }).catch(function(e){ _errs.push('WS-ADD-OUT-'+ai+':'+String(e.message||e)); });
+            }
+            await _upsert('stock_moves',{
+              id:'SM-SLT-ADD-OUT-'+txId+'-'+ai, model:acMd, warehouse:acWh,
+              qty:-1, total:-acKg, refType:'INHOUSE_SLITTING', refId:dspId,
+              moveDate:today, remark:'廠內分條追加出倉 批號:'+acBn+' '+txId
+            }).catch(function(e){ _errs.push('SM-ADD-OUT:'+String(e.message||e)); });
+            await _upsert('stock_moves',{
+              id:'SM-SLT-ADD-IN-'+txId+'-'+ai, model:acMd, warehouse:acIn,
+              qty:1, total:acKg, refType:'INHOUSE_SLITTING', refId:dspId,
+              moveDate:today, remark:'廠內分條追加入產線倉 批號:'+acBn+' '+txId
+            }).catch(function(e){ _errs.push('SM-ADD-IN:'+String(e.message||e)); });
+          }
+        }
+
+        // Step 4c：更換母捲（記錄原捲已用量 + 新捲入產線倉）
+        for(var ri=0; ri<replacedCoils.length; ri++){
+          var rc      = replacedCoils[ri];
+          var rcOldBn = rc.oldBatchNo||'';
+          var rcNewBn = rc.newBatchNo||'';
+          var rcMd    = rc.model||coil0.model||'';
+          var rcNewWh = rc.warehouse||'鋼捲倉';
+          var rcInWh  = coil0.inWarehouse||coil0.inwarehouse||'產線倉';
+          var rcUsed  = parseFloat(rc.usedKg)||0;
+          var rcNewKg = parseFloat(rc.newKg)||0;
+          // 更新原捲的 dispatch_coil_moves unloadWeight（已用重量）
+          if(rc.oldCoilId){
+            await _patch('dispatch_coil_moves',{'id':'eq.CM-SLT-'+rc.oldCoilId},{
+              unloadWeight:rcUsed, remark:'更換鋼捲 已用:'+rcUsed+'kg'
+            }).catch(function(e){ _errs.push('CM-RPL-OLD-'+ri+':'+String(e.message||e)); });
+          }
+          // 新捲入庫移動
+          if(rcNewBn && rcNewKg>0){
+            await _upsert('dispatch_coil_moves',{
+              id:'CM-SLT-RPL-'+txId+'-'+ri, dispatchId:dspId,
+              outBatchNo:rcNewBn, coilNo:rcNewBn, model:rcMd, spec:rc.spec||'',
+              qty:1, total:rcNewKg, unit:'KG',
+              outWarehouse:rcNewWh, outLocation:'',
+              inWarehouse:rcInWh, inLocation:'',
+              inBatchNo:'', loadWeight:rcNewKg, unloadWeight:0,
+              createTime:now,
+            }).catch(function(e){ _errs.push('CM-RPL-'+ri+':'+String(e.message||e)); });
+            if(rcMd){
+              var wsRcOut = await _get('warehouse_stock',{model:'eq.'+rcMd,warehouseNo:'eq.'+rcNewWh}).catch(function(){return[];});
+              if(wsRcOut&&wsRcOut[0]){
+                await _patch('warehouse_stock',{model:'eq.'+rcMd,warehouseNo:'eq.'+rcNewWh},{
+                  qty:Math.max(0,(wsRcOut[0].qty||0)-1),
+                  total:Math.max(0,(wsRcOut[0].total||0)-rcNewKg)
+                }).catch(function(e){ _errs.push('WS-RPL-OUT-'+ri+':'+String(e.message||e)); });
+              }
+              await _upsert('stock_moves',{
+                id:'SM-SLT-RPL-OUT-'+txId+'-'+ri, model:rcMd, warehouse:rcNewWh,
+                qty:-1, total:-rcNewKg, refType:'INHOUSE_SLITTING', refId:dspId,
+                moveDate:today, remark:'廠內分條更換出倉 批號:'+rcNewBn+' '+txId
+              }).catch(function(e){ _errs.push('SM-RPL-OUT:'+String(e.message||e)); });
+              await _upsert('stock_moves',{
+                id:'SM-SLT-RPL-IN-'+txId+'-'+ri, model:rcMd, warehouse:rcInWh,
+                qty:1, total:rcNewKg, refType:'INHOUSE_SLITTING', refId:dspId,
+                moveDate:today, remark:'廠內分條更換入產線倉 批號:'+rcNewBn+' '+txId
+              }).catch(function(e){ _errs.push('SM-RPL-IN:'+String(e.message||e)); });
+            }
+          }
+        }
+
+        // Step 5：子捲 dispatch_production + 入庫庫存（原始 + 追加）
+        var allBabyItems = babyItems.concat(addedBabyItems.map(function(ab,xi){
+          return Object.assign({itemId:'ADD-'+txId+'-'+xi}, ab);
+        }));
         var totalBabyKg = 0;
-        for(var bi=0; bi<babyItems.length; bi++){
-          var baby = babyItems[bi];
+        for(var bi=0; bi<allBabyItems.length; bi++){
+          var baby = allBabyItems[bi];
           var babyKg  = parseFloat(baby.actualKg)||0;
           var babyWh  = baby.warehouseCode||'成品倉';
           var babyMod = baby.model||coil0.model||'';
@@ -3084,13 +3194,20 @@ function switchTopMode(mode) {
 
         // Step 6：結案派工單 + 派工回單 + 扣庫
         await _patch('dispatch_orders',{'id':'eq.'+dspId},{
-          status:'closed', finishTime:now, updatedAt:now
+          status:'closed',
+          finishTime:today+' '+workEndStr+':00',
+          updatedAt:now
         });
+
+        var extraRemark = '';
+        if(appendedCoils.length>0) extraRemark += ' | 追加母捲:'+appendedCoils.length+'筆';
+        if(replacedCoils.length>0) extraRemark += ' | 更換母捲:'+replacedCoils.length+'筆';
+        if(addedBabyItems.length>0) extraRemark += ' | 追加子捲:'+addedBabyItems.length+'筆';
 
         await _upsert('dispatch_returns',{
           id:drId, dispatchId:dspId, date:today,
           partnerCode:'', partnerName:'',
-          remark:'廠內分條結算 '+txId,
+          remark:'廠內分條結算 '+txId+' | '+workRemark+extraRemark,
           status:'closed', createdAt:now, updatedAt:now,
         }).catch(function(e){ _errs.push('DR:'+String(e.message||e)); });
 
@@ -3130,7 +3247,11 @@ function switchTopMode(mode) {
         });
 
         return {ok:true, dispatchId:dspId, returnId:drId,
-                babyCount:babyItems.length, totalBabyKg:totalBabyKg, errors:_errs};
+                babyCount:allBabyItems.length, totalBabyKg:totalBabyKg,
+                appendedCount:appendedCoils.length,
+                replacedCount:replacedCoils.length,
+                addedBabyCount:addedBabyItems.length,
+                errors:_errs};
       })(), cb, errCb);
     },
 
@@ -7694,6 +7815,25 @@ window.addEventListener('DOMContentLoaded', function(){
       var loadWeightState = useState(''); var loadWeight = loadWeightState[0]; var setLoadWeight = loadWeightState[1];
       var babyRowsState = useState([]); var babyRows = babyRowsState[0]; var setBabyRows = babyRowsState[1];
       var txRef = useRef(null);
+      // ── 新增：捲號驗證 ──
+      var coilScanState = useState({}); var coilScan = coilScanState[0]; var setCoilScan = coilScanState[1];
+      // coilScan 格式：{coilId: {input:'', status:''}} status=''|'ok'|'fail'
+      // ── 新增：工時 ──
+      var startTimeState = useState(''); var startTime = startTimeState[0]; var setStartTime = startTimeState[1];
+      var endTimeState   = useState(''); var endTime   = endTimeState[0];   var setEndTime   = endTimeState[1];
+      // ── 新增：追加鋼捲 ──
+      var appendedCoilsState = useState([]); var appendedCoils = appendedCoilsState[0]; var setAppendedCoils = appendedCoilsState[1];
+      var showAddCoilState = useState(false); var showAddCoil = showAddCoilState[0]; var setShowAddCoil = showAddCoilState[1];
+      var addCoilFormState = useState({batchNo:'',kg:'',warehouse:'鋼捲倉',spec:''});
+      var addCoilForm = addCoilFormState[0]; var setAddCoilForm = addCoilFormState[1];
+      // ── 新增：更換鋼捲 ──
+      var replacedCoilsState = useState([]); var replacedCoils = replacedCoilsState[0]; var setReplacedCoils = replacedCoilsState[1];
+      var replaceTargetState = useState(null); var replaceTarget = replaceTargetState[0]; var setReplaceTarget = replaceTargetState[1];
+      // replaceTarget = {idx, coilId, batchNo, model, spec}
+      var replaceFormState = useState({usedKg:'',newBatchNo:'',newKg:'',warehouse:'鋼捲倉'});
+      var replaceForm = replaceFormState[0]; var setReplaceForm = replaceFormState[1];
+      // ── 新增：追加子捲 ──
+      var addedBabyRowsState = useState([]); var addedBabyRows = addedBabyRowsState[0]; var setAddedBabyRows = addedBabyRowsState[1];
 
       useEffect(function(){ if(txRef.current) txRef.current.focus(); }, []);
 
@@ -7722,12 +7862,25 @@ window.addEventListener('DOMContentLoaded', function(){
       var handleNextToB = function(){
         if(!txData) return setMsg('請先載入鋼捲異動單');
         if(!operator.trim()) return setMsg('請輸入上機人員姓名');
-        setMsg(''); setPhase('B');
+        setMsg('');
+        if(!startTime){
+          var now = new Date();
+          var hh = String(now.getHours()).padStart(2,'0');
+          var mm = String(now.getMinutes()).padStart(2,'0');
+          setStartTime(hh+':'+mm);
+        }
+        setPhase('B');
       };
 
       var handleNextToC = function(){
         var kg = parseFloat(loadWeight);
         if(isNaN(kg)||kg<=0) return setMsg('請輸入有效母捲上架磅重');
+        // 捲號驗證：若有任何 fail 則不允許繼續
+        var coils = txData&&txData.coils||[];
+        var failCoils = coils.filter(function(c){ return (coilScan[c.id]||{}).status==='fail'; });
+        if(failCoils.length>0) return setMsg('❌ 有 '+failCoils.length+' 筆捲號驗證不符，請重新確認');
+        var unscanned = coils.filter(function(c){ return !(coilScan[c.id]||{}).status; });
+        if(unscanned.length>0 && !window.confirm('有 '+unscanned.length+' 筆捲號尚未掃描，確定繼續？')) return;
         setMsg(''); setPhase('C');
       };
 
@@ -7747,16 +7900,89 @@ window.addEventListener('DOMContentLoaded', function(){
         } catch(e){ setMsg('公式計算失敗：'+f); }
       };
 
+      // ── 捲號掃描驗證 ──
+      var handleCoilScan = function(coilId, expectedBn, inputVal){
+        var v = inputVal.trim();
+        var status = v==='' ? '' : (v===expectedBn.trim() ? 'ok' : 'fail');
+        setCoilScan(function(prev){ return Object.assign({},prev,{[coilId]:{input:v,status:status}}); });
+      };
+
+      // ── 追加鋼捲 ──
+      var handleAddCoil = function(){
+        if(!addCoilForm.batchNo.trim()) return setMsg('請輸入追加鋼捲批號');
+        if(!(parseFloat(addCoilForm.kg)>0)) return setMsg('請輸入有效重量');
+        var coil0m = (txData&&txData.coils&&txData.coils[0])||{};
+        var entry = {
+          batchNo: addCoilForm.batchNo.trim(),
+          model: coil0m.model||'',
+          spec: addCoilForm.spec||coil0m.spec||'',
+          warehouse: addCoilForm.warehouse||'鋼捲倉',
+          kg: parseFloat(addCoilForm.kg)||0,
+        };
+        setAppendedCoils(function(prev){ return prev.concat([entry]); });
+        setAddCoilForm({batchNo:'',kg:'',warehouse:'鋼捲倉',spec:''});
+        setShowAddCoil(false);
+        setMsg('');
+      };
+
+      // ── 更換鋼捲 ──
+      var handleReplaceCoil = function(){
+        if(!replaceTarget) return;
+        if(!replaceForm.newBatchNo.trim()) return setMsg('請輸入新捲批號');
+        if(!(parseFloat(replaceForm.newKg)>0)) return setMsg('請輸入新捲重量');
+        var entry = {
+          oldCoilId: replaceTarget.coilId,
+          oldBatchNo: replaceTarget.batchNo,
+          model: replaceTarget.model,
+          spec: replaceTarget.spec,
+          usedKg: parseFloat(replaceForm.usedKg)||0,
+          newBatchNo: replaceForm.newBatchNo.trim(),
+          newKg: parseFloat(replaceForm.newKg)||0,
+          warehouse: replaceForm.warehouse||'鋼捲倉',
+        };
+        setReplacedCoils(function(prev){ return prev.concat([entry]); });
+        setReplaceTarget(null);
+        setReplaceForm({usedKg:'',newBatchNo:'',newKg:'',warehouse:'鋼捲倉'});
+        setMsg('');
+      };
+
+      // ── 追加子捲 ──
+      var handleAddBabyRow = function(){
+        var coil0m = (txData&&txData.coils&&txData.coils[0])||{};
+        var todayStr = new Date().toISOString().slice(2,10).replace(/-/g,'');
+        var newBn = (txData&&txData.header&&txData.header.id||'TX')+'-X'+(addedBabyRows.length+1);
+        setAddedBabyRows(function(prev){ return prev.concat([{
+          batchNo:newBn, model:coil0m.model||'', spec:'',
+          warehouseCode:'成品倉', actualKg:'',
+        }]); });
+      };
+      var updateAddedBabyRow = function(i, field, val){
+        setAddedBabyRows(function(prev){ return prev.map(function(r,idx){ return idx===i?Object.assign({},r,{[field]:val}):r; }); });
+      };
+      var removeAddedBabyRow = function(i){
+        setAddedBabyRows(function(prev){ return prev.filter(function(_,idx){ return idx!==i; }); });
+      };
+
       var handleNextToD = function(){
         var incomplete = babyRows.some(function(r){ return !(parseFloat(r.actualKg)>0); });
-        if(incomplete && !window.confirm('部分子捲磅重未填寫，確定繼續？')) return;
+        var addedIncomplete = addedBabyRows.some(function(r){ return !(parseFloat(r.actualKg)>0); });
+        if((incomplete||addedIncomplete) && !window.confirm('部分子捲磅重未填寫，確定繼續？')) return;
+        // 自動記錄結束時間
+        if(!endTime){
+          var now2 = new Date();
+          var hh2 = String(now2.getHours()).padStart(2,'0');
+          var mm2 = String(now2.getMinutes()).padStart(2,'0');
+          setEndTime(hh2+':'+mm2);
+        }
         setMsg(''); setPhase('D');
       };
 
       var handleSubmit = function(){
         if(!txData) return;
         if(!window.API||!window.API.processInhouseSlitting) return setMsg('⚠️ 後端未連線');
-        if(!window.confirm('確認廠內分條結算？\n母捲上架：'+loadWeight+' kg\n子捲：'+babyRows.length+' 筆')) return;
+        var totalCoils = 1 + appendedCoils.length - replacedCoils.length;
+        var totalBaby  = babyRows.length + addedBabyRows.length;
+        if(!window.confirm('確認廠內分條結算？\n母捲上架：'+loadWeight+' kg\n追加母捲：'+appendedCoils.length+' 筆\n更換母捲：'+replacedCoils.length+' 筆\n子捲合計：'+totalBaby+' 筆')) return;
         setLoading(true); setMsg('');
         var items = txData.items||[];
         var babyItems = items.map(function(it,i){
@@ -7770,15 +7996,36 @@ window.addEventListener('DOMContentLoaded', function(){
             formula: (babyRows[i]||{}).formula||'',
           };
         });
+        var addedBabyItems = addedBabyRows.map(function(r){
+          return {
+            batchNo: r.batchNo||'',
+            model: r.model||'',
+            spec: r.spec||'',
+            warehouseCode: r.warehouseCode||'成品倉',
+            actualKg: parseFloat(r.actualKg)||0,
+          };
+        });
+        var opts = {
+          startTime: startTime,
+          endTime: endTime,
+          appendedCoils: appendedCoils,
+          replacedCoils: replacedCoils,
+          addedBabyItems: addedBabyItems,
+        };
         window.API.processInhouseSlitting(
-          txData, parseFloat(loadWeight)||0, babyItems, operator,
+          txData, parseFloat(loadWeight)||0, babyItems, operator, opts,
           function(res){
             setLoading(false);
             var errs = res&&res.errors&&res.errors.length ? '\n⚠️ '+res.errors.slice(0,3).join(' | ') : '';
+            var extraLine = '';
+            if(res&&res.appendedCount) extraLine += '\n追加母捲：'+res.appendedCount+' 筆';
+            if(res&&res.replacedCount) extraLine += '\n更換母捲：'+res.replacedCount+' 筆';
+            if(res&&res.addedBabyCount) extraLine += '\n追加子捲：'+res.addedBabyCount+' 筆';
             setMsg('✅ 結算完成\n派工單：'+(res&&res.dispatchId||'-')+
                    '\n回單：'+(res&&res.returnId||'-')+
                    '\n子捲：'+((res&&res.babyCount)||0)+' 筆  共 '+
-                   parseFloat(res&&res.totalBabyKg||0).toFixed(1)+' kg'+errs);
+                   parseFloat(res&&res.totalBabyKg||0).toFixed(1)+' kg'+
+                   extraLine+errs);
             setPhase('done');
           },
           function(err){ setLoading(false); setMsg('❌ '+(err&&err.message||err)); }
@@ -7907,13 +8154,111 @@ window.addEventListener('DOMContentLoaded', function(){
 
                 {phase === 'B' && (
                   <div>
-                    <div style={card}>
-                      <div style={secLabel()}>🔩 母捲資訊</div>
-                      <div style={{fontSize:13,color:'#333',marginBottom:6}}>
-                        <b>批號：</b>{coil0.batchNo||coil0.batchno||'－'}&nbsp;&nbsp;<b>規格：</b>{coil0.spec||coil0.model||'－'}
+                    {/* ── 母捲捲號驗證 ── */}
+                    {(txData&&txData.coils||[]).map(function(c,ci){
+                      var bn = c.batchNo||c.batchno||'';
+                      var scanState = coilScan[c.id]||{input:'',status:''};
+                      var borderColor = scanState.status==='ok'?'#66bb6a':scanState.status==='fail'?'#e53935':'#e0e0e0';
+                      var bgColor     = scanState.status==='ok'?'#f1f8e9':scanState.status==='fail'?'#ffebee':'#fff';
+                      return (
+                        <div key={c.id} style={Object.assign({},card,{border:'2px solid '+borderColor,background:bgColor})}>
+                          <div style={secLabel()}>🔩 母捲 {ci+1} 資訊</div>
+                          <div style={{fontSize:13,color:'#333',marginBottom:4}}>
+                            <b>批號：</b><span style={{color:ACCENT,fontWeight:'bold'}}>{bn||'－'}</span>
+                            &nbsp;&nbsp;<b>規格：</b>{c.spec||c.model||'－'}
+                          </div>
+                          <div style={{fontSize:12,color:'#888',marginBottom:8}}>出倉：{c.outWarehouse||c.outwarehouse||'鋼捲倉'} → 入倉：{c.inWarehouse||c.inwarehouse||'產線倉'}</div>
+                          {/* 捲號掃描驗證 */}
+                          <div style={{fontSize:11,fontWeight:'bold',color:'#555',letterSpacing:.6,marginBottom:4}}>📷 掃描/輸入捲號驗證</div>
+                          <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                            <input style={{flex:1,fontSize:14,padding:'8px 10px',border:'2px solid '+borderColor,borderRadius:8,outline:'none',background:'#fff'}}
+                                   placeholder={'輸入或掃描批號…'}
+                                   value={scanState.input||''}
+                                   onChange={function(e){ handleCoilScan(c.id, bn, e.target.value); }}
+                                   onKeyDown={function(e){if(e.key==='Enter') handleCoilScan(c.id,bn,e.target.value);}}
+                            />
+                            <div style={{fontWeight:'bold',fontSize:18,flexShrink:0}}>
+                              {scanState.status==='ok'?'✅':scanState.status==='fail'?'❌':'⭕'}
+                            </div>
+                          </div>
+                          {scanState.status==='ok' && <div style={{fontSize:11,color:'#2e7d32',marginTop:4,fontWeight:'bold'}}>✔ 捲號驗證通過</div>}
+                          {scanState.status==='fail' && <div style={{fontSize:11,color:'#c62828',marginTop:4,fontWeight:'bold'}}>✘ 捲號不符！系統：{bn}</div>}
+                          {/* 更換鋼捲按鈕 */}
+                          <div style={{marginTop:8,textAlign:'right'}}>
+                            <button onClick={function(){
+                              setReplaceTarget({coilId:c.id,batchNo:bn,model:c.model||'',spec:c.spec||''});
+                              setReplaceForm({usedKg:'',newBatchNo:'',newKg:'',warehouse:'鋼捲倉'});
+                            }}
+                              style={{background:'#ef6c00',color:'#fff',border:'none',borderRadius:8,padding:'5px 12px',fontSize:12,fontWeight:'bold',cursor:'pointer'}}>
+                              🔄 更換此鋼捲
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* ── 更換鋼捲 Modal（inline） ── */}
+                    {replaceTarget && (
+                      <div style={{background:'#fff3e0',border:'2px solid #ef6c00',borderRadius:14,padding:'12px 14px',marginBottom:12}}>
+                        <div style={secLabel('#e65100')}>🔄 更換鋼捲：{replaceTarget.batchNo}</div>
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:8}}>
+                          <div>
+                            <div style={{fontSize:11,color:'#888',marginBottom:3}}>原捲已用重量 (kg)</div>
+                            <input type="number" step="0.01"
+                                   style={{width:'100%',fontSize:14,padding:'7px 10px',boxSizing:'border-box',border:'1px solid #e0e0e0',borderRadius:8,outline:'none'}}
+                                   placeholder="0.0" value={replaceForm.usedKg}
+                                   onChange={function(e){setReplaceForm(function(p){return Object.assign({},p,{usedKg:e.target.value});});}} />
+                          </div>
+                          <div>
+                            <div style={{fontSize:11,color:'#888',marginBottom:3}}>新捲來源倉</div>
+                            <input style={{width:'100%',fontSize:14,padding:'7px 10px',boxSizing:'border-box',border:'1px solid #e0e0e0',borderRadius:8,outline:'none'}}
+                                   value={replaceForm.warehouse}
+                                   onChange={function(e){setReplaceForm(function(p){return Object.assign({},p,{warehouse:e.target.value});});}} />
+                          </div>
+                          <div style={{gridColumn:'span 2'}}>
+                            <div style={{fontSize:11,color:'#888',marginBottom:3}}>新捲批號（掃描或輸入）</div>
+                            <input style={{width:'100%',fontSize:14,padding:'7px 10px',boxSizing:'border-box',border:'1px solid #e0e0e0',borderRadius:8,outline:'none'}}
+                                   placeholder="新批號…" value={replaceForm.newBatchNo}
+                                   onChange={function(e){setReplaceForm(function(p){return Object.assign({},p,{newBatchNo:e.target.value});});}} />
+                          </div>
+                          <div>
+                            <div style={{fontSize:11,color:'#888',marginBottom:3}}>新捲重量 (kg)</div>
+                            <input type="number" step="0.01"
+                                   style={{width:'100%',fontSize:14,padding:'7px 10px',boxSizing:'border-box',border:'1px solid #e0e0e0',borderRadius:8,outline:'none'}}
+                                   placeholder="0.0" value={replaceForm.newKg}
+                                   onChange={function(e){setReplaceForm(function(p){return Object.assign({},p,{newKg:e.target.value});});}} />
+                          </div>
+                        </div>
+                        <div style={{display:'flex',gap:8}}>
+                          <button onClick={function(){setReplaceTarget(null);}}
+                                  style={{flex:1,padding:'9px',border:'1px solid #ccc',borderRadius:9,background:'#fff',color:'#555',fontSize:13,fontWeight:'bold',cursor:'pointer'}}>
+                            取消
+                          </button>
+                          <button onClick={handleReplaceCoil}
+                                  style={{flex:2,padding:'9px',border:'none',borderRadius:9,background:'#ef6c00',color:'#fff',fontSize:13,fontWeight:'bold',cursor:'pointer'}}>
+                            確認更換
+                          </button>
+                        </div>
                       </div>
-                      <div style={{fontSize:12,color:'#888'}}>出倉：{coil0.outWarehouse||coil0.outwarehouse||'鋼捲倉'} → 入倉：{coil0.inWarehouse||coil0.inwarehouse||'產線倉'}</div>
-                    </div>
+                    )}
+
+                    {/* ── 已更換鋼捲清單 ── */}
+                    {replacedCoils.length>0 && (
+                      <div style={{background:'#fff8e1',border:'1px solid #ffcc02',borderRadius:12,padding:'8px 12px',marginBottom:12}}>
+                        <div style={secLabel('#e65100')}>🔄 已更換母捲 ({replacedCoils.length})</div>
+                        {replacedCoils.map(function(r,i){
+                          return (
+                            <div key={i} style={{fontSize:12,padding:'3px 0',borderBottom:'1px solid #ffe082',display:'flex',justifyContent:'space-between'}}>
+                              <span>原：{r.oldBatchNo}（已用 {r.usedKg}kg）→ 新：{r.newBatchNo}（{r.newKg}kg）</span>
+                              <button onClick={function(){setReplacedCoils(function(p){return p.filter(function(_,idx){return idx!==i;});});}}
+                                      style={{background:'none',border:'none',color:'#999',cursor:'pointer',fontSize:14}}>✕</button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* ── 上架磅重 ── */}
                     <div style={card}>
                       <div style={secLabel('#b71c1c')}>⚖️ 上架磅重（kg）</div>
                       <div style={{display:'flex',gap:10,alignItems:'center'}}>
@@ -7928,96 +8273,286 @@ window.addEventListener('DOMContentLoaded', function(){
                         </div>
                       </div>
                     </div>
-                  </div>
-                )}
 
-                {phase === 'C' && (txData&&txData.items||[]).map(function(it,i){
-                  var row = babyRows[i]||{actualKg:'',formula:''};
-                  var filled = parseFloat(row.actualKg)>0;
-                  return (
-                    <div key={i} style={{background:filled?'#f1f8e9':'#fff',border:'2px solid '+(filled?'#66bb6a':'#e0e0e0'),
-                           borderRadius:14,padding:'12px 14px',marginBottom:12,
-                           boxShadow:filled?'0 2px 10px rgba(67,160,71,.18)':'0 1px 5px rgba(0,0,0,0.07)'}}>
-                      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
-                        <div style={{width:32,height:32,borderRadius:'50%',background:filled?'#43a047':ACCENT,color:'#fff',
-                                     display:'flex',alignItems:'center',justifyContent:'center',fontWeight:'bold',fontSize:14,flexShrink:0}}>
-                          {filled?'✓':i+1}
+                    {/* ── 工時（開始時間） ── */}
+                    <div style={card}>
+                      <div style={secLabel('#1565c0')}>⏱ 工時記錄</div>
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+                        <div>
+                          <div style={{fontSize:11,color:'#888',marginBottom:3}}>開始時間</div>
+                          <input type="time"
+                                 style={{width:'100%',fontSize:15,padding:'8px 10px',boxSizing:'border-box',border:'2px solid #90caf9',borderRadius:8,outline:'none',fontWeight:'bold',color:'#1565c0'}}
+                                 value={startTime}
+                                 onChange={function(e){setStartTime(e.target.value);}} />
                         </div>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontWeight:'bold',fontSize:14,color:'#1a1a1a'}}>子捲：<span style={{color:ACCENT}}>{it.batchNo||it.batchno||it.id}</span></div>
-                          <div style={{fontSize:12,color:'#888',marginTop:2}}>{it.spec||it.model||'（未填規格）'}</div>
-                        </div>
-                        <div style={{fontSize:22,flexShrink:0}}>{filled?'✅':'⭕'}</div>
-                      </div>
-                      <div style={{background:'rgba(0,0,0,0.03)',borderRadius:10,padding:'9px 10px',marginBottom:8}}>
-                        <div style={{fontSize:11,color:'#777',fontWeight:'bold',letterSpacing:.6,marginBottom:6}}>① 理論公式（厚×寬mm×密度）</div>
-                        <div style={{display:'flex',gap:7}}>
-                          <input style={{flex:1,fontSize:14,padding:'8px 10px',border:'2px solid #cfd8dc',borderRadius:8,outline:'none',background:'#fff',fontFamily:'monospace'}}
-                                 placeholder="e.g. 0.5*610*7.85" value={row.formula}
-                                 onChange={function(e){updateBabyRow(i,'formula',e.target.value);}}
-                                 onKeyDown={function(e){if(e.key==='Enter') calcFormula(i);}} />
-                          <button onClick={function(){calcFormula(i);}}
-                                  style={{background:'#546e7a',color:'#fff',border:'none',borderRadius:8,padding:'8px 14px',fontSize:13,fontWeight:'bold',cursor:'pointer',flexShrink:0}}>
-                            計算
-                          </button>
-                        </div>
-                      </div>
-                      <div style={{background:'rgba(0,0,0,0.03)',borderRadius:10,padding:'9px 10px'}}>
-                        <div style={{fontSize:11,color:'#777',fontWeight:'bold',letterSpacing:.6,marginBottom:6}}>② 實際磅重（kg）</div>
-                        <div style={{display:'flex',gap:10,alignItems:'center'}}>
-                          <input type="number" step="0.001"
-                                 style={{flex:1,fontSize:22,padding:'9px 12px',border:'2px solid '+(filled?'#a5d6a7':'#e0e0e0'),borderRadius:9,outline:'none',textAlign:'right',background:'#fff',fontWeight:'bold',color:'#1b5e20'}}
-                                 value={row.actualKg} placeholder="0.000"
-                                 onChange={function(e){updateBabyRow(i,'actualKg',e.target.value);}} />
-                          <div style={{flexShrink:0,fontWeight:'bold',color:'#555'}}>KG</div>
+                        <div>
+                          <div style={{fontSize:11,color:'#888',marginBottom:3}}>結束時間（可留空）</div>
+                          <input type="time"
+                                 style={{width:'100%',fontSize:15,padding:'8px 10px',boxSizing:'border-box',border:'2px solid #b0bec5',borderRadius:8,outline:'none',color:'#555'}}
+                                 value={endTime}
+                                 onChange={function(e){setEndTime(e.target.value);}} />
                         </div>
                       </div>
                     </div>
-                  );
-                })}
 
-                {phase === 'D' && (
-                  <div style={card}>
-                    <div style={secLabel('#b71c1c')}>📊 結算預覽</div>
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:8}}>
-                      <div style={{background:'#f7f7f7',borderRadius:9,padding:'7px 10px'}}>
-                        <div style={{fontSize:11,color:'#aaa'}}>異動單號</div>
-                        <div style={{fontWeight:'bold',color:'#222',fontSize:13}}>{h&&h.id}</div>
+                    {/* ── 追加鋼捲 ── */}
+                    <div style={card}>
+                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+                        <div style={secLabel('#2e7d32')}>➕ 追加鋼捲（{appendedCoils.length}）</div>
+                        <button onClick={function(){setShowAddCoil(function(v){return !v;});}}
+                                style={{background:showAddCoil?'#e8f5e9':'#2e7d32',color:showAddCoil?'#2e7d32':'#fff',border:'1px solid #2e7d32',borderRadius:8,padding:'4px 12px',fontSize:12,fontWeight:'bold',cursor:'pointer'}}>
+                          {showAddCoil?'收起':'+ 追加'}
+                        </button>
                       </div>
-                      <div style={{background:'#f7f7f7',borderRadius:9,padding:'7px 10px'}}>
-                        <div style={{fontSize:11,color:'#aaa'}}>操作人員</div>
-                        <div style={{color:'#222',fontSize:13}}>{operator||'（未填）'}</div>
-                      </div>
-                      <div style={{background:'#f7f7f7',borderRadius:9,padding:'7px 10px'}}>
-                        <div style={{fontSize:11,color:'#aaa'}}>母捲批號</div>
-                        <div style={{fontWeight:'bold',color:'#222',fontSize:13}}>{coil0.batchNo||coil0.batchno||'－'}</div>
-                      </div>
-                      <div style={{background:'#f7f7f7',borderRadius:9,padding:'7px 10px'}}>
-                        <div style={{fontSize:11,color:'#aaa'}}>上架磅重</div>
-                        <div style={{fontWeight:'bold',color:'#b71c1c',fontSize:13}}>{parseFloat(loadWeight).toFixed(1)} kg</div>
-                      </div>
-                    </div>
-                    <div style={{borderTop:'1px solid #eee',paddingTop:8}}>
-                      <div style={secLabel()}>子捲明細</div>
-                      {(txData&&txData.items||[]).map(function(it,i){
-                        var kg = parseFloat((babyRows[i]||{}).actualKg)||0;
+                      {appendedCoils.length>0 && appendedCoils.map(function(ac,i){
                         return (
-                          <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0',borderBottom:'1px solid #f0f0f0',fontSize:13}}>
-                            <span style={{color:ACCENT,fontWeight:'bold'}}>{it.batchNo||it.batchno||it.id}</span>
-                            <span style={{color:'#555',fontSize:12,flex:1,marginLeft:8}}>{it.spec||it.model||''}</span>
-                            <span style={{fontWeight:'bold',color:kg>0?'#2e7d32':'#e53935',background:kg>0?'#e8f5e9':'#ffebee',borderRadius:8,padding:'2px 8px'}}>
-                              {kg>0 ? kg.toFixed(3)+' kg' : '未填'}
-                            </span>
+                          <div key={i} style={{fontSize:12,padding:'3px 0',borderBottom:'1px solid #e8f5e9',display:'flex',justifyContent:'space-between'}}>
+                            <span style={{color:'#2e7d32',fontWeight:'bold'}}>{ac.batchNo}</span>
+                            <span>{ac.warehouse} {ac.kg}kg</span>
+                            <button onClick={function(){setAppendedCoils(function(p){return p.filter(function(_,idx){return idx!==i;});});}}
+                                    style={{background:'none',border:'none',color:'#999',cursor:'pointer',fontSize:14}}>✕</button>
                           </div>
                         );
                       })}
-                      <div style={{marginTop:8,display:'flex',justifyContent:'space-between',fontWeight:'bold',fontSize:14,color:'#b71c1c'}}>
-                        <span>子捲合計</span>
-                        <span>{babyRows.reduce(function(s,r){return s+(parseFloat(r.actualKg)||0);},0).toFixed(3)} kg</span>
+                      {showAddCoil && (
+                        <div style={{background:'#f1f8e9',borderRadius:10,padding:'10px',marginTop:8}}>
+                          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:6}}>
+                            <div style={{gridColumn:'span 2'}}>
+                              <div style={{fontSize:11,color:'#555',marginBottom:2}}>追加批號（掃描或輸入）</div>
+                              <input style={{width:'100%',fontSize:14,padding:'7px 10px',boxSizing:'border-box',border:'1px solid #a5d6a7',borderRadius:8,outline:'none'}}
+                                     placeholder="批號…" value={addCoilForm.batchNo}
+                                     onChange={function(e){setAddCoilForm(function(p){return Object.assign({},p,{batchNo:e.target.value});});}} />
+                            </div>
+                            <div>
+                              <div style={{fontSize:11,color:'#555',marginBottom:2}}>重量 (kg)</div>
+                              <input type="number" step="0.01"
+                                     style={{width:'100%',fontSize:14,padding:'7px 10px',boxSizing:'border-box',border:'1px solid #a5d6a7',borderRadius:8,outline:'none'}}
+                                     placeholder="0.0" value={addCoilForm.kg}
+                                     onChange={function(e){setAddCoilForm(function(p){return Object.assign({},p,{kg:e.target.value});});}} />
+                            </div>
+                            <div>
+                              <div style={{fontSize:11,color:'#555',marginBottom:2}}>來源倉</div>
+                              <input style={{width:'100%',fontSize:14,padding:'7px 10px',boxSizing:'border-box',border:'1px solid #a5d6a7',borderRadius:8,outline:'none'}}
+                                     value={addCoilForm.warehouse}
+                                     onChange={function(e){setAddCoilForm(function(p){return Object.assign({},p,{warehouse:e.target.value});});}} />
+                            </div>
+                          </div>
+                          <button onClick={handleAddCoil}
+                                  style={{width:'100%',padding:'9px',border:'none',borderRadius:9,background:'#2e7d32',color:'#fff',fontSize:13,fontWeight:'bold',cursor:'pointer'}}>
+                            確認追加
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {phase === 'C' && (
+                  <div>
+                    {/* ── 原始子捲 ── */}
+                    {(txData&&txData.items||[]).map(function(it,i){
+                      var row = babyRows[i]||{actualKg:'',formula:''};
+                      var filled = parseFloat(row.actualKg)>0;
+                      return (
+                        <div key={i} style={{background:filled?'#f1f8e9':'#fff',border:'2px solid '+(filled?'#66bb6a':'#e0e0e0'),
+                               borderRadius:14,padding:'12px 14px',marginBottom:12,
+                               boxShadow:filled?'0 2px 10px rgba(67,160,71,.18)':'0 1px 5px rgba(0,0,0,0.07)'}}>
+                          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
+                            <div style={{width:32,height:32,borderRadius:'50%',background:filled?'#43a047':ACCENT,color:'#fff',
+                                         display:'flex',alignItems:'center',justifyContent:'center',fontWeight:'bold',fontSize:14,flexShrink:0}}>
+                              {filled?'✓':i+1}
+                            </div>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{fontWeight:'bold',fontSize:14,color:'#1a1a1a'}}>子捲：<span style={{color:ACCENT}}>{it.batchNo||it.batchno||it.id}</span></div>
+                              <div style={{fontSize:12,color:'#888',marginTop:2}}>{it.spec||it.model||'（未填規格）'}</div>
+                            </div>
+                            <div style={{fontSize:22,flexShrink:0}}>{filled?'✅':'⭕'}</div>
+                          </div>
+                          <div style={{background:'rgba(0,0,0,0.03)',borderRadius:10,padding:'9px 10px',marginBottom:8}}>
+                            <div style={{fontSize:11,color:'#777',fontWeight:'bold',letterSpacing:.6,marginBottom:6}}>① 理論公式（厚×寬mm×密度）</div>
+                            <div style={{display:'flex',gap:7}}>
+                              <input style={{flex:1,fontSize:14,padding:'8px 10px',border:'2px solid #cfd8dc',borderRadius:8,outline:'none',background:'#fff',fontFamily:'monospace'}}
+                                     placeholder="e.g. 0.5*610*7.85" value={row.formula}
+                                     onChange={function(e){updateBabyRow(i,'formula',e.target.value);}}
+                                     onKeyDown={function(e){if(e.key==='Enter') calcFormula(i);}} />
+                              <button onClick={function(){calcFormula(i);}}
+                                      style={{background:'#546e7a',color:'#fff',border:'none',borderRadius:8,padding:'8px 14px',fontSize:13,fontWeight:'bold',cursor:'pointer',flexShrink:0}}>
+                                計算
+                              </button>
+                            </div>
+                          </div>
+                          <div style={{background:'rgba(0,0,0,0.03)',borderRadius:10,padding:'9px 10px'}}>
+                            <div style={{fontSize:11,color:'#777',fontWeight:'bold',letterSpacing:.6,marginBottom:6}}>② 實際磅重（kg）</div>
+                            <div style={{display:'flex',gap:10,alignItems:'center'}}>
+                              <input type="number" step="0.001"
+                                     style={{flex:1,fontSize:22,padding:'9px 12px',border:'2px solid '+(filled?'#a5d6a7':'#e0e0e0'),borderRadius:9,outline:'none',textAlign:'right',background:'#fff',fontWeight:'bold',color:'#1b5e20'}}
+                                     value={row.actualKg} placeholder="0.000"
+                                     onChange={function(e){updateBabyRow(i,'actualKg',e.target.value);}} />
+                              <div style={{flexShrink:0,fontWeight:'bold',color:'#555'}}>KG</div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* ── 追加子捲（產出分割超預期的新鋼捲） ── */}
+                    {addedBabyRows.map(function(r,i){
+                      var filled = parseFloat(r.actualKg)>0;
+                      return (
+                        <div key={'add-'+i} style={{background:filled?'#e8f5e9':'#fff8e1',border:'2px solid '+(filled?'#66bb6a':'#ffd54f'),
+                               borderRadius:14,padding:'12px 14px',marginBottom:12,
+                               boxShadow:'0 1px 5px rgba(0,0,0,0.07)'}}>
+                          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+                            <div style={{background:'#ff8f00',color:'#fff',borderRadius:'50%',width:28,height:28,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:'bold',fontSize:12,flexShrink:0}}>+{i+1}</div>
+                            <div style={{flex:1,fontWeight:'bold',fontSize:13,color:'#e65100'}}>追加子捲</div>
+                            <button onClick={function(){removeAddedBabyRow(i);}}
+                                    style={{background:'none',border:'none',color:'#999',cursor:'pointer',fontSize:18,lineHeight:1}}>✕</button>
+                          </div>
+                          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:6}}>
+                            <div style={{gridColumn:'span 2'}}>
+                              <div style={{fontSize:11,color:'#888',marginBottom:2}}>批號（可編輯）</div>
+                              <input style={{width:'100%',fontSize:13,padding:'6px 9px',boxSizing:'border-box',border:'1px solid #ffcc02',borderRadius:7,outline:'none',fontWeight:'bold',color:'#e65100'}}
+                                     value={r.batchNo} onChange={function(e){updateAddedBabyRow(i,'batchNo',e.target.value);}} />
+                            </div>
+                            <div>
+                              <div style={{fontSize:11,color:'#888',marginBottom:2}}>型號</div>
+                              <input style={{width:'100%',fontSize:13,padding:'6px 9px',boxSizing:'border-box',border:'1px solid #e0e0e0',borderRadius:7,outline:'none'}}
+                                     value={r.model} onChange={function(e){updateAddedBabyRow(i,'model',e.target.value);}} />
+                            </div>
+                            <div>
+                              <div style={{fontSize:11,color:'#888',marginBottom:2}}>入庫倉</div>
+                              <input style={{width:'100%',fontSize:13,padding:'6px 9px',boxSizing:'border-box',border:'1px solid #e0e0e0',borderRadius:7,outline:'none'}}
+                                     value={r.warehouseCode} onChange={function(e){updateAddedBabyRow(i,'warehouseCode',e.target.value);}} />
+                            </div>
+                          </div>
+                          <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                            <input type="number" step="0.001"
+                                   style={{flex:1,fontSize:22,padding:'8px 10px',border:'2px solid '+(filled?'#a5d6a7':'#ffd54f'),borderRadius:9,outline:'none',textAlign:'right',background:'#fff',fontWeight:'bold',color:'#1b5e20'}}
+                                   value={r.actualKg} placeholder="0.000"
+                                   onChange={function(e){updateAddedBabyRow(i,'actualKg',e.target.value);}} />
+                            <div style={{flexShrink:0,fontWeight:'bold',color:'#555'}}>KG</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* ── 追加子捲按鈕 ── */}
+                    <button onClick={handleAddBabyRow}
+                            style={{width:'100%',padding:'12px',border:'2px dashed #ff8f00',borderRadius:12,background:'#fff8e1',color:'#e65100',fontSize:14,fontWeight:'bold',cursor:'pointer',marginBottom:8}}>
+                      ➕ 追加子捲（新增產出鋼捲）
+                    </button>
+                  </div>
+                )}
+
+                {phase === 'D' && (
+                  <div>
+                    <div style={card}>
+                      <div style={secLabel('#b71c1c')}>📊 結算預覽</div>
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:8}}>
+                        <div style={{background:'#f7f7f7',borderRadius:9,padding:'7px 10px'}}>
+                          <div style={{fontSize:11,color:'#aaa'}}>異動單號</div>
+                          <div style={{fontWeight:'bold',color:'#222',fontSize:13}}>{h&&h.id}</div>
+                        </div>
+                        <div style={{background:'#f7f7f7',borderRadius:9,padding:'7px 10px'}}>
+                          <div style={{fontSize:11,color:'#aaa'}}>操作人員</div>
+                          <div style={{color:'#222',fontSize:13}}>{operator||'（未填）'}</div>
+                        </div>
+                        <div style={{background:'#f7f7f7',borderRadius:9,padding:'7px 10px'}}>
+                          <div style={{fontSize:11,color:'#aaa'}}>母捲批號</div>
+                          <div style={{fontWeight:'bold',color:'#222',fontSize:13}}>{coil0.batchNo||coil0.batchno||'－'}</div>
+                        </div>
+                        <div style={{background:'#f7f7f7',borderRadius:9,padding:'7px 10px'}}>
+                          <div style={{fontSize:11,color:'#aaa'}}>上架磅重</div>
+                          <div style={{fontWeight:'bold',color:'#b71c1c',fontSize:13}}>{parseFloat(loadWeight).toFixed(1)} kg</div>
+                        </div>
+                        {/* 工時摘要 */}
+                        <div style={{gridColumn:'span 2',background:'#e3f2fd',borderRadius:9,padding:'7px 10px',display:'flex',alignItems:'center',gap:8}}>
+                          <span style={{fontSize:15}}>⏱</span>
+                          <div>
+                            <div style={{fontSize:11,color:'#aaa'}}>工時</div>
+                            <div style={{fontWeight:'bold',color:'#1565c0',fontSize:13}}>
+                              {startTime||'--:--'} → {endTime||'--:--'}
+                            </div>
+                          </div>
+                          {startTime && endTime && (function(){
+                            var [sh,sm] = startTime.split(':').map(Number);
+                            var [eh,em] = endTime.split(':').map(Number);
+                            var mins = (eh*60+em) - (sh*60+sm);
+                            if(mins<0) mins += 1440;
+                            return React.createElement('div',{style:{marginLeft:'auto',fontWeight:'bold',color:'#1976d2',fontSize:12}},
+                              Math.floor(mins/60)+'h '+( mins%60)+'m');
+                          })()}
+                        </div>
                       </div>
-                      <div style={{display:'flex',justifyContent:'space-between',fontSize:12,color:'#888',marginTop:4}}>
-                        <span>差量（母捲 − 子捲合計）</span>
-                        <span>{(parseFloat(loadWeight||0) - babyRows.reduce(function(s,r){return s+(parseFloat(r.actualKg)||0);},0)).toFixed(3)} kg</span>
+
+                      {/* 追加/更換母捲摘要 */}
+                      {(appendedCoils.length>0||replacedCoils.length>0) && (
+                        <div style={{borderTop:'1px solid #eee',paddingTop:8,marginBottom:8}}>
+                          {appendedCoils.length>0 && (
+                            <div style={{marginBottom:4}}>
+                              <div style={secLabel('#2e7d32')}>➕ 追加母捲 ({appendedCoils.length})</div>
+                              {appendedCoils.map(function(ac,i){
+                                return <div key={i} style={{fontSize:12,color:'#2e7d32',padding:'2px 0'}}>批號：{ac.batchNo}　{ac.kg} kg　{ac.warehouse}</div>;
+                              })}
+                            </div>
+                          )}
+                          {replacedCoils.length>0 && (
+                            <div>
+                              <div style={secLabel('#e65100')}>🔄 更換母捲 ({replacedCoils.length})</div>
+                              {replacedCoils.map(function(r,i){
+                                return <div key={i} style={{fontSize:12,color:'#bf360c',padding:'2px 0'}}>原：{r.oldBatchNo}（已用{r.usedKg}kg）→ 新：{r.newBatchNo}（{r.newKg}kg）</div>;
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      <div style={{borderTop:'1px solid #eee',paddingTop:8}}>
+                        <div style={secLabel()}>子捲明細（原始）</div>
+                        {(txData&&txData.items||[]).map(function(it,i){
+                          var kg = parseFloat((babyRows[i]||{}).actualKg)||0;
+                          return (
+                            <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0',borderBottom:'1px solid #f0f0f0',fontSize:13}}>
+                              <span style={{color:ACCENT,fontWeight:'bold'}}>{it.batchNo||it.batchno||it.id}</span>
+                              <span style={{color:'#555',fontSize:12,flex:1,marginLeft:8}}>{it.spec||it.model||''}</span>
+                              <span style={{fontWeight:'bold',color:kg>0?'#2e7d32':'#e53935',background:kg>0?'#e8f5e9':'#ffebee',borderRadius:8,padding:'2px 8px'}}>
+                                {kg>0 ? kg.toFixed(3)+' kg' : '未填'}
+                              </span>
+                            </div>
+                          );
+                        })}
+                        {/* 追加子捲摘要 */}
+                        {addedBabyRows.length>0 && (
+                          <div style={{marginTop:6}}>
+                            <div style={secLabel('#ff8f00')}>➕ 追加子捲 ({addedBabyRows.length})</div>
+                            {addedBabyRows.map(function(r,i){
+                              var kg = parseFloat(r.actualKg)||0;
+                              return (
+                                <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0',borderBottom:'1px solid #fff8e1',fontSize:13}}>
+                                  <span style={{color:'#e65100',fontWeight:'bold'}}>{r.batchNo||'(無批號)'}</span>
+                                  <span style={{color:'#555',fontSize:12,flex:1,marginLeft:8}}>{r.model}</span>
+                                  <span style={{fontWeight:'bold',color:kg>0?'#2e7d32':'#e53935',background:kg>0?'#e8f5e9':'#ffebee',borderRadius:8,padding:'2px 8px'}}>
+                                    {kg>0 ? kg.toFixed(3)+' kg' : '未填'}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                        <div style={{marginTop:8,display:'flex',justifyContent:'space-between',fontWeight:'bold',fontSize:14,color:'#b71c1c'}}>
+                          <span>子捲合計</span>
+                          <span>{(
+                            babyRows.reduce(function(s,r){return s+(parseFloat(r.actualKg)||0);},0) +
+                            addedBabyRows.reduce(function(s,r){return s+(parseFloat(r.actualKg)||0);},0)
+                          ).toFixed(3)} kg</span>
+                        </div>
+                        <div style={{display:'flex',justifyContent:'space-between',fontSize:12,color:'#888',marginTop:4}}>
+                          <span>差量（母捲 − 子捲合計）</span>
+                          <span>{(parseFloat(loadWeight||0) - (
+                            babyRows.reduce(function(s,r){return s+(parseFloat(r.actualKg)||0);},0) +
+                            addedBabyRows.reduce(function(s,r){return s+(parseFloat(r.actualKg)||0);},0)
+                          )).toFixed(3)} kg</span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -8028,7 +8563,13 @@ window.addEventListener('DOMContentLoaded', function(){
                     <div style={{fontSize:48,marginBottom:8}}>🎉</div>
                     <div style={{fontWeight:'bold',fontSize:18,color:'#2e7d32',marginBottom:8}}>廠內分條完成！</div>
                     <div style={{fontSize:12,color:'#555',whiteSpace:'pre-line',lineHeight:1.5,maxHeight:180,overflowY:'auto',wordBreak:'break-all'}}>{msg.replace(/^✅\s*/,'')}</div>
-                    <button onClick={function(){setPhase('A');setTxNo('');setTxData(null);setLoadWeight('');setBabyRows([]);setOperator('');setMsg('');}}
+                    <button onClick={function(){
+                      setPhase('A');setTxNo('');setTxData(null);setLoadWeight('');setBabyRows([]);setOperator('');setMsg('');
+                      setCoilScan({});setStartTime('');setEndTime('');
+                      setAppendedCoils([]);setShowAddCoil(false);setAddCoilForm({batchNo:'',kg:'',warehouse:'鋼捲倉',spec:''});
+                      setReplacedCoils([]);setReplaceTarget(null);setReplaceForm({usedKg:'',newBatchNo:'',newKg:'',warehouse:'鋼捲倉'});
+                      setAddedBabyRows([]);
+                    }}
                             style={{marginTop:18,padding:'10px 28px',background:ACCENT,color:'#fff',border:'none',borderRadius:10,fontSize:14,fontWeight:'bold',cursor:'pointer'}}>
                       處理下一張單
                     </button>
@@ -11845,485 +12386,4 @@ window.addEventListener('DOMContentLoaded', function(){
                    <span>⚠️ 請先</span><span>上架鋼捲</span>
                  </div>
                )}
-               {mode === 'order' && (
-                 <button onClick={() => {
-                   // 流程檢查
-                   if (!coilLoaded) return setMesNotice({ type:'warn', title:'⚠️ 尚未上架鋼捲', body:'請先回清單頁按「🔩 鋼捲上架」完成上架，才能開工。' });
-                   if (rightList.length === 0) return setMesNotice({ type:'warn', title:'⚠️ 右側無資料', body:'請先將左側裁切細項移到右側，再按開工。' });
-                   var dispatchId = (headerData && headerData.dispatchId) || window.__currentDispatchId;
-                   if (!dispatchId) return setMesNotice({ type:'warn', title:'⚠️ 尚未建立派工單', body:'請先回清單頁，按「▶ 派工開始」建立派工單後再操作。' });
-
-                   // 畫面更新
-                   var now = new Date().toLocaleTimeString('zh-TW', { hour12: false });
-                   var stamped = rightList.map(function(item){ return Object.assign({}, item, { startTime: item.startTime || now }); });
-                   setRightList(stamped);
-
-                   // 解析訂單 ID（"1150501002-10" → "1150501002"）
-                   var rawId = String(headerData.id || '');
-                   var idParts = rawId.split('-');
-                   var orderId = headerData.orderId || (idParts.length > 1 ? idParts.slice(0,-1).join('-') : rawId);
-                   var itemNo = headerData.itemNo || (idParts.length > 1 ? idParts[idParts.length-1] : '0010');
-
-                   if (!window.API || typeof window.API.saveCuttingReport !== 'function') return;
-                   var records = stamped.map(function(item){
-                     return {
-                       id:          item.id || undefined,
-                       orderId:     orderId,
-                       orderItemNo: itemNo,
-                       dispatchId:  dispatchId,
-                       zone:        item.zone || '',
-                       bundle:      item.bundle || '',
-                       feet:        parseFloat(item.length || 0) || 0,
-                       qty:         parseInt(item.qty || 0, 10) || 0,
-                       totalFeet:   parseFloat(item.totalLen || 0) || 0,
-                       kg:          parseFloat(item.kg || 0) || 0,
-                       mesUnfinish: parseInt(item.unfinish || item.qty || 0, 10) || 0,
-                       startTime:   item.startTime,
-                       operator:    _operator
-                     };
-                   });
-                   window.API.saveCuttingReport(records, function(res){
-                     try { window.dispatchEvent(new CustomEvent('mes-report-saved', { detail: { type:'start', dispatchId:dispatchId, count:(res&&res.saved)||0 } })); } catch(e){}
-                   }, function(err){ alert('開工報工寫入失敗：' + (err && err.message || err)); });
-                 }} className="flex-1 bg-[#00e676] hover:bg-[#00c853] text-black flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm">
-                   <span>開工</span><span className="text-xs font-normal">mulai kerja</span>
-                 </button>
-               )}
-
-               <button className="flex-1 bg-[#d50000] hover:bg-[#b71c1c] text-white flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm"><span>傳輸機台</span><span className="text-xs font-normal">mesin transmisi</span></button>
-
-               {mode === 'order' && (
-                 <button onClick={() => {
-                   // 流程檢查
-                   if (!coilLoaded) return setMesNotice({ type:'warn', title:'⚠️ 尚未上架鋼捲', body:'請先回清單頁按「🔩 鋼捲上架」，才能進行完工。' });
-                   if (rightList.length === 0) return setMesNotice({ type:'warn', title:'⚠️ 右側無資料', body:'請先將左側裁切細項移到右側，再按完工。' });
-                   var dispatchId = (headerData && headerData.dispatchId) || window.__currentDispatchId;
-                   if (!dispatchId) return setMesNotice({ type:'warn', title:'⚠️ 尚未建立派工單', body:'請先回清單頁，按「▶ 派工開始」建立派工單後再操作。' });
-
-                   // 畫面更新
-                   var now = new Date().toLocaleTimeString('zh-TW', { hour12: false });
-                   var stamped = rightList.map(function(item){ return Object.assign({}, item, { finishTime: item.finishTime || now }); });
-                   setRightList(stamped);
-
-                   // 解析訂單 ID
-                   var rawId = String(headerData.id || '');
-                   var idParts = rawId.split('-');
-                   var orderId = headerData.orderId || (idParts.length > 1 ? idParts.slice(0,-1).join('-') : rawId);
-                   var itemNo = headerData.itemNo || (idParts.length > 1 ? idParts[idParts.length-1] : '0010');
-
-                   if (!window.API || typeof window.API.saveCuttingReport !== 'function') return;
-                   var records = stamped.map(function(item){
-                     return {
-                       id:          item.id || undefined,
-                       orderId:     orderId,
-                       orderItemNo: itemNo,
-                       dispatchId:  dispatchId,
-                       zone:        item.zone || '',
-                       feet:        parseFloat(item.length || 0) || 0,
-                       qty:         parseInt(item.qty || 0, 10) || 0,
-                       totalFeet:   parseFloat(item.totalLen || 0) || 0,
-                       kg:          parseFloat(item.kg || 0) || 0,
-                       mesUnfinish: 0,
-                       startTime:   item.startTime || '',
-                       finishTime:  item.finishTime,
-                       closed:      1,
-                       operator:    _operator
-                     };
-                   });
-                   window.API.saveCuttingReport(records, function(res){
-                     try { window.dispatchEvent(new CustomEvent('mes-report-saved', { detail: { type:'finish', dispatchId:dispatchId, count:(res&&res.saved)||0, closedDispatches:(res&&res.closedDispatches)||[] } })); } catch(e){}
-                   }, function(err){ alert('完工報工寫入失敗：' + (err && err.message || err)); });
-
-                   // 完工同時自動寫入標籤記錄（供 endDispatch 的入庫明細使用）
-                   if (window.API && typeof window.API.saveLabel === 'function') {
-                     var totalQty = stamped.reduce(function(s,it){ return s+parseInt(it.qty||0,10); }, 0);
-                     var totalLen = stamped.reduce(function(s,it){ return s+parseFloat(it.totalLen||0); }, 0);
-                     var totalKg  = stamped.reduce(function(s,it){ return s+parseFloat(it.kg||0); }, 0);
-                     var labelId = 'L-' + dispatchId + '-' + orderId + '-' + Date.now();
-                     window.API.saveLabel({
-                       id:          labelId,
-                       orderId:     orderId,
-                       orderItemNo: itemNo,
-                       machine:     headerData.machine || '',
-                       model:       headerData.model || '',
-                       spec:        headerData.spec || '',
-                       customer:    headerData.customerShort || '',
-                       qty:         totalQty,
-                       totalLen:    +totalLen.toFixed(2),
-                       totalWeight: +totalKg.toFixed(2),
-                       unit:        headerData.unit || 'KG',
-                       startTime:   (stamped[0] && stamped[0].startTime) || '',
-                       endTime:     now,
-                       operator:    _operator,
-                       remark:      dispatchId
-                     }, function(){}, function(err){ console.warn('標籤寫入警告:', err); });
-                   }
-
-                   // 詢問是否列印標籤
-                   setTimeout(function(){
-                     if (window.confirm('作業已完工！是否列印標籤？')) setShowLabelModal(true);
-                   }, 100);
-                 }} className="flex-1 bg-[#00e5ff] hover:bg-[#00b8d4] text-black flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm">
-                   <span>完工</span><span className="text-xs font-normal">selesai kerja</span>
-                 </button>
-               )}
-
-               {/* 派工結束已移至「鋼捲」modal 頂部操作區 */}
-
-               {mode === 'label' && (
-                 <button onClick={() => setShowLabelModal(true)} className="flex-1 bg-blue-500 hover:bg-blue-600 text-white flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm">
-                   <span>列印標籤</span><span className="text-xs font-normal">cetak label</span>
-                 </button>
-               )}
-
-               {/* 捷徑按鈕：過磅 */}
-               <button onClick={() => setShowCoilModal(true)} className="flex-1 bg-orange-500 hover:bg-orange-600 text-white flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm">
-                 <span>過磅</span><span className="text-xs font-normal">menimbang</span>
-               </button>
-
-               <button onClick={onBack} className="flex-1 bg-black hover:bg-gray-800 text-white flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm"><span>返回</span><span className="text-xs font-normal">kembali</span></button>
-            </div>
-          </div>
-
-          {/* 標籤預覽 Modal (共用於完工列印與手動列印) */}
-          {showLabelModal && (
-            <div className="absolute inset-0 bg-black/60 z-50 flex items-center justify-center">
-               <div className="bg-white shadow-2xl relative border border-gray-300 flex flex-col" style={{ width: '100mm', height: '100mm', padding: '5mm' }}>
-                  <h2 className="text-center font-bold text-lg border-b-2 border-black pb-1 mb-2">出貨標籤</h2>
-
-                  <div className="flex flex-col space-y-1 flex-1 text-[13px] text-black">
-                     <div className="flex"><span className="font-bold w-16">標籤單號:</span><span className="flex-1 font-mono font-bold text-lg">{headerData.id}{String(savedLabels.length + 1).padStart(2, '0')}</span></div>
-                     <div className="flex"><span className="font-bold w-16">客戶名稱:</span><span className="flex-1 truncate">{headerData.customerShort || '未填寫'}</span></div>
-                     <div className="flex"><span className="font-bold w-16">品名:</span><span className="flex-1 truncate">{headerData.spec}</span></div>
-
-                     <div className="mt-2 border-t border-dashed border-gray-400 pt-2 flex-1 overflow-hidden flex flex-col">
-                        <div className="font-bold mb-1">明細 (長度 * 數量):</div>
-                        <div className="flex-1 overflow-auto border border-gray-200 bg-white">
-                           {rightList.map((item, i) => (
-                             <div key={i} className="flex justify-between border-b border-gray-100 py-1 px-2 last:border-0 hover:bg-gray-50">
-                                <span className="w-16 text-left">{item.length} 尺</span>
-                                <span className="w-8 text-center text-gray-500">×</span>
-                                <span className="w-16 text-right">{item.qty} 片</span>
-                                <span className="flex-1 text-right">= {item.totalLen} 尺</span>
-                             </div>
-                           ))}
-                        </div>
-                     </div>
-                  </div>
-
-                  <div className="mt-3 pt-2 border-t flex justify-end space-x-2">
-                     <button onClick={() => setShowLabelModal(false)} className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm text-gray-700">取消</button>
-                     <button onClick={() => {
-                        // 產生新標籤並儲存
-                        const newLabels = generateReportLabels(savedLabels.length);
-                        setSavedLabels(prev => [...prev, ...newLabels]);
-
-                        // 儲存至全域狀態，讓新的 Tab 可以讀取
-                        const d=new Date(),p=n=>String(n).padStart(2,'0');
-                        const createTime = d.getFullYear()+'/'+p(d.getMonth()+1)+'/'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
-                        const enhancedLabels = newLabels.map(l => ({
-                           ...l,
-                           orderId: headerData.id,
-                           customer: headerData.customerShort,
-                           spec: headerData.spec,
-                           createTime: createTime
-                        }));
-                        setGlobalLabels(prev => [...prev, ...enhancedLabels]);
-
-                        setShowLabelModal(false);
-                        setRightList([]); // 列印完成後清除右側資料
-                     }} className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded text-sm flex items-center">
-                        <Icon name="printer" className="mr-1" size={14} /> 模擬列印並清除
-                     </button>
-                  </div>
-               </div>
-            </div>
-          )}
-
-          {/* 鋼捲資訊與過磅 Modal */}
-          {showCoilModal && (
-            <div className="absolute inset-0 bg-black/60 z-50 flex items-center justify-center">
-               <div className="bg-white shadow-2xl relative border border-gray-300 flex flex-col w-[440px] rounded-lg overflow-hidden">
-                  <div className="bg-gradient-to-r from-[#a5d6a7] to-[#81c784] text-black p-3 font-bold text-lg flex justify-between items-center border-b border-[#81c784]">
-                     <span>鋼捲管理</span>
-                     <button onClick={() => {setShowCoilModal(false); setCoilInfo(null); setCoilBatchNo('');}} className="hover:text-gray-700"><Icon name="x" size={20} /></button>
-                  </div>
-
-                  {/* 派工操作區（移至鋼捲 modal 頂部） */}
-                  <div className="flex space-x-2 p-3 bg-gray-50 border-b border-gray-200">
-                    {/* 派工開始 */}
-                    <button
-                      onClick={() => {
-                        var orderId = headerData.orderId || (headerData.id || '').split('-')[0];
-                        if (!orderId) return alert('無訂單編號，無法派工');
-                        if (!window.API || typeof window.API.createDispatchFromOrder !== 'function') return alert('後端未連線');
-                        window.API.createDispatchFromOrder(orderId, {}, function(res){
-                          if (!res || !res.id) return alert('建立派工單失敗');
-                          window.__currentDispatchId = res.id;
-                          window.__currentDispatchPhase = res.phase || 'BOTH';
-                          try { setHeaderData(h => Object.assign({}, h, { dispatchId: res.id })); } catch(e){}
-                          try { window.dispatchEvent(new CustomEvent('dispatch-created', { detail: res })); } catch(e){}
-                          var phaseLabel = ({TOP:'上版單',BOTTOM:'下版單',BOTH:'上版+底版單',FOLD:'折工單'})[res.phase] || res.phase || '';
-                          setDispatchInfo({ id: res.id, machine: res.machine || headerData.machine || '', phase: phaseLabel });
-                          var isFold = (res.phase === 'FOLD');
-                          if (isFold) setCoilLoaded(true);
-                          setMesNotice({ type:'success', title:'✅ 派工單已建立',
-                            body:'派工單號：' + res.id + '\n類型：' + phaseLabel + ' (機台 ' + (res.machine||'-') + ')' +
-                                 (isFold ? '\n\n⚠️ 折工單不需上鋼捲' : '\n\n▶ 請輸入批號查詢並上架鋼捲') });
-                        }, function(err){ alert('建立派工單失敗：' + (err && err.message || err)); });
-                      }}
-                      className="flex-1 py-2 rounded font-bold text-sm text-white"
-                      style={{background: dispatchInfo ? '#388e3c' : '#1565c0'}}>
-                      {dispatchInfo ? '✓ 派工中 ' + (dispatchInfo.id || '') : '▶ 派工開始'}
-                    </button>
-                    {/* 派工結束 */}
-                    <button
-                      onClick={() => {
-                        var dispatchId = (headerData && headerData.dispatchId) || window.__currentDispatchId;
-                        if (!dispatchId) return alert('尚未建立派工單');
-                        if (!window.API || typeof window.API.endDispatch !== 'function') return alert('後端未連線');
-                        if (!window.confirm('確定結束派工單 ' + dispatchId + '？')) return;
-                        var loadKgVal = loadedCoilInfo ? loadedCoilInfo.loadWeight : 0;
-                        setWeighOutKg('');
-                        setPendingEndDispatch(function(){
-                          return function(unloadKg){
-                            var usedKg = +(loadKgVal - unloadKg).toFixed(2);
-                            var coilUnloadWeights = {};
-                            if (loadedCoilInfo && loadedCoilInfo.moveId) coilUnloadWeights[loadedCoilInfo.moveId] = unloadKg;
-                            window.API.endDispatch(dispatchId, { coilUnloadWeights: coilUnloadWeights }, function(res){
-                              if (!res || !res.ok) return alert('派工結束失敗：' + JSON.stringify(res));
-                              try { window.dispatchEvent(new CustomEvent('dispatch-ended', { detail: res })); } catch(e){}
-                              setCoilLoaded(false); setDispatchInfo(null); setLoadedCoilInfo(null);
-                              try { setHeaderData(h => Object.assign({}, h, { dispatchId: '' })); } catch(e){}
-                              window.__currentDispatchId = null;
-                              setShowCoilModal(false);
-                              setMesNotice({ type:'success', title:'✅ 派工已結束',
-                                body:'回單編號：' + res.returnId +
-                                     '\n上架：' + loadKgVal + ' kg　下架：' + unloadKg + ' kg' +
-                                     '\n領用：' + usedKg + ' kg\n入庫明細：' + res.itemCount + ' 筆' });
-                            }, function(err){ alert('派工結束失敗：' + (err && err.message || err)); });
-                          };
-                        });
-                        setShowWeighOutModal(true);
-                      }}
-                      className="flex-1 py-2 rounded font-bold text-sm text-white"
-                      style={{background: dispatchInfo ? '#b71c1c' : '#9e9e9e',
-                              opacity: dispatchInfo ? 1 : 0.5,
-                              cursor: dispatchInfo ? 'pointer' : 'not-allowed'}}>
-                      ⏹ 派工結束
-                    </button>
-                  </div>
-
-                  <div className="p-4 flex flex-col space-y-4">
-                      <div className="flex space-x-2">
-                         <input
-                           type="text"
-                           placeholder="請輸入鋼捲批號..."
-                           className="flex-1 border border-gray-400 px-3 py-2 rounded focus:outline-none focus:border-green-600 focus:ring-1 focus:ring-green-600"
-                           value={coilBatchNo}
-                           onChange={(e) => setCoilBatchNo(e.target.value)}
-                           onKeyDown={(e) => e.key === 'Enter' && handleSearchCoil()}
-                           autoFocus
-                         />
-                         <button onClick={handleSearchCoil} className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 flex items-center shadow">
-                           <Icon name="search" size={16} className="mr-1" /> 查詢
-                         </button>
-                      </div>
-
-                      {coilInfo && (
-                        <div className="bg-[#f1f8e9] border border-green-200 rounded p-4 flex flex-col space-y-2 shadow-inner">
-                           <div className="flex border-b border-green-300 pb-2"><span className="w-24 text-gray-600 font-bold">批號:</span><span className="font-mono text-green-800 font-bold text-lg">{coilBatchNo}</span></div>
-                           {coilInfo.coilNo && <div className="flex"><span className="w-24 text-gray-600 font-bold">鋼捲編號:</span><span className="font-bold text-gray-800">{coilInfo.coilNo}</span></div>}
-                           <div className="flex"><span className="w-24 text-gray-600 font-bold">型號:</span><span className="font-bold text-gray-800">{coilInfo.model || '—'}</span></div>
-                           {coilInfo.spec && <div className="flex"><span className="w-24 text-gray-600 font-bold">品名規格:</span><span className="font-bold text-gray-800 text-sm">{coilInfo.spec}</span></div>}
-                           <div className="flex"><span className="w-24 text-gray-600 font-bold">材質:</span><span className="font-bold text-gray-800">{coilInfo.materialNo || '—'}</span></div>
-                           <div className="flex"><span className="w-24 text-gray-600 font-bold">廠別:</span><span className="font-bold text-gray-800">{coilInfo.factory || '—'}</span></div>
-                           <div className="flex"><span className="w-24 text-gray-600 font-bold">尺寸/顏色:</span><span className="font-bold text-gray-800 text-sm">{coilInfo.size || '—'} / {coilInfo.color || '—'}</span></div>
-                           <div className="flex"><span className="w-24 text-gray-600 font-bold">倉庫/儲位:</span><span className="font-bold text-blue-700">{coilInfo.warehouse || '—'} / {coilInfo.location || '—'}</span></div>
-                           <div className="flex"><span className="w-24 text-gray-600 font-bold">可用數量:</span><span className="font-bold text-gray-800">{coilInfo.qty} 片</span></div>
-                           <div className="flex"><span className="w-24 text-gray-600 font-bold">可用重量:</span><span className="font-bold text-red-600 text-2xl">{coilInfo.weight} kg</span></div>
-
-                           <div className="pt-3 mt-2 border-t border-green-300 flex space-x-2">
-                              <button
-                                onClick={() => {
-                                   // 再次對庫存批號明細進行比對；以庫存資料（而非畫面 cache）為準寫入派工單扣庫
-                                   if (!coilBatchNo) return alert('批號不可為空');
-                                   const orderId = headerData.orderId || (headerData.id || '').split('-')[0];
-                                   if (!orderId) return alert('無訂單編號，無法上架');
-                                   if (!window.API || typeof window.API.searchCoilStock !== 'function') {
-                                     return alert('後端未連線，無法驗證批號明細');
-                                   }
-
-                                   // Step 1: 重新查詢 ERP 批號明細以確認批號仍存在、庫存仍足夠
-                                   window.API.searchCoilStock({ batchNo: coilBatchNo, keyword: coilBatchNo }, function(rows){
-                                     var hit = (rows || []).find(function(r){
-                                       return String(r.batchNo || '').trim() === String(coilBatchNo).trim();
-                                     });
-                                     if (!hit) {
-                                       setCoilInfo(null);
-                                       return alert('批號 [' + coilBatchNo + '] 已不在庫存批號明細中，無法上架。');
-                                     }
-                                     var availKg  = parseFloat(hit.availableKg || 0) || 0;
-                                     var availPcs = parseFloat(hit.availablePieces || 0) || 0;
-                                     if (availKg <= 0) {
-                                       return alert('批號 [' + coilBatchNo + '] 目前庫存為 0，無法上架。');
-                                     }
-                                     // 更新畫面顯示為最新庫存
-                                     setCoilInfo({
-                                       materialNo: hit.material || '', factory: hit.factory || '',
-                                       warehouse:  hit.warehouse || '', location: hit.location || '',
-                                       model:      hit.model || '', spec: hit.spec || '',
-                                       color:      hit.color || '', size: hit.size || '',
-                                       rollNo:     hit.rollNo || '', coilNo: hit.coilNo || '',
-                                       qty: availPcs, weight: availKg
-                                     });
-
-                                     // Step 2: 取得/建立派工單 (createDispatchFromOrder 為冪等)
-                                     var existingDispatchId = (headerData && headerData.dispatchId) || window.__currentDispatchId;
-                                     var proceed = function(dispatchId, loadKg){
-                                       // Step 3: 以批號明細的資料寫入派工單鋼捲扣庫明細
-                                       window.API.addCoilMove(dispatchId, {
-                                         coilNo:       hit.coilNo, rollNo: hit.rollNo, batchNo: hit.batchNo,
-                                         model:        hit.model,  spec:   hit.spec,
-                                         material:     hit.material,
-                                         size:         hit.size,   color:  hit.color,
-                                         srcWarehouse: hit.warehouse || '鋼捲倉',
-                                         srcLocation:  hit.location,
-                                         dstWarehouse: '產線倉',
-                                         dstLocation:  '',
-                                         outKg:        availKg, outPieces: availPcs || 1,
-                                         inKg:         availKg, inPieces:  availPcs || 1,
-                                         loadWeight:   loadKg,   // 上架磅重
-                                         moveType:     '出+入',
-                                         operator:     '',
-                                         remark:       '原批號倉/儲位: ' + (hit.warehouse || '') + '/' + (hit.location || '') +
-                                                       '　上架磅重: ' + loadKg + ' kg'
-                                       }, function(moveRes){
-                                         setCoilLoaded(true);
-                                         setShowCoilModal(false); setCoilInfo(null); setCoilBatchNo('');
-                                         setLoadedCoilInfo({
-                                           model:      hit.model || '',
-                                           factory:    hit.factory || '',
-                                           material:   hit.material || '',
-                                           batchNo:    hit.batchNo || '',
-                                           loadWeight: loadKg,
-                                           moveId:     moveRes && moveRes.id ? moveRes.id : ''
-                                         });
-                                         setMesNotice({
-                                           type: 'success',
-                                           title: '✅ 鋼捲上架完成',
-                                           body: '批號 [' + hit.batchNo + '] 已寫入鋼捲扣庫明細\n' +
-                                                 '料號：' + hit.model + '　廠別：' + (hit.factory||'') + '　材質：' + (hit.material||'') + '\n' +
-                                                 '上架磅重：' + loadKg + ' kg\n\n▶ 現在可挑選裁切細項並開工'
-                                         });
-                                         try { window.dispatchEvent(new CustomEvent('coil-move-added', { detail: { dispatchId: dispatchId, move: moveRes } })); } catch(e) {}
-                                       }, function(err){ alert('上架失敗：' + (err && err.message || err)); });
-                                     };
-                                     var doUpload = function(loadKg){
-                                       if (existingDispatchId) { proceed(existingDispatchId, loadKg); return; }
-                                       window.API.createDispatchFromOrder(orderId, {}, function(res){
-                                         if (!res || !res.id) return alert('建立派工單失敗');
-                                         window.__currentDispatchId = res.id;
-                                         try { setHeaderData(h => Object.assign({}, h, { dispatchId: res.id })); } catch(e){}
-                                         proceed(res.id, loadKg);
-                                       }, function(err){ alert('建立派工單失敗：' + (err && err.message || err)); });
-                                     };
-                                     setWeighInKg(String(availKg));
-                                     setPendingCoilProceed(function(){ return doUpload; });
-                                     setShowWeighInModal(true);
-                                   }, function(err){
-                                     alert('查詢批號明細失敗：' + (err && err.message || err));
-                                   });
-                                }}
-                                className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded font-bold shadow-md flex items-center justify-center text-base tracking-wider transition-all transform active:scale-95"
-                              >
-                                 鋼捲上架
-                              </button>
-                           </div>
-                        </div>
-                      )}
-                  </div>
-               </div>
-            </div>
-          )}
-
-          {showWeighInModal && (
-            <div className="fixed inset-0 z-[9998] flex items-center justify-center" style={{background:'rgba(0,0,0,0.55)'}}>
-              <div className="bg-white rounded-xl shadow-2xl p-6 w-80 border-2 border-orange-400">
-                <div className="text-base font-bold text-orange-700 mb-1">⚖️ 上架磅重</div>
-                <div className="text-xs text-gray-500 mb-3">請輸入鋼捲上磅的實際重量（kg）</div>
-                <div className="flex items-center space-x-2 mb-2">
-                  <input type="number" step="0.01" min="0" value={weighInKg}
-                    onChange={e => setWeighInKg(e.target.value)}
-                    onKeyDown={e => { if(e.key==='Enter'){ var kg=parseFloat(weighInKg)||0; if(kg<=0) return alert('請輸入有效磅重'); setShowWeighInModal(false); if(pendingCoilProceed) pendingCoilProceed()(kg); setPendingCoilProceed(null); }}}
-                    className="flex-1 border-2 border-orange-300 rounded px-3 py-2 text-right text-lg font-bold focus:outline-none focus:border-orange-500" autoFocus />
-                  <span className="text-gray-500 font-semibold">kg</span>
-                </div>
-                <div className="flex space-x-2 mt-3">
-                  <button onClick={() => { setShowWeighInModal(false); setPendingCoilProceed(null); }}
-                          className="flex-1 py-2 rounded border border-gray-300 text-gray-600 hover:bg-gray-100 text-sm">取消</button>
-                  <button onClick={() => { var kg=parseFloat(weighInKg)||0; if(kg<=0) return alert('請輸入有效磅重'); setShowWeighInModal(false); if(pendingCoilProceed) pendingCoilProceed()(kg); setPendingCoilProceed(null); }}
-                          className="flex-1 py-2 rounded bg-orange-500 text-white font-bold hover:bg-orange-600 text-sm">確認上架</button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {showWeighOutModal && (
-            <div className="fixed inset-0 z-[9998] flex items-center justify-center" style={{background:'rgba(0,0,0,0.55)'}}>
-              <div className="bg-white rounded-xl shadow-2xl p-6 w-80 border-2 border-red-400">
-                <div className="text-base font-bold text-red-700 mb-1">⚖️ 下架磅重</div>
-                <div className="text-xs text-gray-500 mb-3">請輸入鋼捲下磅（剩料）的重量（kg）</div>
-                {loadedCoilInfo && (
-                  <div className="bg-gray-50 rounded p-2 mb-3 text-xs text-gray-600">
-                    <div>上架磅重：<span className="font-bold text-orange-600">{loadedCoilInfo.loadWeight} kg</span></div>
-                    {weighOutKg !== '' && !isNaN(parseFloat(weighOutKg)) && (
-                      <div className="mt-1">領用重量：<span className="font-bold text-green-700">{(+(loadedCoilInfo.loadWeight - parseFloat(weighOutKg)).toFixed(2))} kg</span>（上架 − 下架）</div>
-                    )}
-                  </div>
-                )}
-                <div className="flex items-center space-x-2 mb-2">
-                  <input type="number" step="0.01" min="0" value={weighOutKg} placeholder="0.00"
-                    onChange={e => setWeighOutKg(e.target.value)}
-                    onKeyDown={e => { if(e.key==='Enter'){ var kg=parseFloat(weighOutKg); if(isNaN(kg)||kg<0) return alert('請輸入有效磅重'); setShowWeighOutModal(false); if(pendingEndDispatch) pendingEndDispatch()(kg); setPendingEndDispatch(null); }}}
-                    className="flex-1 border-2 border-red-300 rounded px-3 py-2 text-right text-lg font-bold focus:outline-none focus:border-red-500" autoFocus />
-                  <span className="text-gray-500 font-semibold">kg</span>
-                </div>
-                <div className="flex space-x-2 mt-3">
-                  <button onClick={() => { setShowWeighOutModal(false); setPendingEndDispatch(null); }}
-                          className="flex-1 py-2 rounded border border-gray-300 text-gray-600 hover:bg-gray-100 text-sm">取消</button>
-                  <button onClick={() => { var kg=parseFloat(weighOutKg); if(isNaN(kg)||kg<0) return alert('請輸入有效磅重'); setShowWeighOutModal(false); if(pendingEndDispatch) pendingEndDispatch()(kg); setPendingEndDispatch(null); }}
-                          className="flex-1 py-2 rounded bg-red-600 text-white font-bold hover:bg-red-700 text-sm">確認派工結束</button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {mesNotice && (
-            <div className="fixed inset-0 z-[9999] flex items-center justify-center" style={{background:'rgba(0,0,0,0.45)'}}>
-              <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full mx-4 border-2"
-                   style={{borderColor: mesNotice.type === 'success' ? '#16a34a' : '#d97706'}}>
-                <div className="text-lg font-bold mb-3" style={{color: mesNotice.type === 'success' ? '#15803d' : '#b45309'}}>
-                  {mesNotice.title}
-                </div>
-                <div className="text-sm text-gray-700 whitespace-pre-line leading-relaxed mb-5">
-                  {mesNotice.body}
-                </div>
-                <div className="flex justify-center">
-                  <button onClick={closeMesNotice}
-                          className="px-10 py-2 rounded-lg font-bold text-white shadow"
-                          style={{background: mesNotice.type === 'success' ? '#16a34a' : '#d97706'}}>
-                    確定
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-        </div>
-      );
-    }
-
-    window.mountMesApp = function(){ ReactDOM.createRoot(document.getElementById('mes-root')).render(<App />); };
-</script>
-<
+               {mode === 'order' &
