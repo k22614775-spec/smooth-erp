@@ -3009,11 +3009,13 @@ function switchTopMode(mode) {
           var model  = c.model||'';
           var bn     = c.batchNo||c.batchno||'';
           var kg     = parseFloat(loadWeight)||parseFloat(c.outWeight||c.outweight)||0;
+          // 實際使用量 = 上架 − 下架（有輸入下架磅重時才扣減，否則以上架全量計）
+          var actualUsedKg = motherUnloadWeight>0 ? Math.max(0, kg-motherUnloadWeight) : kg;
 
           await _upsert('dispatch_coil_moves',{
             id:'CM-SLT-'+c.id, dispatchId:dspId,
             outBatchNo:bn, coilNo:bn, model:model, spec:c.spec||'',
-            qty:c.qty||1, total:kg, unit:c.unit||'KG',
+            qty:c.qty||1, total:actualUsedKg, unit:c.unit||'KG',
             outWarehouse:outWh, outLocation:'',
             inWarehouse:inWh, inLocation:'',
             inBatchNo:'', loadWeight:kg, unloadWeight:motherUnloadWeight,
@@ -3025,28 +3027,28 @@ function switchTopMode(mode) {
             if(wsOut&&wsOut[0]){
               await _patch('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+outWh},{
                 qty:Math.max(0,(wsOut[0].qty||0)-1),
-                total:Math.max(0,(wsOut[0].total||0)-kg)
+                total:Math.max(0,(wsOut[0].total||0)-actualUsedKg)
               }).catch(function(e){ _errs.push('WS-OUT:'+String(e.message||e)); });
             }
             var wsIn = await _get('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+inWh}).catch(function(){return[];});
             if(wsIn&&wsIn[0]){
               await _patch('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+inWh},{
-                qty:(wsIn[0].qty||0)+1, total:(wsIn[0].total||0)+kg
+                qty:(wsIn[0].qty||0)+1, total:(wsIn[0].total||0)+actualUsedKg
               }).catch(function(e){ _errs.push('WS-IN:'+String(e.message||e)); });
             } else {
               await _upsert('warehouse_stock',{
-                model:model, warehouseNo:inWh, qty:1, total:kg,
+                model:model, warehouseNo:inWh, qty:1, total:actualUsedKg,
                 price:0, amount:0, moveDate:today, remark:'廠內分條上架 '+txId
               }).catch(function(e){ _errs.push('WS-INS:'+String(e.message||e)); });
             }
             await _upsert('stock_moves',{
               id:'SM-SLT-OUT-'+c.id, model:model, warehouse:outWh,
-              qty:-1, total:-kg, refType:'INHOUSE_SLITTING', refId:dspId,
+              qty:-1, total:-actualUsedKg, refType:'INHOUSE_SLITTING', refId:dspId,
               moveDate:today, remark:'廠內分條出倉 '+txId
             }).catch(function(e){ _errs.push('SM-OUT:'+String(e.message||e)); });
             await _upsert('stock_moves',{
               id:'SM-SLT-IN-'+c.id, model:model, warehouse:inWh,
-              qty:1, total:kg, refType:'INHOUSE_SLITTING', refId:dspId,
+              qty:1, total:actualUsedKg, refType:'INHOUSE_SLITTING', refId:dspId,
               moveDate:today, remark:'廠內分條入產線倉 '+txId
             }).catch(function(e){ _errs.push('SM-IN:'+String(e.message||e)); });
           }
@@ -3163,6 +3165,8 @@ function switchTopMode(mode) {
           var cmModel = c6.model||'';
           var cmBn    = c6.batchNo||c6.batchno||'';
           var cmKg    = parseFloat(loadWeight)||parseFloat(c6.outWeight||c6.outweight)||0;
+          // 回單扣庫以實際用量為準（上架 − 下架）
+          var actualUsedCmKg = motherUnloadWeight>0 ? Math.max(0, cmKg-motherUnloadWeight) : cmKg;
           var cmInWh  = c6.inWarehouse||c6.inwarehouse||'產線倉';
           var cmUnit  = c6.unit||'KG';
           if(!cmModel) continue;
@@ -3170,12 +3174,12 @@ function switchTopMode(mode) {
           if(wsPL&&wsPL[0]){
             await _patch('warehouse_stock',{model:'eq.'+cmModel,warehouseNo:'eq.'+cmInWh},{
               qty:Math.max(0,(wsPL[0].qty||0)-1),
-              total:Math.max(0,(wsPL[0].total||0)-cmKg)
+              total:Math.max(0,(wsPL[0].total||0)-actualUsedCmKg)
             }).catch(function(e){ _errs.push('WS-DEDUCT:'+String(e.message||e)); });
           }
           await _upsert('stock_moves',{
             id:'SM-SLT-DED-'+c6.id, model:cmModel, warehouse:cmInWh,
-            qty:-1, total:-cmKg, refType:'INHOUSE_SLITTING', refId:drId,
+            qty:-1, total:-actualUsedCmKg, refType:'INHOUSE_SLITTING', refId:drId,
             moveDate:today, remark:'廠內分條產線倉扣庫 '+txId
           }).catch(function(e){ _errs.push('SM-DED:'+String(e.message||e)); });
           await _upsert('dispatch_return_deduct',{
@@ -3183,7 +3187,7 @@ function switchTopMode(mode) {
             coilMoveId:'CM-SLT-'+c6.id,
             model:cmModel, batchNo:cmBn,
             warehouse:cmInWh, location:'',
-            qty:c6.qty||1, total:cmKg, unit:cmUnit,
+            qty:c6.qty||1, total:actualUsedCmKg, unit:cmUnit,
             createdAt:now,
           }).catch(function(e){ _errs.push('DRD:'+String(e.message||e)); });
         }
