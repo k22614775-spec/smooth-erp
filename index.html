@@ -7937,6 +7937,8 @@ window.addEventListener('DOMContentLoaded', function(){
                    '\n子捲：'+((res&&res.babyCount)||0)+' 筆  共 '+
                    parseFloat(res&&res.totalBabyKg||0).toFixed(1)+' kg'+extra+errs);
             setPhase('done');
+            // 自動刷新 ERP 庫存快取（讓批號明細即時反映回單結果）
+            setTimeout(function(){ if(typeof loadInventoryFromServer==='function') loadInventoryFromServer(); }, 800);
           },
           function(err){ setLoading(false); setMsg('❌ '+(err&&err.message||err)); }
         );
