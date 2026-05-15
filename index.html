@@ -2802,7 +2802,7 @@ function switchTopMode(mode) {
           if(itModel && itKg > 0){
             await _adjustWarehouseStock(itModel, itWh, 1, itKg);
             await _adjustBatchDetail(itModel, itWh, itBn, '', 1, itKg,
-              {remark:'委外入庫 '+txId, createdAt:now});
+              {detailRemark:'委外入庫 '+txId});
             await _upsert('stock_moves',{
               id:'SM-ITM-'+it.id, model:itModel, warehouseNo:itWh, batchNo:itBn,
               qty:1, total:itKg, refType:'OUTSOURCE_IN', refId:drId,
@@ -3029,7 +3029,7 @@ function switchTopMode(mode) {
             }).catch(function(e){ _errs.push('SM-IN:'+String(e.message||e)); });
             // batch_detail 同步更新：鋼捲倉扣批號、産線倉增批號
             await _adjustBatchDetail(model, outWh, bn, '', -1, -actualUsedKg, null).catch(function(e){ _errs.push('BD-OUT:'+String(e.message||e)); });
-            await _adjustBatchDetail(model, inWh, bn, '', 1, actualUsedKg, {remark:'廠內分條上架 '+txId, createdAt:now}).catch(function(e){ _errs.push('BD-IN:'+String(e.message||e)); });
+            await _adjustBatchDetail(model, inWh, bn, '', 1, actualUsedKg, {detailRemark:'廠內分條上架 '+txId}).catch(function(e){ _errs.push('BD-IN:'+String(e.message||e)); });
           }
         }
 
@@ -3052,7 +3052,7 @@ function switchTopMode(mode) {
             await _upsert('stock_moves',{id:'SM-SLT-ADD-OUT-'+txId+'-'+ai,model:acMd,warehouse:acWh,qty:-1,total:-acKg,refType:'INHOUSE_SLITTING',refId:dspId,moveDate:today,remark:'廠內分條追加出倉 批號:'+acBn+' '+txId}).catch(function(e){_errs.push('SM-ADD-OUT:'+String(e.message||e));});
             await _upsert('stock_moves',{id:'SM-SLT-ADD-IN-'+txId+'-'+ai,model:acMd,warehouse:acIn,qty:1,total:acKg,refType:'INHOUSE_SLITTING',refId:dspId,moveDate:today,remark:'廠內分條追加入產線倉 批號:'+acBn+' '+txId}).catch(function(e){_errs.push('SM-ADD-IN:'+String(e.message||e));});
             await _adjustBatchDetail(acMd, acWh, acBn, '', -1, -acKg, null).catch(function(e){_errs.push('BD-ADD-OUT-'+ai+':'+String(e.message||e));});
-            await _adjustBatchDetail(acMd, acIn, acBn, '', 1, acKg, {remark:'廠內分條追加上架 '+txId, createdAt:now}).catch(function(e){_errs.push('BD-ADD-IN-'+ai+':'+String(e.message||e));});
+            await _adjustBatchDetail(acMd, acIn, acBn, '', 1, acKg, {detailRemark:'廠內分條追加上架 '+txId}).catch(function(e){_errs.push('BD-ADD-IN-'+ai+':'+String(e.message||e));});
           }
         }
 
@@ -3072,7 +3072,7 @@ function switchTopMode(mode) {
               await _upsert('stock_moves',{id:'SM-SLT-RPL-OUT-'+txId+'-'+ri,model:rcMd,warehouse:rcNewWh,qty:-1,total:-rcNewKg,refType:'INHOUSE_SLITTING',refId:dspId,moveDate:today,remark:'廠內分條更換出倉 批號:'+rcNewBn+' '+txId}).catch(function(e){_errs.push('SM-RPL-OUT:'+String(e.message||e));});
               await _upsert('stock_moves',{id:'SM-SLT-RPL-IN-'+txId+'-'+ri,model:rcMd,warehouse:rcInWh,qty:1,total:rcNewKg,refType:'INHOUSE_SLITTING',refId:dspId,moveDate:today,remark:'廠內分條更換入產線倉 批號:'+rcNewBn+' '+txId}).catch(function(e){_errs.push('SM-RPL-IN:'+String(e.message||e));});
               await _adjustBatchDetail(rcMd, rcNewWh, rcNewBn, '', -1, -rcNewKg, null).catch(function(e){_errs.push('BD-RPL-OUT-'+ri+':'+String(e.message||e));});
-              await _adjustBatchDetail(rcMd, rcInWh, rcNewBn, '', 1, rcNewKg, {remark:'廠內分條更換上架 '+txId, createdAt:now}).catch(function(e){_errs.push('BD-RPL-IN-'+ri+':'+String(e.message||e));});
+              await _adjustBatchDetail(rcMd, rcInWh, rcNewBn, '', 1, rcNewKg, {detailRemark:'廠內分條更換上架 '+txId}).catch(function(e){_errs.push('BD-RPL-IN-'+ri+':'+String(e.message||e));});
             }
           }
         }
@@ -3114,7 +3114,7 @@ function switchTopMode(mode) {
           if(babyMod && babyKg>0){
             await _adjustWarehouseStock(babyMod, babyWh, 1, babyKg);
             await _adjustBatchDetail(babyMod, babyWh, babyBn, '', 1, babyKg,
-              {remark:'廠內分條入庫 '+txId, createdAt:now});
+              {detailRemark:'廠內分條入庫 '+txId});
             await _upsert('stock_moves',{
               id:'SM-SLT-BABY-'+baby.itemId, model:babyMod, warehouse:babyWh,
               qty:1, total:babyKg, refType:'INHOUSE_SLITTING', refId:drId,
