@@ -2830,14 +2830,8 @@ function switchTopMode(mode) {
           }
         }
 
-        // 2. 更新扣庫明細 unloadWeight（回倉磅重）
-        for(var c of coils){
-          if(c.returnWeight){
-            await _patch('dispatch_coil_moves',{'id':'eq.CM'+c.id},{
-              unloadWeight: parseFloat(c.returnWeight)||0
-            }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
-          }
-        }
+        // 2. [委外加工入庫不寫回 dispatch_coil_moves.unloadWeight]
+        //    下架磅重屬於現場派工作業欄位，委外入庫以 Step5b 自動補入庫明細取代。
 
         // 3. 自動結案派工單（關鍵狀態變更，失敗須中止）
         await _patch('dispatch_orders',{'id':'eq.'+dspId},{
@@ -2871,17 +2865,19 @@ function switchTopMode(mode) {
           }).catch(function(e){_errs.push('DRI:'+String(e.message||e));});
         }
 
-        // 5. 回倉：把委外派工倉全量扣除，剩餘母捲回鋼捲倉
-        //    fullKg   = outWeight（委外出庫時的磅重，完整扣除委外派工倉）
-        //    usedKg   = returnWeight（加工已消耗，子捲已在 Step1 入鋼捲倉）
-        //    remainKg = fullKg - usedKg（剩餘母捲，回鋼捲倉）
+        // 5. 回倉：委外派工倉全量扣除；下架過磅重量回鋼捲倉
+        //
+        //    fullKg   = c.outWeight    委外出庫磅重 → 委外派工倉完整扣除
+        //    remainKg = c.returnWeight 下架過磅秤重 → 剩餘母捲直接回鋼捲倉（非計算值）
+        //
+        //    正確淨損耗 = fullKg - Σ(CTI子捲kg) - remainKg（加工消耗，如損耗50kg）
+        //    不寫回 dispatch_coil_moves（已在 Step2 說明移除）
         for(var c of coils){
           var inWh     = c.inWarehouse||c.inwarehouse||'委外派工倉';
           var retWh    = c.returnWarehouse||c.returnwarehouse||c.outWarehouse||c.outwarehouse||'鋼捲倉';
           var model    = c.model||'';
-          var fullKg   = parseFloat(c.outWeight||c.outweight)||0;   // 委外派工倉扣除量
-          var usedKg   = parseFloat(c.returnWeight||c.returnweight)||0; // 子捲已入倉
-          var remainKg = Math.max(0, fullKg - usedKg);              // 剩餘母捲回倉
+          var fullKg   = parseFloat(c.outWeight||c.outweight)||0;     // 委外出庫全量（扣委外派工倉）
+          var remainKg = parseFloat(c.returnWeight||c.returnweight)||0; // 下架過磅 = 剩餘母捲（直接用）
           var bn       = c.batchNo||c.batchno||'';
           if(!model || fullKg <= 0) continue;
 
@@ -2904,8 +2900,20 @@ function switchTopMode(mode) {
             moveDate:today, remark:'委外入庫扣委外倉 '+txId, createdAt:now
           }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
 
-          // 5b. 剩餘母捲回鋼捲倉（remainKg > 0 才寫入）
+          // 5b. 剩餘母捲回鋼捲倉（下架過磅 > 0 才寫入）
+          //     dispatch_production 補最後一筆入庫明細（型號/批號同母捲，倉庫=鋼捲倉）
           if(remainKg > 0){
+            // 5b-1. 入庫明細（dispatch_production）補最後一筆，dispatchSeq='9990' 排在最後
+            await _upsert('dispatch_production',{
+              id:'DPI-REM-'+c.id, dispatchId:dspId, dispatchSeq:'9990',
+              orderId:'', orderItemNo:'',
+              model:model, spec:c.spec||'', qty:1, kg:remainKg,
+              unit:'KG', inBatchNo:bn, inLocation:'',
+              warehouseCode:retWh,
+              remark:'委外剩餘母捲回倉 '+txId, closed:1,
+            }).catch(function(e){ console.error('剩餘母捲入庫明細寫入失敗:', e); });
+
+            // 5b-2. warehouse_stock 加回
             var wsTo = await _get('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+retWh}).catch(function(){return[];});
             if(wsTo&&wsTo[0]){
               await _patch('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+retWh},{
@@ -2917,7 +2925,7 @@ function switchTopMode(mode) {
                 price:0, amount:0, moveDate:today, remark:'委外剩餘母捲回倉 '+txId
               }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
             }
-            // batch_detail：剩餘母捲回鋼捲倉（同批號）
+            // 5b-3. batch_detail：剩餘母捲回鋼捲倉（同批號）
             if(bn){
               await _adjustBatchDetail(model, retWh, bn, '', 1, remainKg, {
                 detailRemark:'委外剩餘母捲回倉 '+txId,
