@@ -2729,6 +2729,25 @@ function switchTopMode(mode) {
               qty:1, total:kg, refType:'OUTSOURCE_OUT', refId:dspId,
               moveDate:today, remark:'委外入倉調撥 '+txId, createdAt:now
             }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+            // batch_detail：出倉扣減，入倉（委外派工倉）補增（帶批號資訊）
+            if(bn){
+              await _adjustBatchDetail(model, outWh, bn, '', -1, -kg, null)
+                .catch(function(e){ console.warn('非致命寫入失敗:', e); });
+              var _srcBD = await _get('batch_detail',{model:'eq.'+model,warehouseNo:'eq.'+outWh,batchNo:'eq.'+bn}).catch(function(){return[];});
+              var _sb = _srcBD[0]||{};
+              await _adjustBatchDetail(model, inWh, bn, '', 1, kg, {
+                originalRollNo: _sb.originalRollNo||_sb.originalrollno||'',
+                vendor:         _sb.vendor||'',
+                thickness:      _sb.thickness||0,
+                width:          _sb.width||0,
+                density:        _sb.density||0,
+                lengthM:        _sb.lengthM||_sb.lengthm||0,
+                innerRing:      _sb.innerRing||_sb.innerring||'',
+                coilDirection:  _sb.coilDirection||_sb.coildirection||'',
+                price:          _sb.price||0,
+                detailRemark:   '委外出庫調撥 '+txId,
+              }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+            }
           }
         }
 
