@@ -2428,14 +2428,14 @@ function switchTopMode(mode) {
         }).catch(_seedErr('coil_transaction_coils CTC-01'));
         await _upsert('coil_transaction_items',{
           id:'CTI-1150511001-A', transactionId:'1150511001', itemNo:'0010',
-          orderNo:'', warehouseCode:'委外派工倉',
+          orderNo:'', warehouseCode:'鋼捲倉',
           model:'ZBE0.500*0255R001', spec:'鍍鋅 0.5*255 (分條A)',
           qty:1, totalKg:2500, remark:'分條 A', batchNo:'1001-A',
           createdAt:_simDate+' 08:00:00'
         }).catch(_seedErr('coil_transaction_items CTI-A'));
         await _upsert('coil_transaction_items',{
           id:'CTI-1150511001-B', transactionId:'1150511001', itemNo:'0020',
-          orderNo:'', warehouseCode:'委外派工倉',
+          orderNo:'', warehouseCode:'鋼捲倉',
           model:'ZBE0.500*0255R001', spec:'鍍鋅 0.5*255 (分條B)',
           qty:1, totalKg:2500, remark:'分條 B', batchNo:'1001-B',
           createdAt:_simDate+' 08:00:00'
@@ -2871,43 +2871,64 @@ function switchTopMode(mode) {
           }).catch(function(e){_errs.push('DRI:'+String(e.message||e));});
         }
 
-        // 5. 回倉：把委外派工倉扣庫存，加回來源倉
+        // 5. 回倉：把委外派工倉全量扣除，剩餘母捲回鋼捲倉
+        //    fullKg   = outWeight（委外出庫時的磅重，完整扣除委外派工倉）
+        //    usedKg   = returnWeight（加工已消耗，子捲已在 Step1 入鋼捲倉）
+        //    remainKg = fullKg - usedKg（剩餘母捲，回鋼捲倉）
         for(var c of coils){
-          var inWh  = c.inWarehouse||'委外派工倉';
-          var retWh = c.returnWarehouse||c.outWarehouse||'鋼捲倉';
-          var model = c.model||'';
-          var retKg = parseFloat(c.returnWeight)||parseFloat(c.outWeight)||0;
-          var bn    = c.batchNo||'';
-          if(!model) continue;
-          // 扣委外派工倉
+          var inWh     = c.inWarehouse||c.inwarehouse||'委外派工倉';
+          var retWh    = c.returnWarehouse||c.returnwarehouse||c.outWarehouse||c.outwarehouse||'鋼捲倉';
+          var model    = c.model||'';
+          var fullKg   = parseFloat(c.outWeight||c.outweight)||0;   // 委外派工倉扣除量
+          var usedKg   = parseFloat(c.returnWeight||c.returnweight)||0; // 子捲已入倉
+          var remainKg = Math.max(0, fullKg - usedKg);              // 剩餘母捲回倉
+          var bn       = c.batchNo||c.batchno||'';
+          if(!model || fullKg <= 0) continue;
+
+          // 5a. 委外派工倉全量扣除（qty -1，total -fullKg）
           var wsFrom = await _get('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+inWh}).catch(function(){return[];});
           if(wsFrom&&wsFrom[0]){
             await _patch('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+inWh},{
-              qty:Math.max(0,(wsFrom[0].qty||0)-1), total:Math.max(0,(wsFrom[0].total||0)-retKg)
+              qty:Math.max(0,(wsFrom[0].qty||0)-1), total:Math.max(0,(wsFrom[0].total||0)-fullKg)
             }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
           }
-          // 加回入庫倉（加工後批號可能不同，這裡仍用原批號）
-          var wsTo = await _get('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+retWh}).catch(function(){return[];});
-          if(wsTo&&wsTo[0]){
-            await _patch('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+retWh},{
-              qty:(wsTo[0].qty||0)+1, total:(wsTo[0].total||0)+retKg
-            }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
-          } else {
-            await _upsert('warehouse_stock',{
-              model:model, warehouseNo:retWh, qty:1, total:retKg,
-              price:0, amount:0, moveDate:today, remark:'委外入庫回倉 '+txId
+          // batch_detail：委外派工倉全量扣除
+          if(bn){
+            await _adjustBatchDetail(model, inWh, bn, '', -1, -fullKg, {
+              detailRemark:'委外入庫扣委外倉 '+txId,
             }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
           }
           await _upsert('stock_moves',{
             id:'SM-RET-'+c.id, model:model, warehouseNo:inWh, batchNo:bn,
-            qty:-1, total:-retKg, refType:'OUTSOURCE_IN', refId:drId,
-            moveDate:today, remark:'委外回倉扣庫 '+txId, createdAt:now
+            qty:-1, total:-fullKg, refType:'OUTSOURCE_IN', refId:drId,
+            moveDate:today, remark:'委外入庫扣委外倉 '+txId, createdAt:now
           }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
-          await _upsert('stock_moves',{
-            id:'SM-RTN-'+c.id, model:model, warehouseNo:retWh, batchNo:bn,
-            qty:1, total:retKg, refType:'OUTSOURCE_IN', refId:drId,
-            moveDate:today, remark:'委外回倉入庫 '+txId, createdAt:now
-          }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+
+          // 5b. 剩餘母捲回鋼捲倉（remainKg > 0 才寫入）
+          if(remainKg > 0){
+            var wsTo = await _get('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+retWh}).catch(function(){return[];});
+            if(wsTo&&wsTo[0]){
+              await _patch('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+retWh},{
+                qty:(wsTo[0].qty||0)+1, total:(wsTo[0].total||0)+remainKg
+              }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+            } else {
+              await _upsert('warehouse_stock',{
+                model:model, warehouseNo:retWh, qty:1, total:remainKg,
+                price:0, amount:0, moveDate:today, remark:'委外剩餘母捲回倉 '+txId
+              }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+            }
+            // batch_detail：剩餘母捲回鋼捲倉（同批號）
+            if(bn){
+              await _adjustBatchDetail(model, retWh, bn, '', 1, remainKg, {
+                detailRemark:'委外剩餘母捲回倉 '+txId,
+              }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+            }
+            await _upsert('stock_moves',{
+              id:'SM-RTN-'+c.id, model:model, warehouseNo:retWh, batchNo:bn,
+              qty:1, total:remainKg, refType:'OUTSOURCE_IN', refId:drId,
+              moveDate:today, remark:'委外剩餘母捲回倉 '+txId, createdAt:now
+            }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+          }
         }
 
         // 6. 建立派工回單扣庫明細 (dispatch_return_deduct)
