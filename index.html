@@ -2913,6 +2913,19 @@ function switchTopMode(mode) {
               remark:'委外剩餘母捲回倉 '+txId, closed:1,
             }).catch(function(e){ console.error('剩餘母捲入庫明細寫入失敗:', e); });
 
+            // 5b-1b. 派工回單入庫明細（dispatch_return_items）同步補最後一筆
+            //         入庫明細 tab 讀此表，不補則畫面看不到剩餘母捲
+            await _upsert('dispatch_return_items',{
+              id:'DRI-REM-'+c.id, returnId:drId, dispatchId:dspId,
+              orderId:'', orderItemNo:'9990',
+              model:model, spec:c.spec||'',
+              qty:1, totalWeight:remainKg,
+              inBatchNo:bn,
+              inboundNo:retWh,
+              remark:'委外剩餘母捲回倉 批號:'+bn+' '+txId,
+              closed:1,
+            }).catch(function(e){ _errs.push('DRI-REM:'+String(e.message||e)); });
+
             // 5b-2. warehouse_stock 加回
             var wsTo = await _get('warehouse_stock',{model:'eq.'+model,warehouseNo:'eq.'+retWh}).catch(function(){return[];});
             if(wsTo&&wsTo[0]){
