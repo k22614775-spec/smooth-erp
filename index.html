@@ -2057,8 +2057,9 @@ function switchTopMode(mode) {
         const m=r[0]; if(!m) throw new Error('找不到 coilMove: '+moveId);
         const loadKg=Number(m.loadWeight)||0;
         const deductKg=loadKg>0?Math.max(0,loadKg-unloadKg):Number(m.qty);
-        await _patch('dispatch_coil_moves',{'id':'eq.'+moveId},{unloadWeight:unloadKg,qty:deductKg});
-        return {ok:true,deductKg};
+        // [Fix C] 只更新下架磅重，不覆蓋 qty（qty 保留原件數，避免顯示混亂）
+        await _patch('dispatch_coil_moves',{'id':'eq.'+moveId},{unloadWeight:unloadKg});
+        return {ok:true};
       }), cb, errCb);
     },
     addLeftoverInbound: function(dispatchId, leftover, cb, errCb){
@@ -2081,10 +2082,19 @@ function switchTopMode(mode) {
       var lvModel = row.model || lv.model || '';
       // returnId 固定格式 'R'+dispatchId（與 endDispatch 建立的 dispatch_returns.id 一致）
       var retId   = 'R' + dispatchId;
-      // [Fix] 批號加 -A 標示餘料身份
-      var loBatchNo = (row.batchNo || '') + '-A';
-      row.batchNo = loBatchNo;
+      // [Fix D] 批號：原鋼捲編號 + H/A/B/C（依序查無既有 LEFTOVER 記錄為準）
       _cb((async function(){
+        var _coilNo = lv.originalRollNo || (row.batchNo || '').replace(/^LEFT-/,'') || '';
+        var _sfxList = ['H','A','B','C','D','E','F','G'];
+        var loBatchNo = (_coilNo || 'LO') + 'H';
+        if (_coilNo) {
+          for (var _si=0; _si<_sfxList.length; _si++) {
+            var _tb = _coilNo + _sfxList[_si];
+            var _ex = await _get('stock_moves',{'batchNo':'eq.'+_tb,'refType':'eq.LEFTOVER','limit':'1'});
+            if (!_ex || !_ex.length) { loBatchNo = _tb; break; }
+          }
+        }
+        row.batchNo = loBatchNo;
         await _upsert('stock_moves', row);
         if (lvModel && normalizedTotal > 0) {
           // 更新 warehouse_stock
@@ -2261,26 +2271,26 @@ function switchTopMode(mode) {
           const _consumedKg = Math.max(0, _loadKg - _unloadKg);  // e.g. 6000-5000=1000
           const _batchNo    = m.outBatchNo||m.outbatchno||'';
           const _model      = m.model||'';
-          // stock_moves：OUT 從產線倉（全量 loadKg 離開產線倉；消耗量由 dispatch_return_deduct 記錄）
+          // stock_moves：OUT 從產線倉（消耗量，剩料歸回由 section C 另行處理）
           await _upsert('stock_moves',{
             id: _uid('SM'), moveDate: new Date().toLocaleDateString('zh-TW'),
             moveType:'OUT', refType:'DISPATCH_END', refId:returnId,
             model:m.model, batchNo:m.outBatchNo||m.outbatchno||'',
             warehouse:_deductWarehouse, location:_deductLoc,
-            qty:1, total:_loadKg, unit:m.unit||'KG',
+            qty:1, total:_consumedKg, unit:m.unit||'KG',
             originalRollNo:m.originalRollNo||m.originalrollno||'',
             operator:opts.operator||'',
-            remark:'派工結束扣庫（產線倉），派工單 ' + dispatchId,
+            remark:'派工結束消耗扣庫（產線倉），派工單 ' + dispatchId,
           }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
 
-          // ── 同步更新庫存三表（產線倉扣減）──────────────────────
-          // (A) 產線倉 warehouse_stock 扣減全量（鋼捲整件離開產線倉，剩料由 section C 回補鋼捲倉）
-          if (_loadKg > 0)
-            await _adjustWarehouseStock(_model, _deductWarehouse, -1, -_loadKg).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+          // ── 同步更新庫存三表（產線倉扣減消耗量）─────────────────
+          // (A) 產線倉 warehouse_stock 扣減消耗量（件數 -1，重量僅扣消耗部分；剩料由 section C 歸回）
+          if (_consumedKg > 0)
+            await _adjustWarehouseStock(_model, _deductWarehouse, -1, -_consumedKg).catch(function(e){ console.warn('非致命寫入失敗:', e); });
 
-          // (B) 產線倉 batch_detail 扣減全量
-          if (_batchNo && _loadKg > 0)
-            await _adjustBatchDetail(_model, _deductWarehouse, _batchNo, _deductLoc, -1, -_loadKg, null).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+          // (B) 產線倉 batch_detail 扣減消耗量
+          if (_batchNo && _consumedKg > 0)
+            await _adjustBatchDetail(_model, _deductWarehouse, _batchNo, _deductLoc, -1, -_consumedKg, null).catch(function(e){ console.warn('非致命寫入失敗:', e); });
 
           // (C) 若有下架剩料，歸回鋼捲倉
           const _srcWH = m.outWarehouse||m.outwarehouse||'鋼捲倉';
@@ -2299,6 +2309,19 @@ function switchTopMode(mode) {
             }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
             await _adjustWarehouseStock(_model, _srcWH, 0, +_unloadKg).catch(function(e){ console.warn('非致命寫入失敗:', e); });
             await _adjustBatchDetail(_model, _srcWH, _batchNo, _srcLoc, 0, +_unloadKg, null).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+            // (C-2) 産線倉同步扣除歸回量（重量調撥，件數不動）
+            await _upsert('stock_moves',{
+              id:_uid('SM'), moveDate:today2,
+              moveType:'OUT', refType:'DISPATCH_RETURN', refId:returnId,
+              model:_model, batchNo:_batchNo,
+              warehouse:_deductWarehouse, location:_deductLoc,
+              qty:0, total:_unloadKg, unit:m.unit||'KG',
+              originalRollNo:m.originalRollNo||m.originalrollno||'',
+              operator:opts.operator||'',
+              remark:'派工剩料從産線倉歸回鋼捲倉（重量調撥），回單 '+returnId,
+            }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+            await _adjustWarehouseStock(_model, _deductWarehouse, 0, -_unloadKg).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+            await _adjustBatchDetail(_model, _deductWarehouse, _batchNo, _deductLoc, 0, -_unloadKg, null).catch(function(e){ console.warn('非致命寫入失敗:', e); });
           }
           // ─────────────────────────────────────────────────────────
 
