@@ -2077,7 +2077,38 @@ function switchTopMode(mode) {
       }, lv, {
         total: normalizedTotal,       // 確保覆蓋 lv.total（若 lv 只有 weight）
       });
-      _cb(_upsert('stock_moves',row).then(function(){ return {ok:true}; }), cb, errCb);
+      var inWh    = row.inWarehouse || lv.inWarehouse || '鋼帶倉';
+      var lvModel = row.model || lv.model || '';
+      // returnId 固定格式 'R'+dispatchId（與 endDispatch 建立的 dispatch_returns.id 一致）
+      var retId   = 'R' + dispatchId;
+      // [Fix] 批號加 -A 標示餘料身份
+      var loBatchNo = (row.batchNo || '') + '-A';
+      row.batchNo = loBatchNo;
+      _cb((async function(){
+        await _upsert('stock_moves', row);
+        if (lvModel && normalizedTotal > 0) {
+          // 更新 warehouse_stock
+          await _adjustWarehouseStock(lvModel, inWh, +1, +normalizedTotal).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+          // 更新 batch_detail
+          await _adjustBatchDetail(lvModel, inWh, loBatchNo, '', +1, +normalizedTotal, {
+            detailRemark: '折工取料餘料入庫 派工 ' + dispatchId,
+          }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+          // 寫入派工回單入庫明細（入庫明細 tab 讀此表）
+          await _upsert('dispatch_return_items', {
+            id: 'DRI-LO-' + dispatchId,
+            returnId: retId, dispatchId: dispatchId,
+            orderId: '', orderItemNo: '9999',
+            model: lvModel, spec: lv.spec || '',
+            qty: 1, totalWeight: normalizedTotal, totalLen: normalizedTotal,
+            unit: lv.unit || 'KG',
+            inBatchNo: loBatchNo,
+            inboundNo: inWh,
+            remark: lv.remark || ('折工取料餘料入庫 派工 ' + dispatchId),
+            closed: 1,
+          }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+        }
+        return {ok:true};
+      })(), cb, errCb);
     },
     addReporterSession: function(dispatchId, reporters, opts, cb, errCb){
       const row={id:_uid('RS'),dispatchId,reporters,machine:(opts||{}).machine||'',
@@ -2195,25 +2226,26 @@ function switchTopMode(mode) {
           const moveId=String(m.id||m.moveId||'');
           if(coilUnloadWeights[moveId]!==undefined){
             const unloadKg=parseFloat(coilUnloadWeights[moveId])||0;
-            const loadKg=parseFloat(m.loadWeight||m.total||0);
-            const deductKg=loadKg>0?Math.max(0,loadKg-unloadKg):parseFloat(m.total||0);
-            await _patch('dispatch_coil_moves',{'id':'eq.'+moveId},{unloadWeight:unloadKg,qty:deductKg});
+            // [Fix] 只更新下架磅重，不覆蓋 qty（qty 應保持原件數，避免顯示混亂）
+            await _patch('dispatch_coil_moves',{'id':'eq.'+moveId},{unloadWeight:unloadKg});
           }
         }
         const moves2=await _get('dispatch_coil_moves',{'dispatchId':'eq.'+dispatchId});
-        const totalIn=moves2.reduce(function(s,m){ return s+(parseFloat(m.loadWeight||m.total)||0); },0);
+        // [Fix] 語意修正：totalPickedKg=領料(loadWeight)；totalReturnKg=入庫(unload+餘料)
+        const totalPickedKg=moves2.reduce(function(s,m){ return s+(parseFloat(m.loadWeight||m.total)||0); },0);
         const coilUnloadKg=moves2.reduce(function(s,m){ return s+(parseFloat(m.unloadWeight)||0); },0);
         const leftoverMoves=await _get('stock_moves',{'refType':'eq.LEFTOVER','refId':'eq.'+dispatchId,'moveType':'eq.IN'});
         const leftoverKg=leftoverMoves.reduce(function(s,m){ return s+(parseFloat(m.total||m.weight||m.qty)||0); },0);
-        const totalDeductKg=coilUnloadKg+leftoverKg;
-        const lossRate=totalIn>0?+(totalDeductKg/totalIn*100).toFixed(2):0;
+        const totalReturnKg=coilUnloadKg+leftoverKg;
+        const totalConsumedKg=Math.max(0,totalPickedKg-totalReturnKg);
+        const lossRate=totalPickedKg>0?+(totalConsumedKg/totalPickedKg*100).toFixed(2):0;
         await _upsert('dispatch_returns',{id:returnId,dispatchId,
           date:new Date().toLocaleDateString('zh-TW'),docCategory:'回單',
           orderId:dh.orderId,partnerCode:dh.partnerCode||dh.partnercode,
           partnerName:dh.partnerName||dh.partnername,
           operator:(opts.operator||dh.operator||'').slice(0,500),machine:dh.machine,
           finishTime:opts.finishTime||_nowLocal(),
-          totalIn,totalDeduct:totalDeductKg,lossRate,remark:opts.remark||'',
+          totalDeduct:totalPickedKg,totalIn:totalReturnKg,lossRate,remark:opts.remark||'',
           dispatchRemark:opts.dispatchRemark||'',effectiveWorkHours:autoWorkHours,pausedHours:autoPausedHours,
           status:'closed',createdAt:now,updatedAt:now});
         _written.returnCreated=true;
@@ -2223,32 +2255,32 @@ function switchTopMode(mode) {
           // 派工回單扣庫：出倉 = 產線倉（鋼捲已在產線倉，派工結束後從產線倉扣除）
           const _deductWarehouse = m.inWarehouse||m.inwarehouse||'產線倉';
           const _deductLoc       = m.inLocation||m.inlocation||'';
-          // stock_moves：OUT 從產線倉（扣除已消耗量）
+          // [Fix] 計算實際消耗量 = 上架磅重 − 下架磅重（而非 qty 欄位，qty 已保留原件數）
+          const _loadKg     = parseFloat(m.loadWeight||m.total||0);
+          const _unloadKg   = parseFloat(m.unloadWeight||m.unloadweight||0);
+          const _consumedKg = Math.max(0, _loadKg - _unloadKg);  // e.g. 6000-5000=1000
+          const _batchNo    = m.outBatchNo||m.outbatchno||'';
+          const _model      = m.model||'';
+          // stock_moves：OUT 從產線倉（全量 loadKg 離開產線倉；消耗量由 dispatch_return_deduct 記錄）
           await _upsert('stock_moves',{
             id: _uid('SM'), moveDate: new Date().toLocaleDateString('zh-TW'),
             moveType:'OUT', refType:'DISPATCH_END', refId:returnId,
             model:m.model, batchNo:m.outBatchNo||m.outbatchno||'',
             warehouse:_deductWarehouse, location:_deductLoc,
-            qty:m.qty, total:m.total||0, unit:m.unit||'KG',
+            qty:1, total:_loadKg, unit:m.unit||'KG',
             originalRollNo:m.originalRollNo||m.originalrollno||'',
             operator:opts.operator||'',
             remark:'派工結束扣庫（產線倉），派工單 ' + dispatchId,
           }).catch(function(e){ console.warn('非致命寫入失敗:', e); });
 
           // ── 同步更新庫存三表（產線倉扣減）──────────────────────
-          const _consumedQty   = parseFloat(m.qty||0);
-          const _consumedTotal = parseFloat(m.total||0);
-          const _unloadKg      = parseFloat(m.unloadWeight||m.unloadweight||0);
-          const _batchNo       = m.outBatchNo||m.outbatchno||'';
-          const _model         = m.model||'';
+          // (A) 產線倉 warehouse_stock 扣減全量（鋼捲整件離開產線倉，剩料由 section C 回補鋼捲倉）
+          if (_loadKg > 0)
+            await _adjustWarehouseStock(_model, _deductWarehouse, -1, -_loadKg).catch(function(e){ console.warn('非致命寫入失敗:', e); });
 
-          // (A) 產線倉 warehouse_stock 扣減消耗量
-          if (_consumedQty > 0 || _consumedTotal > 0)
-            await _adjustWarehouseStock(_model, _deductWarehouse, -_consumedQty, -_consumedTotal).catch(function(e){ console.warn('非致命寫入失敗:', e); });
-
-          // (B) 產線倉 batch_detail 扣減消耗量
-          if (_batchNo && (_consumedQty > 0 || _consumedTotal > 0))
-            await _adjustBatchDetail(_model, _deductWarehouse, _batchNo, _deductLoc, -_consumedQty, -_consumedTotal, null).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+          // (B) 產線倉 batch_detail 扣減全量
+          if (_batchNo && _loadKg > 0)
+            await _adjustBatchDetail(_model, _deductWarehouse, _batchNo, _deductLoc, -1, -_loadKg, null).catch(function(e){ console.warn('非致命寫入失敗:', e); });
 
           // (C) 若有下架剩料，歸回鋼捲倉
           const _srcWH = m.outWarehouse||m.outwarehouse||'鋼捲倉';
@@ -2274,7 +2306,7 @@ function switchTopMode(mode) {
             coilMoveId:m.id||m.moveId,model:m.model,
             batchNo:m.outBatchNo||m.outbatchno,
             warehouse:_deductWarehouse, location:_deductLoc,
-            qty:m.qty,total:m.total,
+            qty:1,total:_consumedKg,
             unit:m.unit,originalRollNo:m.originalRollNo||m.originalrollno,createdAt:now});
           deductCount++;
         }
