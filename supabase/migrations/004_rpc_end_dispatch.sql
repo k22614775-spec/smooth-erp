@@ -35,6 +35,7 @@ DECLARE
   v_dd_id             TEXT;
   v_prod              RECORD;
   v_lbl               RECORD;
+  v_lo_sm             RECORD;
   v_item_id           TEXT;
   v_item_cnt          INT         := 0;
   v_label_cnt         INT         := 0;
@@ -301,6 +302,42 @@ BEGIN
       ) ON CONFLICT DO NOTHING;
       v_item_cnt := v_item_cnt + 1;
     END LOOP;
+  END IF;
+
+  -- [Fix E] 餘料入庫明細：讀 stock_moves LEFTOVER 記錄，補入 dispatch_return_items
+  --         （addLeftoverInbound 已寫入，但 returnId 可能因大小寫未正確對應；
+  --           RPC 用 quoted 欄位名確保 "returnId" 正確寫入，ON CONFLICT DO UPDATE 補正既有記錄）
+  SELECT * INTO v_lo_sm FROM stock_moves
+  WHERE "refType" = 'LEFTOVER' AND "refId" = p_dispatch_id AND "moveType" = 'IN'
+  ORDER BY id LIMIT 1;
+
+  IF FOUND THEN
+    INSERT INTO dispatch_return_items (
+      id, "returnId", "dispatchId",
+      "orderId", "orderItemNo",
+      model, spec,
+      qty, "totalLen", "totalWeight", unit,
+      "inBatchNo",
+      operator, remark, closed
+    ) VALUES (
+      'DRI-LO-' || p_dispatch_id,
+      v_return_id, p_dispatch_id,
+      '', '9999',
+      COALESCE(v_lo_sm.model, ''), '',
+      0,
+      COALESCE(v_lo_sm.total, 0),
+      COALESCE(v_lo_sm.total, 0),
+      COALESCE(v_lo_sm.unit, 'KG'),
+      COALESCE(v_lo_sm."batchNo", ''),
+      COALESCE(v_lo_sm.operator, p_operator),
+      '餘料入庫 ' || COALESCE(v_lo_sm."batchNo", ''),
+      1
+    ) ON CONFLICT (id) DO UPDATE SET
+      "returnId"    = EXCLUDED."returnId",
+      "totalLen"    = EXCLUDED."totalLen",
+      "totalWeight" = EXCLUDED."totalWeight",
+      "inBatchNo"   = EXCLUDED."inBatchNo",
+      remark        = EXCLUDED.remark;
   END IF;
 
   UPDATE dispatch_orders
