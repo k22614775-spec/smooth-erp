@@ -11720,6 +11720,11 @@ window.addEventListener('DOMContentLoaded', function(){
       // activeDispatch: { id, orderId } | null — 從 App 傳入的目前派工單狀態
       // reporterStatus: 'active' | 'paused' | null — 回報人員段狀態
       // reporterSession: 目前段的物件 (reporters, startTime 用來顯示)
+      const [filterMachine, setFilterMachine] = useState('');
+      const filteredOrders = filterMachine
+        ? orders.filter(function(o){ return String(o.machine || '').toLowerCase().indexOf(filterMachine.toLowerCase()) !== -1; })
+        : orders;
+
       const updateLocalOrder = (id, field, value) => {
         setOrders(orders.map(o => o.id === id ? { ...o, [field]: value } : o));
       };
@@ -11743,7 +11748,13 @@ window.addEventListener('DOMContentLoaded', function(){
           {/* Search Filters */}
           <div className="bg-[#e8f0fe] p-3 flex border-b border-blue-200">
             <div className="grid grid-cols-3 gap-x-6 gap-y-3 flex-1 max-w-6xl">
-              <FormField label="機台編號" value="清板" dropdownIcon={true} />
+              <div className="flex items-center space-x-2 text-sm">
+                <label className="w-20 text-right text-gray-700 shrink-0">機台編號</label>
+                <input type="text" value={filterMachine}
+                  onChange={function(e){ setFilterMachine(e.target.value); }}
+                  placeholder="輸入機台篩選…"
+                  className="flex-1 bg-white border border-blue-300 rounded py-1 px-2 outline-none focus:border-blue-600 focus:border-2" />
+              </div>
               <FormField label="客戶" value="" showButton={true} />
               <FormField label="品名" value="" showButton={true} />
 
@@ -11899,7 +11910,7 @@ window.addEventListener('DOMContentLoaded', function(){
                 </tr>
               </thead>
               <tbody>
-                {orders.map((order) => {
+                {filteredOrders.map((order) => {
                   const isSelected = selectedOrderId === order.id;
                   return (
                     <tr key={order.id} onClick={() => setSelectedOrderId(order.id)} className={`cursor-pointer border-b border-gray-200 ${isSelected ? 'bg-[#3b82f6] text-white' : 'hover:bg-blue-50'}`}>
@@ -12344,24 +12355,9 @@ window.addEventListener('DOMContentLoaded', function(){
                  }
                </div>
 
-               {/* 鋼捲按鈕：折工 (phase=FOLD) 不需上鋼捲，按下時擋下 */}
-               <button onClick={() => {
-                 var phase = (headerData && headerData.dispatchPhase) || window.__currentDispatchPhase;
-                 if (phase === 'FOLD') {
-                   return alert('此派工單為折工 (method=4)，不需上鋼捲。');
-                 }
-                 setShowCoilModal(true);
-               }} className="flex-1 bg-gradient-to-b from-[#e0f7fa] to-[#a5d6a7] text-black flex flex-col items-center justify-center font-bold text-sm shadow-sm border border-[#a5d6a7] rounded-sm">
-                 <span>鋼捲</span><span className="text-xs font-normal">gulungan baja QRCode</span>
-               </button>
+
 
                {/* 根據 mode 判斷顯示的按鈕 */}
-               {/* 鋼捲未上架提示列 */}
-               {mode === 'order' && !coilLoaded && (
-                 <div className="flex-1 bg-yellow-100 border border-yellow-400 text-yellow-800 flex flex-col items-center justify-center font-bold text-xs rounded-sm px-1 text-center">
-                   <span>⚠️ 請先</span><span>上架鋼捲</span>
-                 </div>
-               )}
                {mode === 'order' && (
                  <button onClick={() => {
                    // 流程檢查
@@ -12407,7 +12403,7 @@ window.addEventListener('DOMContentLoaded', function(){
                  </button>
                )}
 
-               <button className="flex-1 bg-[#d50000] hover:bg-[#b71c1c] text-white flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm"><span>傳輸機台</span><span className="text-xs font-normal">mesin transmisi</span></button>
+
 
                {mode === 'order' && (
                  <button onClick={() => {
@@ -12493,10 +12489,7 @@ window.addEventListener('DOMContentLoaded', function(){
                  </button>
                )}
 
-               {/* 捷徑按鈕：過磅 */}
-               <button onClick={() => setShowCoilModal(true)} className="flex-1 bg-orange-500 hover:bg-orange-600 text-white flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm">
-                 <span>過磅</span><span className="text-xs font-normal">menimbang</span>
-               </button>
+
 
                <button onClick={onBack} className="flex-1 bg-black hover:bg-gray-800 text-white flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm"><span>返回</span><span className="text-xs font-normal">kembali</span></button>
             </div>
