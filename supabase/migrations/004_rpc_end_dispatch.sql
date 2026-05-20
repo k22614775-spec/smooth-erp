@@ -55,14 +55,11 @@ BEGIN
     TO_CHAR(NOW() AT TIME ZONE 'Asia/Taipei', 'YYYY/MM/DD HH24:MI:SS'));
   v_epoch           := EXTRACT(EPOCH FROM v_now)::BIGINT;
 
+  -- [Fix C] 只更新下架磅重，不覆蓋 qty（qty 保留原件數 = 1件，避免顯示混亂）
   FOR v_move IN SELECT * FROM dispatch_coil_moves WHERE "dispatchId" = p_dispatch_id LOOP
     v_unload_kg := (p_coil_unload_weights ->> v_move.id)::NUMERIC;
     IF v_unload_kg IS NOT NULL THEN
-      v_load_kg   := COALESCE(v_move."loadWeight", v_move.total, 0);
-      v_deduct_kg := CASE
-        WHEN v_load_kg > 0 THEN GREATEST(0, v_load_kg - v_unload_kg)
-        ELSE COALESCE(v_move.total, 0) END;
-      UPDATE dispatch_coil_moves SET "unloadWeight" = v_unload_kg, qty = v_deduct_kg
+      UPDATE dispatch_coil_moves SET "unloadWeight" = v_unload_kg
       WHERE id = v_move.id;
     END IF;
   END LOOP;
@@ -125,9 +122,16 @@ BEGIN
     "effectiveWorkHours" = EXCLUDED."effectiveWorkHours",
     "updatedAt"          = v_now;
 
+  -- [Fix A] 第二迴圈：以 consumedKg 扣産線倉，section C 補扣産線倉歸回量
   FOR v_move IN SELECT * FROM dispatch_coil_moves WHERE "dispatchId" = p_dispatch_id LOOP
     v_dd_id := 'DD' || v_epoch::TEXT || v_deduct_count::TEXT;
 
+    -- [Fix A] 計算實際消耗量 = 上架磅重 − 下架磅重
+    v_load_kg   := COALESCE(v_move."loadWeight", v_move.total, 0);
+    v_unload_kg := COALESCE(v_move."unloadWeight", 0);
+    v_deduct_kg := GREATEST(0, v_load_kg - v_unload_kg);  -- consumedKg，例如 6000-5000=1000
+
+    -- dispatch_return_deduct：qty=原件數(1)，total=consumedKg(1000)
     INSERT INTO dispatch_return_deduct (
       id, "returnId", "dispatchId", "coilMoveId",
       model, "batchNo", warehouse, location,
@@ -141,7 +145,7 @@ BEGIN
       v_move.model, v_move."outBatchNo",
       COALESCE(v_move."inWarehouse",'產線倉'),
       COALESCE(v_move."inLocation",''),
-      v_move.qty, v_move.total, COALESCE(v_move.unit,'KG'),
+      v_move.qty, v_deduct_kg, COALESCE(v_move.unit,'KG'),
       v_move."originalRollNo", v_move.spec,
       v_move."materialNo", v_move."costBasis", v_move."materialPrice",
       v_move.factory, v_move.formula, v_move."unitWeight",
@@ -149,6 +153,7 @@ BEGIN
       v_move."furnaceNo", v_move."dispatchSeq", v_now
     ) ON CONFLICT DO NOTHING;
 
+    -- stock_moves OUT：産線倉消耗量離開
     v_sm_id := 'SM_DD_' || v_epoch::TEXT || v_deduct_count::TEXT;
     INSERT INTO stock_moves (
       id, "moveDate", "moveType", "refType", "refId",
@@ -159,30 +164,30 @@ BEGIN
       v_move.model, v_move."outBatchNo",
       COALESCE(v_move."inWarehouse",'產線倉'),
       COALESCE(v_move."inLocation",''),
-      v_move.qty, v_move.total, COALESCE(v_move.unit,'KG'),
+      v_move.qty, v_deduct_kg, COALESCE(v_move.unit,'KG'),
       COALESCE(v_move."originalRollNo",''), p_operator,
-      '派工結束扣庫（產線倉），派工單 ' || p_dispatch_id
+      '派工結束消耗扣庫（產線倉），派工單 ' || p_dispatch_id
     ) ON CONFLICT DO NOTHING;
 
-    -- warehouse_stock：產線倉扣減消耗量
+    -- (A) warehouse_stock：産線倉扣減消耗量（件數 -1，重量 -consumedKg）
     UPDATE warehouse_stock
       SET qty   = GREATEST(0, qty   - v_move.qty),
-          total = GREATEST(0, total - v_move.total),
+          total = GREATEST(0, total - v_deduct_kg),
           "moveDate" = v_date_str
     WHERE model = v_move.model
       AND "warehouseNo" = COALESCE(v_move."inWarehouse", '產線倉');
 
-    -- batch_detail：產線倉批號扣減
+    -- (B) batch_detail：産線倉批號扣減消耗量
     UPDATE batch_detail
       SET qty   = GREATEST(0, qty   - v_move.qty),
-          total = GREATEST(0, total - v_move.total)
+          total = GREATEST(0, total - v_deduct_kg)
     WHERE model = v_move.model
       AND "warehouseNo" = COALESCE(v_move."inWarehouse", '產線倉')
       AND "batchNo" = COALESCE(v_move."outBatchNo", '');
 
-    -- 若有下架剩料 (unloadWeight > 0)，歸回鋼捲倉
-    IF COALESCE(v_move."unloadWeight", 0) > 0 THEN
-      -- stock_moves：IN 鋼捲倉（剩料歸回）
+    -- (C) 若有下架剩料，歸回鋼捲倉，並同步從産線倉扣除歸回量
+    IF v_unload_kg > 0 THEN
+      -- (C-1) stock_moves IN：鋼捲倉歸回剩料
       INSERT INTO stock_moves (
         id, "moveDate", "moveType", "refType", "refId",
         model, "batchNo", warehouse, location,
@@ -193,23 +198,53 @@ BEGIN
         v_move.model, COALESCE(v_move."outBatchNo",''),
         COALESCE(v_move."outWarehouse",'鋼捲倉'),
         COALESCE(v_move."outLocation",''),
-        0, v_move."unloadWeight", COALESCE(v_move.unit,'KG'),
+        0, v_unload_kg, COALESCE(v_move.unit,'KG'),
         COALESCE(v_move."originalRollNo",''), p_operator,
         '派工剩料歸回鋼捲倉，回單 ' || v_return_id
       ) ON CONFLICT DO NOTHING;
 
-      -- warehouse_stock：鋼捲倉歸回剩料重量
+      -- (C-1) warehouse_stock：鋼捲倉歸回剩料重量
       UPDATE warehouse_stock
-        SET total = total + v_move."unloadWeight",
+        SET total = total + v_unload_kg,
             "moveDate" = v_date_str
       WHERE model = v_move.model
         AND "warehouseNo" = COALESCE(v_move."outWarehouse",'鋼捲倉');
 
-      -- batch_detail：鋼捲倉批號歸回
+      -- (C-1) batch_detail：鋼捲倉批號歸回
       UPDATE batch_detail
-        SET total = total + v_move."unloadWeight"
+        SET total = total + v_unload_kg
       WHERE model = v_move.model
         AND "warehouseNo" = COALESCE(v_move."outWarehouse",'鋼捲倉')
+        AND "batchNo" = COALESCE(v_move."outBatchNo",'');
+
+      -- [Fix B] (C-2) stock_moves OUT：産線倉扣除歸回量（重量調撥，件數不動）
+      INSERT INTO stock_moves (
+        id, "moveDate", "moveType", "refType", "refId",
+        model, "batchNo", warehouse, location,
+        qty, total, unit, "originalRollNo", operator, remark
+      ) VALUES (
+        'SM_RET_OUT_' || v_epoch::TEXT || v_deduct_count::TEXT,
+        v_date_str, 'OUT', 'DISPATCH_RETURN', v_return_id,
+        v_move.model, COALESCE(v_move."outBatchNo",''),
+        COALESCE(v_move."inWarehouse",'產線倉'),
+        COALESCE(v_move."inLocation",''),
+        0, v_unload_kg, COALESCE(v_move.unit,'KG'),
+        COALESCE(v_move."originalRollNo",''), p_operator,
+        '派工剩料從産線倉歸回鋼捲倉（重量調撥），回單 ' || v_return_id
+      ) ON CONFLICT DO NOTHING;
+
+      -- [Fix B] (C-2) warehouse_stock：産線倉扣除歸回量（weight only）
+      UPDATE warehouse_stock
+        SET total = GREATEST(0, total - v_unload_kg),
+            "moveDate" = v_date_str
+      WHERE model = v_move.model
+        AND "warehouseNo" = COALESCE(v_move."inWarehouse",'產線倉');
+
+      -- [Fix B] (C-2) batch_detail：産線倉批號扣除歸回量
+      UPDATE batch_detail
+        SET total = GREATEST(0, total - v_unload_kg)
+      WHERE model = v_move.model
+        AND "warehouseNo" = COALESCE(v_move."inWarehouse",'產線倉')
         AND "batchNo" = COALESCE(v_move."outBatchNo",'');
     END IF;
 
