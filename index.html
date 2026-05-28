@@ -13225,6 +13225,53 @@ window.addEventListener('DOMContentLoaded', function(){
                         }));
                         setGlobalLabels(prev => [...prev, ...enhancedLabels]);
 
+                        // ★ 寫入 Supabase labels 表（讓條碼標籤報工掃描得到）
+                        if (window.API && typeof window.API.saveLabel === 'function') {
+                          var _rawId = String(headerData.id || '');
+                          var _parts = _rawId.split('-');
+                          var _orderIdPure = _parts.length > 1 ? _parts.slice(0,-1).join('-') : _rawId;
+                          var _itemNoPure  = _parts.length > 1 ? _parts[_parts.length-1] : '';
+                          var _savedCount = 0, _saveErrs = [];
+                          enhancedLabels.forEach(function(l){
+                            // qty 字串 "5 片" → 5 ; totalLen "10.5 尺" → 10.5
+                            var _qtyNum = parseFloat(String(l.qty || '').replace(/[^0-9.\-]/g,'')) || 0;
+                            var _lenNum = parseFloat(String(l.totalLen || '').replace(/[^0-9.\-]/g,'')) || 0;
+                            var _wNum   = (l.items || []).reduce(function(s, it){ return s + (parseFloat(it.kg)||0); }, 0);
+                            var _payload = {
+                              id:            l.id,
+                              labelNo:       l.id,
+                              orderId:       _orderIdPure,
+                              orderItemNo:   _itemNoPure,
+                              machine:       headerData.machine || '',
+                              customerShort: headerData.customerShort || '',
+                              model:         headerData.model || '',
+                              spec:          headerData.spec || '',
+                              qty:           _qtyNum,
+                              totalLen:      Math.round(_lenNum*100)/100,
+                              totalWeight:   Math.round(_wNum*100)/100,
+                              unit:          '台尺',
+                              createTime:    createTime,
+                              startTime:     '',
+                              endTime:       '',
+                              operator:      '',
+                              status:        'open',
+                              remark:        '標籤報工模式產出（待條碼標籤報工補底板）'
+                            };
+                            window.API.saveLabel(_payload, function(){
+                              _savedCount++;
+                              if (_savedCount + _saveErrs.length === enhancedLabels.length && _saveErrs.length) {
+                                alert('部分標籤寫入失敗：\n' + _saveErrs.join('\n'));
+                              }
+                            }, function(err){
+                              _saveErrs.push(l.id + ': ' + (err && err.message || err));
+                              console.error('[saveLabel 失敗]', l.id, err);
+                              if (_savedCount + _saveErrs.length === enhancedLabels.length) {
+                                alert('部分標籤寫入失敗：\n' + _saveErrs.join('\n'));
+                              }
+                            });
+                          });
+                        }
+
                         setShowLabelModal(false);
                         setRightList([]); // 列印完成後清除右側資料
                      }} className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded text-sm flex items-center">
