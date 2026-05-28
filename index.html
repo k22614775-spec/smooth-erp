@@ -2062,6 +2062,67 @@ function switchTopMode(mode) {
         return {ok:true};
       }), cb, errCb);
     },
+    // ── 條碼標籤報工：建立跨訂單派工容器（orderId 留空，docType='LABEL_REPORT'）──
+    createLabelReportDispatch: function(opts, cb, errCb){
+      opts = opts || {};
+      _cb((async function(){
+        var allDisp = await _get('dispatch_orders',{'select':'id','order':'id.desc','limit':'1'});
+        var d=new Date();
+        var y=d.getFullYear()-1911;
+        var mm=String(d.getMonth()+1).padStart(2,'0');
+        var dd=String(d.getDate()).padStart(2,'0');
+        var prefix=y+''+mm+dd;
+        var maxSeq=0;
+        if(allDisp.length){ var last=String(allDisp[0].id||''); if(last.startsWith(prefix)) maxSeq=parseInt(last.slice(prefix.length),10)||0; }
+        var newId='D'+prefix+String(maxSeq+1).padStart(3,'0');
+        var now=_nowIso();
+        var disp={
+          id:newId, date:new Date().toLocaleDateString('zh-TW'),
+          docCategory:'派工', docType:'LABEL_REPORT',
+          source:opts.source||'條碼標籤報工',
+          orderId:'', partnerCode:'', partnerName:'',
+          operator:opts.operator||'', machine:opts.machine||'', phase:'',
+          receiveTime:now, status:'active', createdAt:now, updatedAt:now,
+          remark:opts.remark||'條碼標籤報工（跨訂單）'
+        };
+        await _upsert('dispatch_orders',disp);
+        if(opts.operator){
+          var rs={
+            id:_uid('RS'), dispatchId:newId,
+            reporters:opts.operator, machine:opts.machine||'',
+            startTime:_nowLocal(), status:'active',
+            createdAt:now, updatedAt:now
+          };
+          await _upsert('dispatch_return_reporters',rs);
+        }
+        return {ok:true, id:newId, dispatchId:newId};
+      })(), cb, errCb);
+    },
+    attachLabelToDispatch: function(labelId, dispatchId, opts, cb, errCb){
+      opts=opts||{};
+      var payload={
+        dispatchId:dispatchId,
+        startTime:opts.startTime||_nowLocal(),
+        endTime:opts.endTime||_nowLocal(),
+        operator:opts.operator||'',
+        status:opts.status||'reported'
+      };
+      _cb(_patch('labels',{'id':'eq.'+labelId},payload).then(function(){ return {ok:true,id:labelId}; }), cb, errCb);
+    },
+    detachLabelFromDispatch: function(labelId, cb, errCb){
+      _cb(_patch('labels',{'id':'eq.'+labelId},{
+        dispatchId:null, startTime:null, endTime:null, status:'open'
+      }).then(function(){ return {ok:true,id:labelId}; }), cb, errCb);
+    },
+    findLabelByCode: function(code, cb, errCb){
+      var q=String(code||'').trim();
+      _cb((async function(){
+        var rows=await _get('labels',{'id':'eq.'+q,'limit':'1'}).catch(function(){ return []; });
+        if(rows && rows.length) return rows[0];
+        rows=await _get('labels',{'labelNo':'eq.'+q,'limit':'1'}).catch(function(){ return []; });
+        return (rows && rows[0]) || null;
+      })(), cb, errCb);
+    },
     addLeftoverInbound: function(dispatchId, leftover, cb, errCb){
       var lv = leftover || {};
       // 統一 weight → total（FoldingWizard 傳 weight，endDispatch 讀 total）
@@ -9358,7 +9419,7 @@ window.addEventListener('DOMContentLoaded', function(){
 
           {mainTab === 'progress' && <ProgressBoard orders={orders} />}
           {mainTab === 'labels' && <LabelsBoard labels={globalLabels} />}
-          {mainTab === 'mobile_report' && <MobileLabelReport globalLabels={globalLabels} setGlobalLabels={setGlobalLabels} onBack={() => setMainTab('cut')} />}
+          {mainTab === 'mobile_report' && <LabelReportApp onBack={() => setMainTab('cut')} />}
           {mainTab === 'folding_wizard' && <FoldingWizard orders={orders} />}
           {mainTab === 'folding_report' && <FoldingReportWizard orders={orders} setGlobalLabels={setGlobalLabels} />}
           {mainTab === 'outsource_out'    && <OutsourceOut />}
@@ -9462,194 +9523,791 @@ window.addEventListener('DOMContentLoaded', function(){
       );
     }
 
-    // --- 條碼標籤報工 (Mobile Style UI) ---
-    function MobileLabelReport({ globalLabels, setGlobalLabels, onBack }) {
-      const [showLabelModal, setShowLabelModal] = useState(false);
-      const [currentLabelId, setCurrentLabelId] = useState('');
+    // --- 條碼標籤報工（LabelReportApp）：跨訂單派工 + 鋼捲上下架 + 逐張刷標籤 ---
+    // 流程：①選機台 → ②選人員 → ③鋼捲上架過磅 → ④刷標籤逐張報工 → ⑤鋼捲下架過磅 → ⑥完工結束（產出派工單+回單+扣庫）
+    function LabelReportApp({ onBack }) {
+      // ── 機台 / 人員預設清單 ──
+      const PRESET_LABEL_MACHINES = ['底板發泡機A'];
+      const PRESET_OPERATORS = ['A01','A02','A03','A04','A05'];
 
-      const [reportStartTime, setReportStartTime] = useState('');
-      const [reportFinishTime, setReportFinishTime] = useState('');
+      // ── 流程階段：A=機台 B=人員 C=鋼捲上架 D=刷標籤 E=鋼捲下架 F=完工 ──
+      const [phase, setPhase] = useState('A');
 
-      const currentLabel = globalLabels.find(l => l.id === currentLabelId);
+      // ── 機台 / 人員 ──
+      const [machine, setMachine] = useState('');
+      const [operators, setOperators] = useState([]);
+      const [showOpModal, setShowOpModal] = useState(false);
+      const [tempOps, setTempOps] = useState([]);
+      const operatorString = operators.join(', ');
 
-      // 篩選出「沒有開工」或「沒有完工時間」的標籤
-      const uncompletedLabels = globalLabels.filter(l => !l.startTime || !l.finishTime);
+      // ── 派工容器 ──
+      const [dispatchId, setDispatchId] = useState('');
+      const [creating, setCreating] = useState(false);
 
-      const openLabelReport = (labelId) => {
-         setCurrentLabelId(labelId);
-         const now = new Date().toLocaleTimeString('zh-TW', { hour12: false });
-         const targetLabel = globalLabels.find(l => l.id === labelId);
+      // ── 鋼捲上架 ──
+      const [showCoilModal, setShowCoilModal] = useState(false);
+      const [coilBatchNo, setCoilBatchNo] = useState('');
+      const [coilInfo, setCoilInfo] = useState(null);
+      const [loadedCoils, setLoadedCoils] = useState([]);
+      const [coilSearching, setCoilSearching] = useState(false);
 
-         // 修正：使用相容寫法，避免 ?. 導致 Babel 6 錯誤
-         setReportStartTime((targetLabel && targetLabel.startTime) ? targetLabel.startTime : now);
-         setReportFinishTime((targetLabel && targetLabel.finishTime) ? targetLabel.finishTime : now);
+      // ── 刷標籤 ──
+      const [scanInput, setScanInput] = useState('');
+      const [scannedLabels, setScannedLabels] = useState([]);
+      const [scanMsg, setScanMsg] = useState('');
+      const [scanning, setScanning] = useState(false);
 
-         setShowLabelModal(true);
-      };
+      // ── 鋼捲下架 ──
+      const [unloadInputs, setUnloadInputs] = useState({});
 
-      const handleCompleteReport = () => {
-         // 更新全域標籤狀態
-         setGlobalLabels(prev => prev.map(l =>
-             l.id === currentLabelId
-               ? { ...l, startTime: reportStartTime, finishTime: reportFinishTime }
-               : l
-         ));
+      // ── 完工結果 ──
+      const [completing, setCompleting] = useState(false);
+      const [completionResult, setCompletionResult] = useState(null);
 
-         // 同步寫入後端 LABELS 工作表 (不阻塞 UI)
-         const targetLabel = globalLabels.find(l => l.id === currentLabelId) || {};
-         if (window.API && typeof window.API.saveLabel === 'function') {
-           const payload = Object.assign({}, targetLabel, {
-             id:         currentLabelId,
-             labelNo:    targetLabel.labelNo || currentLabelId,
-             startTime:  reportStartTime,
-             endTime:    reportFinishTime,
-             status:     'reported',
-             operator:   targetLabel.operator || ''
-           });
-           window.API.saveLabel(payload, function(){
-             try { window.dispatchEvent(new CustomEvent('mes-report-saved', { detail: { type: 'label', labelId: currentLabelId } })); } catch(e){}
-           }, function(err){
-             alert('標籤報工寫入失敗：' + (err && err.message || err));
-           });
-         }
+      // ── 工時即時刷新 ──
+      const [workHours, setWorkHours] = useState('00:00:00');
+      useEffect(function(){
+        if (!dispatchId) return;
+        var refreshWH = function(){
+          if (window.API && window.API.computeEffectiveWorkHours){
+            window.API.computeEffectiveWorkHours(dispatchId, function(eff){
+              if (eff && eff.hhmmss) setWorkHours(eff.hhmmss);
+            });
+          }
+        };
+        refreshWH();
+        var t = setInterval(refreshWH, 5000);
+        return function(){ clearInterval(t); };
+      }, [dispatchId]);
 
-         alert(`標籤 [${currentLabelId}] 報工完成！\n開工時間: ${reportStartTime}\n完工時間: ${reportFinishTime}`);
-         // 完成後畫面清空，關閉 modal
-         setShowLabelModal(false);
-         setCurrentLabelId('');
-      };
+      // ── Phase A → B：機台選好就進入下一步 ──
+      function goPhaseB(){
+        if (!machine) return alert('請選擇機台');
+        setPhase('B');
+      }
+
+      // ── Phase B：人員選擇 ──
+      function openOpModalFn(){ setTempOps(operators.slice()); setShowOpModal(true); }
+      function toggleTempOp(op){
+        setTempOps(prev => prev.includes(op) ? prev.filter(function(o){ return o!==op; }) : prev.concat([op]));
+      }
+      function confirmOps(){
+        if (!tempOps.length) return alert('至少選 1 名作業人員');
+        setOperators(tempOps);
+        setShowOpModal(false);
+      }
+
+      // ── Phase B → C：建立派工容器（dispatch_orders.orderId='' + 第一段 reporter session）──
+      function goPhaseC(){
+        if (!machine) return alert('請先選擇機台');
+        if (!operators.length) return alert('請先選擇作業人員');
+        if (dispatchId) { setPhase('C'); return; }   // 已建過，直接前往
+        if (!window.API || !window.API.createLabelReportDispatch) return alert('後端未連線');
+        setCreating(true);
+        window.API.createLabelReportDispatch({
+          machine: machine,
+          operator: operators.join(';')
+        }, function(res){
+          setCreating(false);
+          if (!res || !res.id) return alert('建立派工失敗');
+          setDispatchId(res.id);
+          setPhase('C');
+          alert('派工單已建立：' + res.id + '\n機台：' + machine + '\n作業人員：' + operators.join(', ') + '\n\n現在可進行鋼捲上架');
+        }, function(err){
+          setCreating(false);
+          alert('建立派工失敗：' + (err && err.message || err));
+        });
+      }
+
+      // ── Phase C：鋼捲查詢 ──
+      function searchCoil(){
+        if (!coilBatchNo.trim()) return alert('請輸入鋼捲批號');
+        if (!window.API || !window.API.searchCoilStock) return alert('後端未連線');
+        setCoilSearching(true);
+        window.API.searchCoilStock({ batchNo: coilBatchNo, keyword: coilBatchNo }, function(rows){
+          setCoilSearching(false);
+          var hit = (rows || []).find(function(r){ return String(r.batchNo||'').trim() === coilBatchNo.trim(); });
+          if (!hit) { setCoilInfo(null); return alert('批號 [' + coilBatchNo + '] 不在庫存中'); }
+          var availKg = parseFloat(hit.availableKg||0)||0;
+          if (availKg <= 0) return alert('批號 [' + coilBatchNo + '] 庫存為 0');
+          setCoilInfo({
+            model:hit.model||'', factory:hit.factory||'', material:hit.material||'',
+            warehouse:hit.warehouse||'', location:hit.location||'', batchNo:hit.batchNo||'',
+            rollNo:hit.rollNo||'', coilNo:hit.coilNo||'', qty:hit.availablePieces||0,
+            weight:availKg, spec:hit.spec||'', color:hit.color||'', size:hit.size||'',
+            _hit:hit
+          });
+        }, function(err){
+          setCoilSearching(false);
+          alert('查詢失敗：' + (err && err.message || err));
+        });
+      }
+
+      // ── Phase C：鋼捲上架（addCoilMove）──
+      function uploadCoil(loadKg){
+        if (!dispatchId) return alert('派工尚未建立');
+        if (!coilInfo) return;
+        var hit = coilInfo._hit;
+        var availKg = coilInfo.weight;
+        var availPcs = coilInfo.qty;
+        window.API.addCoilMove(dispatchId, {
+          coilNo: hit.coilNo, rollNo: hit.rollNo, batchNo: hit.batchNo,
+          model: hit.model, spec: hit.spec, material: hit.material,
+          size: hit.size, color: hit.color,
+          srcWarehouse: hit.warehouse || '鋼捲倉', srcLocation: hit.location,
+          dstWarehouse: '產線倉', dstLocation: '',
+          outKg: availKg, outPieces: availPcs||1,
+          inKg: availKg, inPieces: availPcs||1,
+          loadWeight: loadKg, moveType: '出+入', operator: operatorString,
+          remark: '條碼標籤報工上架 ' + loadKg + 'kg 來源:' + (hit.warehouse||'') + '/' + (hit.location||'')
+        }, function(moveRes){
+          var moveId = moveRes && moveRes.id ? moveRes.id : '';
+          setLoadedCoils(prev => prev.concat([{
+            moveId: moveId,
+            batchNo: hit.batchNo, model: hit.model, spec: hit.spec,
+            material: hit.material, size: hit.size, color: hit.color,
+            loadWeight: loadKg,
+            srcWarehouse: hit.warehouse || '鋼捲倉',
+            srcLocation: hit.location || ''
+          }]));
+          setShowCoilModal(false); setCoilInfo(null); setCoilBatchNo('');
+          alert('鋼捲 [' + hit.batchNo + '] 已上架\n上架磅重：' + loadKg + ' kg');
+        }, function(err){
+          alert('上架失敗：' + (err && err.message || err));
+        });
+      }
+
+      function removeCoil(moveId){
+        if (!window.confirm('確定移除這捲鋼捲？已上架的庫存調撥會還原。')) return;
+        window.API.removeCoilMove(dispatchId, moveId, function(){
+          setLoadedCoils(prev => prev.filter(c => c.moveId !== moveId));
+          alert('已移除');
+        }, function(err){
+          alert('移除失敗：' + (err && err.message || err));
+        });
+      }
+
+      // ── Phase D：標籤掃描 ──
+      function handleScan(){
+        var code = String(scanInput || '').trim();
+        if (!code) return;
+        setScanMsg('');
+        if (!window.API || !window.API.findLabelByCode) return alert('後端未連線');
+        setScanning(true);
+        window.API.findLabelByCode(code, function(label){
+          setScanning(false);
+          if (!label) { setScanMsg('✗ 找不到標籤: ' + code); setScanInput(''); return; }
+          if (scannedLabels.find(function(l){ return l.id === label.id; })) {
+            setScanMsg('⚠ 此標籤已掃過: ' + (label.labelNo || label.id));
+            setScanInput('');
+            return;
+          }
+          var did = label.dispatchId || label.dispatchid || '';
+          if (did && did !== dispatchId) {
+            setScanMsg('✗ 此標籤已被派工 [' + did + '] 處理');
+            setScanInput('');
+            return;
+          }
+          // 寫入後端：labels.dispatchId + startTime + endTime + operator
+          window.API.attachLabelToDispatch(label.id, dispatchId, {
+            operator: operatorString
+          }, function(){
+            setScannedLabels(prev => prev.concat([Object.assign({}, label, {
+              dispatchId: dispatchId,
+              startTime: _nowLocalStr(),
+              endTime: _nowLocalStr(),
+              operator: operatorString
+            })]));
+            setScanInput('');
+            setScanMsg('✓ 已加入: ' + (label.labelNo || label.id) + ' (' + (label.spec || '') + ')');
+          }, function(err){
+            setScanMsg('✗ 寫入失敗: ' + (err && err.message || err));
+          });
+        }, function(err){
+          setScanning(false);
+          setScanMsg('✗ 查詢失敗: ' + (err && err.message || err));
+        });
+      }
+
+      function _nowLocalStr(){
+        var d = new Date();
+        var pad = function(n){ return String(n).padStart(2,'0'); };
+        return d.getFullYear() + '/' + pad(d.getMonth()+1) + '/' + pad(d.getDate()) + ' ' +
+               pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+      }
+
+      function removeScannedLabel(labelId){
+        if (!window.confirm('確定移除這張標籤？將清除其 dispatchId / startTime / endTime。')) return;
+        window.API.detachLabelFromDispatch(labelId, function(){
+          setScannedLabels(prev => prev.filter(function(l){ return l.id !== labelId; }));
+        }, function(err){
+          alert('移除失敗：' + (err && err.message || err));
+        });
+      }
+
+      // ── Phase D → E：進入下架 ──
+      function goPhaseE(){
+        if (!scannedLabels.length) {
+          if (!window.confirm('尚未刷任何標籤，仍要進入下架階段？')) return;
+        }
+        // 預設每捲的下架磅重 = 上架磅重（=全數歸回，無消耗）
+        var defaults = {};
+        loadedCoils.forEach(function(c){
+          defaults[c.moveId] = c.loadWeight;
+        });
+        setUnloadInputs(defaults);
+        setPhase('E');
+      }
+
+      // ── Phase E：下架磅重輸入 ──
+      function setUnload(moveId, val){
+        setUnloadInputs(prev => Object.assign({}, prev, _kv(moveId, val)));
+      }
+      function _kv(k, v){ var o={}; o[k]=v; return o; }
+
+      // ── Phase E → F：寫入每捲 unloadWeight，再進入完工 ──
+      function applyAllUnload(){
+        if (!loadedCoils.length) { setPhase('F'); return; }
+        // 驗證所有輸入都有值
+        for (var i=0; i<loadedCoils.length; i++){
+          var c = loadedCoils[i];
+          var v = parseFloat(unloadInputs[c.moveId]);
+          if (isNaN(v) || v < 0) return alert('鋼捲 ' + c.batchNo + ' 下架磅重未填或無效');
+          if (v > c.loadWeight + 0.01) return alert('鋼捲 ' + c.batchNo + ' 下架磅重不可大於上架磅重 ' + c.loadWeight);
+        }
+        var pending = loadedCoils.length;
+        var errs = [];
+        loadedCoils.forEach(function(c){
+          var u = parseFloat(unloadInputs[c.moveId]);
+          window.API.updateCoilMoveUnloadWeight(dispatchId, c.moveId, u, function(){
+            pending--;
+            if (pending === 0) {
+              if (errs.length) alert('部分下架寫入失敗：\n' + errs.join('\n'));
+              setPhase('F');
+            }
+          }, function(err){
+            errs.push(c.batchNo + ': ' + (err && err.message || err));
+            pending--;
+            if (pending === 0) {
+              alert('下架寫入失敗：\n' + errs.join('\n'));
+            }
+          });
+        });
+      }
+
+      // ── Phase F：完工結束 → endDispatch ──
+      function finishWork(){
+        if (!window.confirm('確定完工結束？\n系統會：\n  • 結算回單 R' + dispatchId + '\n  • 產線倉依消耗量扣庫 (loadWeight − unloadWeight)\n  • 下架剩料歸回鋼捲倉\n  • 結束所有作業人員工時')) return;
+        setCompleting(true);
+        // 把已寫入的 unloadWeights 也傳入 RPC（雙保險）
+        var coilUnloadWeights = {};
+        loadedCoils.forEach(function(c){
+          var u = parseFloat(unloadInputs[c.moveId]);
+          if (!isNaN(u)) coilUnloadWeights[c.moveId] = u;
+        });
+        window.API.endDispatch(dispatchId, {
+          coilUnloadWeights: coilUnloadWeights,
+          operator: operatorString,
+          workHours: workHours
+        }, function(res){
+          setCompleting(false);
+          if (!res || !res.ok) { alert('完工失敗：' + JSON.stringify(res)); return; }
+          setCompletionResult(res);
+        }, function(err){
+          setCompleting(false);
+          alert('完工失敗：' + (err && err.message || err));
+        });
+      }
+
+      function resetAll(){
+        if (!window.confirm('重置全部資料？將回到第一步開始新一輪。\n注意：已完工的派工單 ' + dispatchId + ' 不會刪除。')) return;
+        setPhase('A'); setMachine(''); setOperators([]);
+        setDispatchId(''); setLoadedCoils([]); setScannedLabels([]);
+        setUnloadInputs({}); setCompletionResult(null);
+        setWorkHours('00:00:00'); setScanMsg('');
+      }
+
+      // ── 步驟頂部進度條 ──
+      const STEPS = [
+        { code:'A', label:'① 機台' },
+        { code:'B', label:'② 人員' },
+        { code:'C', label:'③ 上架' },
+        { code:'D', label:'④ 標籤' },
+        { code:'E', label:'⑤ 下架' },
+        { code:'F', label:'⑥ 完工' },
+      ];
+      function stepIdx(c){ return STEPS.findIndex(function(s){ return s.code===c; }); }
+      const currentIdx = stepIdx(phase);
 
       return (
-        <div className="flex-1 bg-gray-100 flex items-center justify-center p-4 relative">
-           {/* Mobile Phone Mockup Container */}
-           <div className="w-[400px] h-[800px] bg-gray-800 rounded-[3rem] p-4 shadow-2xl relative border-4 border-gray-700 flex flex-col">
-              {/* Notch Area */}
-              <div className="absolute top-0 inset-x-0 h-6 flex justify-center z-20">
-                 <div className="w-40 h-6 bg-black rounded-b-3xl"></div>
+        <div className="flex-1 bg-gray-100 overflow-auto p-4">
+          <div className="max-w-5xl mx-auto bg-white rounded-xl shadow-lg overflow-hidden">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-purple-600 to-purple-700 text-white p-4 flex items-center justify-between">
+              <button onClick={onBack} className="p-1 hover:bg-white/20 rounded-full">
+                <Icon name="arrowLeft" size={22} />
+              </button>
+              <div className="flex items-center">
+                <Icon name="barcode" size={22} className="mr-2" />
+                <h2 className="text-xl font-bold tracking-wider">條碼標籤報工</h2>
               </div>
+              <div className="text-xs bg-white/20 px-2 py-1 rounded">
+                {dispatchId ? '派工 ' + dispatchId : '尚未建立派工'}
+              </div>
+            </div>
 
-              {/* Screen Area */}
-              <div className="flex-1 bg-[#f8fafc] rounded-[2rem] overflow-hidden flex flex-col mt-4 relative">
-                 {/* Header */}
-                 <div className="bg-purple-600 text-white p-4 shadow-md relative z-10 flex items-center">
-                    <button onClick={onBack} className="p-1 -ml-1 hover:bg-purple-700 rounded-full transition-colors z-20">
-                       <Icon name="arrowLeft" size={24} />
-                    </button>
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                       <Icon name="barcode" size={24} className="mr-2" />
-                       <h2 className="text-xl font-bold tracking-wider">條碼標籤報工</h2>
+            {/* Stepper */}
+            <div className="flex items-center px-4 py-3 border-b bg-gray-50">
+              {STEPS.map(function(s, i){
+                var active = phase === s.code;
+                var done = currentIdx > i;
+                return (
+                  <React.Fragment key={s.code}>
+                    <div className={'flex items-center px-3 py-1 rounded-full text-sm font-bold ' +
+                      (active ? 'bg-purple-600 text-white' :
+                       done ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-500')}>
+                      {s.label}
                     </div>
-                 </div>
+                    {i < STEPS.length - 1 && (
+                      <div className={'flex-1 h-1 mx-1 ' + (done ? 'bg-green-500' : 'bg-gray-200')} />
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </div>
 
-                 {/* Content List */}
-                 <div className="flex-1 overflow-auto p-4 space-y-3 pb-8">
-                     <div className="text-gray-500 font-bold mb-2">待報工標籤清單：</div>
+            {/* 目前狀態列 */}
+            <div className="flex items-center px-4 py-2 bg-blue-50 border-b text-sm">
+              <span className="text-gray-600 mr-3">機台：<span className="font-bold text-blue-700">{machine || '－'}</span></span>
+              <span className="text-gray-600 mr-3">人員：<span className="font-bold text-blue-700">{operatorString || '－'}</span></span>
+              <span className="text-gray-600 mr-3">上架鋼捲：<span className="font-bold text-blue-700">{loadedCoils.length} 捲</span></span>
+              <span className="text-gray-600 mr-3">已刷標籤：<span className="font-bold text-blue-700">{scannedLabels.length} 張</span></span>
+              {dispatchId && (
+                <span className="text-gray-600 ml-auto">工時：<span className="font-mono font-bold text-green-700">{workHours}</span></span>
+              )}
+            </div>
 
-                     {uncompletedLabels.length === 0 && (
-                        <div className="text-center text-gray-400 py-10">目前沒有需要報工的標籤</div>
-                     )}
-
-                     {uncompletedLabels.map((label, idx) => (
-                        <div
-                          key={idx}
-                          onClick={() => openLabelReport(label.id)}
-                          className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 cursor-pointer hover:bg-purple-50 active:bg-purple-100 transition-colors flex items-center justify-between"
-                        >
-                           <div className="flex flex-col">
-                              <span className="font-mono font-bold text-purple-700 text-lg">{label.id}</span>
-                              <span className="text-sm text-gray-500 truncate max-w-[200px]">{label.spec || label.customer || '未知品名'}</span>
-                           </div>
-                           <div className="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-xs font-bold shadow-sm">
-                              報工
-                           </div>
-                        </div>
-                     ))}
-                 </div>
-
-                 {/* Scanner Instruction area */}
-                 <div className="bg-gray-200 p-4 border-t border-gray-300 flex flex-col items-center justify-center text-gray-500 relative z-10">
-                    <Icon name="barcode" size={32} className="mb-2 opacity-50" />
-                    <span className="text-xs">請掃描標籤條碼或從上方清單點選</span>
-                 </div>
-
-                 {/* 底部返回按鈕 */}
-                 <button
-                    onClick={onBack}
-                    className="w-full bg-gray-800 hover:bg-gray-900 text-white py-4 flex items-center justify-center transition-colors relative z-10"
-                 >
-                    <Icon name="arrowLeftToLine" size={20} className="mr-2" />
-                    <span className="font-bold text-[15px] tracking-widest">返回系統功能</span>
-                 </button>
-
-                 {/* 完美限制在手機螢幕內的 Full Screen Report Modal */}
-                 {showLabelModal && currentLabel && (
-                   <div className="absolute inset-0 z-50 flex flex-col bg-white">
-
-                     {/* Modal Header */}
-                     <div className="bg-gradient-to-r from-purple-500 to-purple-600 text-white p-4 flex justify-between items-center shadow-md">
-                        <span className="font-bold text-lg">標籤報工作業</span>
-                        <button onClick={() => setShowLabelModal(false)} className="p-1 hover:bg-white/20 rounded-full transition-colors"><Icon name="x" size={24}/></button>
-                     </div>
-
-                     <div className="flex-1 overflow-auto p-5 flex flex-col space-y-6">
-                        {/* Header Info */}
-                        <div className="bg-purple-50 p-4 rounded-xl border border-purple-100 flex flex-col items-center justify-center text-center shadow-sm">
-                           <span className="text-gray-500 text-sm mb-1">標籤單號</span>
-                           <span className="font-mono font-bold text-3xl text-purple-800 tracking-wider">{currentLabel.id}</span>
-                        </div>
-
-                        {/* Details Box */}
-                        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4 space-y-3">
-                           <div className="flex justify-between border-b border-gray-100 pb-2">
-                              <span className="text-gray-500">客戶名稱</span>
-                              <span className="font-bold text-gray-800">{currentLabel.customer || '未提供'}</span>
-                           </div>
-                           <div className="flex flex-col border-b border-gray-100 pb-2">
-                              <span className="text-gray-500 mb-1">品名規格</span>
-                              <span className="font-bold text-gray-800">{currentLabel.spec || '未提供'}</span>
-                           </div>
-                           <div className="flex justify-between pt-1">
-                              <span className="text-gray-500">總數量/總尺</span>
-                              <span className="font-bold text-blue-700">{currentLabel.qty} / {currentLabel.totalLen}</span>
-                           </div>
-                        </div>
-
-                        {/* Report Inputs */}
-                        <div className="space-y-4 pt-2">
-                           <div className="flex flex-col">
-                              <label className="text-sm font-bold text-gray-700 mb-2 ml-1">開工時間</label>
-                              <input
-                                type="time" step="1"
-                                value={reportStartTime}
-                                onChange={e => setReportStartTime(e.target.value)}
-                                className="bg-gray-50 border border-gray-300 rounded-xl px-4 py-3 text-xl font-mono text-center focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none text-blue-700 shadow-inner w-full"
-                              />
-                           </div>
-                           <div className="flex flex-col">
-                              <label className="text-sm font-bold text-gray-700 mb-2 ml-1">完工時間</label>
-                              <input
-                                type="time" step="1"
-                                value={reportFinishTime}
-                                onChange={e => setReportFinishTime(e.target.value)}
-                                className="bg-gray-50 border border-gray-300 rounded-xl px-4 py-3 text-xl font-mono text-center focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none text-green-700 shadow-inner w-full"
-                              />
-                           </div>
-                        </div>
-                     </div>
-
-                     {/* Bottom Action Area */}
-                     <div className="p-4 bg-white border-t border-gray-200">
-                        <button
-                          onClick={handleCompleteReport}
-                          className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-4 text-xl rounded-xl shadow-lg flex items-center justify-center transition-all transform active:scale-95 tracking-widest"
-                        >
-                          <Icon name="play" size={20} className="mr-2" /> 確認報工
-                        </button>
-                     </div>
-                   </div>
-                 )}
+            {/* Phase A：選機台 */}
+            {phase === 'A' && (
+              <div className="p-6">
+                <div className="text-lg font-bold text-gray-800 mb-4">① 選擇機台</div>
+                <div className="space-y-2 mb-6">
+                  {PRESET_LABEL_MACHINES.map(function(m){
+                    return (
+                      <label key={m} className={'flex items-center p-3 rounded-lg border-2 cursor-pointer ' +
+                        (machine === m ? 'border-purple-600 bg-purple-50' : 'border-gray-200 hover:bg-gray-50')}>
+                        <input type="radio" name="machine" value={m}
+                               checked={machine === m}
+                               onChange={function(){ setMachine(m); }}
+                               className="w-5 h-5 accent-purple-600 mr-3" />
+                        <span className="text-base font-bold text-gray-800">{m}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <button onClick={goPhaseB} disabled={!machine}
+                        className={'w-full py-3 rounded-lg font-bold text-white text-lg ' +
+                          (machine ? 'bg-purple-600 hover:bg-purple-700' : 'bg-gray-300 cursor-not-allowed')}>
+                  下一步：選擇人員 →
+                </button>
               </div>
-           </div>
+            )}
+
+            {/* Phase B：選人員 */}
+            {phase === 'B' && (
+              <div className="p-6">
+                <div className="text-lg font-bold text-gray-800 mb-4">② 選擇作業人員</div>
+                <div className="mb-4">
+                  <div className="text-sm text-gray-500 mb-2">目前選擇：</div>
+                  <div className="bg-blue-50 border border-blue-200 rounded p-3 min-h-[60px]">
+                    {operators.length ? operators.map(function(op){
+                      return <span key={op} className="inline-block bg-blue-600 text-white px-3 py-1 rounded-full mr-2 mb-1">{op}</span>;
+                    }) : <span className="text-gray-400 italic">尚未選擇</span>}
+                  </div>
+                </div>
+                <button onClick={openOpModalFn}
+                        className="w-full py-3 rounded-lg font-bold text-white text-lg bg-blue-600 hover:bg-blue-700 mb-3">
+                  {operators.length ? '🔄 修改人員' : '👷 選擇人員'}
+                </button>
+                <div className="flex space-x-3">
+                  <button onClick={function(){ setPhase('A'); }}
+                          className="flex-1 py-3 rounded-lg font-bold text-gray-700 bg-gray-200 hover:bg-gray-300">
+                    ← 上一步
+                  </button>
+                  <button onClick={goPhaseC} disabled={!operators.length || creating}
+                          className={'flex-1 py-3 rounded-lg font-bold text-white text-lg ' +
+                            (operators.length && !creating ? 'bg-purple-600 hover:bg-purple-700' : 'bg-gray-300 cursor-not-allowed')}>
+                    {creating ? '建立派工中...' : '下一步：鋼捲上架 →'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Phase C：鋼捲上架 */}
+            {phase === 'C' && (
+              <div className="p-6">
+                <div className="flex items-center mb-4">
+                  <div className="text-lg font-bold text-gray-800">③ 鋼捲上架過磅</div>
+                  <button onClick={function(){ setCoilBatchNo(''); setCoilInfo(null); setShowCoilModal(true); }}
+                          className="ml-auto bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded font-bold">
+                    🔩 + 上架新鋼捲
+                  </button>
+                </div>
+                {/* 已上架清單 */}
+                <div className="space-y-2 mb-6">
+                  {loadedCoils.length === 0 ? (
+                    <div className="text-center py-10 bg-gray-50 rounded text-gray-400">尚未上架任何鋼捲</div>
+                  ) : loadedCoils.map(function(c){
+                    return (
+                      <div key={c.moveId} className="flex items-center bg-green-50 border border-green-200 rounded-lg p-3">
+                        <div className="flex-1">
+                          <div className="font-bold text-green-800">{c.batchNo} <span className="text-sm text-gray-500 font-normal">({c.model})</span></div>
+                          <div className="text-xs text-gray-600">材質:{c.material||'—'} / 規格:{c.spec||'—'} / 來源:{c.srcWarehouse}/{c.srcLocation}</div>
+                        </div>
+                        <div className="mr-4 text-right">
+                          <div className="text-xs text-gray-500">上架磅重</div>
+                          <div className="font-bold text-orange-600 text-lg">{c.loadWeight} kg</div>
+                        </div>
+                        <button onClick={function(){ removeCoil(c.moveId); }}
+                                className="text-red-500 hover:bg-red-100 px-2 py-1 rounded font-bold">✕</button>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="flex space-x-3">
+                  <button onClick={function(){ setPhase('B'); }}
+                          className="flex-1 py-3 rounded-lg font-bold text-gray-700 bg-gray-200 hover:bg-gray-300">
+                    ← 上一步
+                  </button>
+                  <button onClick={function(){ setPhase('D'); }}
+                          disabled={!loadedCoils.length}
+                          className={'flex-1 py-3 rounded-lg font-bold text-white text-lg ' +
+                            (loadedCoils.length ? 'bg-purple-600 hover:bg-purple-700' : 'bg-gray-300 cursor-not-allowed')}>
+                    下一步：刷標籤報工 →
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Phase D：刷標籤逐張報工 */}
+            {phase === 'D' && (
+              <div className="p-6">
+                <div className="text-lg font-bold text-gray-800 mb-4">④ 刷標籤逐張報工</div>
+                {/* 掃描輸入 */}
+                <div className="flex space-x-2 mb-3">
+                  <input type="text" placeholder="請掃描或輸入標籤條碼後按 Enter..."
+                         className="flex-1 border-2 border-purple-400 rounded px-4 py-3 text-lg font-mono focus:outline-none focus:border-purple-600"
+                         value={scanInput}
+                         onChange={function(e){ setScanInput(e.target.value); }}
+                         onKeyDown={function(e){ if (e.key === 'Enter') handleScan(); }}
+                         autoFocus />
+                  <button onClick={handleScan} disabled={scanning}
+                          className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded font-bold">
+                    {scanning ? '查詢中...' : '加入'}
+                  </button>
+                </div>
+                {scanMsg && (
+                  <div className={'mb-3 px-3 py-2 rounded text-sm font-bold ' +
+                    (scanMsg.indexOf('✓') === 0 ? 'bg-green-100 text-green-800' :
+                     scanMsg.indexOf('⚠') === 0 ? 'bg-yellow-100 text-yellow-800' :
+                     'bg-red-100 text-red-800')}>
+                    {scanMsg}
+                  </div>
+                )}
+                {/* 已刷標籤清單 */}
+                <div className="border rounded-lg overflow-hidden mb-6">
+                  <div className="bg-gray-100 px-3 py-2 font-bold text-gray-700 flex items-center">
+                    已報工標籤
+                    <span className="ml-2 bg-purple-600 text-white px-2 py-0.5 rounded-full text-xs">{scannedLabels.length}</span>
+                  </div>
+                  <div className="max-h-[400px] overflow-auto">
+                    {scannedLabels.length === 0 ? (
+                      <div className="text-center py-10 text-gray-400">尚未掃描任何標籤</div>
+                    ) : (
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50 text-xs text-gray-600">
+                          <tr>
+                            <th className="px-2 py-2 text-left">#</th>
+                            <th className="px-2 py-2 text-left">標籤編號</th>
+                            <th className="px-2 py-2 text-left">訂單</th>
+                            <th className="px-2 py-2 text-left">客戶</th>
+                            <th className="px-2 py-2 text-left">規格</th>
+                            <th className="px-2 py-2 text-right">數量</th>
+                            <th className="px-2 py-2 text-right">總尺</th>
+                            <th className="px-2 py-2 text-center">開工</th>
+                            <th className="px-2 py-2 text-center">完工</th>
+                            <th className="px-2 py-2 text-center">操作</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {scannedLabels.map(function(l, i){
+                            return (
+                              <tr key={l.id} className="border-t hover:bg-purple-50">
+                                <td className="px-2 py-2">{i+1}</td>
+                                <td className="px-2 py-2 font-mono font-bold text-purple-700">{l.labelNo || l.id}</td>
+                                <td className="px-2 py-2 font-mono text-xs">{l.orderId || l.orderid || '—'}</td>
+                                <td className="px-2 py-2">{l.customer || l.customerShort || l.customershort || '—'}</td>
+                                <td className="px-2 py-2 text-xs">{l.spec || '—'}</td>
+                                <td className="px-2 py-2 text-right">{l.qty || 0}</td>
+                                <td className="px-2 py-2 text-right">{l.totalLen || l.totallen || 0}</td>
+                                <td className="px-2 py-2 text-center text-xs font-mono">{(l.startTime || '').slice(-8)}</td>
+                                <td className="px-2 py-2 text-center text-xs font-mono">{(l.endTime || '').slice(-8)}</td>
+                                <td className="px-2 py-2 text-center">
+                                  <button onClick={function(){ removeScannedLabel(l.id); }}
+                                          className="text-red-500 hover:bg-red-100 px-2 py-0.5 rounded">✕</button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+                <div className="flex space-x-3">
+                  <button onClick={function(){ setPhase('C'); }}
+                          className="flex-1 py-3 rounded-lg font-bold text-gray-700 bg-gray-200 hover:bg-gray-300">
+                    ← 上一步
+                  </button>
+                  <button onClick={goPhaseE}
+                          className="flex-1 py-3 rounded-lg font-bold text-white text-lg bg-purple-600 hover:bg-purple-700">
+                    下一步：鋼捲下架 →
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Phase E：鋼捲下架過磅 */}
+            {phase === 'E' && (
+              <div className="p-6">
+                <div className="text-lg font-bold text-gray-800 mb-2">⑤ 鋼捲下架過磅</div>
+                <div className="text-sm text-gray-500 mb-4">每捲分別輸入下架磅重；若該捲完全沒切過，預設值 = 上架磅重（全數歸回鋼捲倉）</div>
+                <div className="space-y-3 mb-6">
+                  {loadedCoils.length === 0 ? (
+                    <div className="text-center py-10 bg-gray-50 rounded text-gray-400">無上架鋼捲</div>
+                  ) : loadedCoils.map(function(c){
+                    var u = unloadInputs[c.moveId];
+                    var consumed = (c.loadWeight - (parseFloat(u) || 0));
+                    return (
+                      <div key={c.moveId} className="bg-blue-50 border-2 border-blue-200 rounded-lg p-4">
+                        <div className="flex items-start mb-3">
+                          <div className="flex-1">
+                            <div className="font-bold text-blue-900 text-lg">{c.batchNo}</div>
+                            <div className="text-xs text-gray-600">{c.model} / 規格:{c.spec || '—'}</div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-xs text-gray-500">上架磅重</div>
+                            <div className="font-bold text-orange-600">{c.loadWeight} kg</div>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <label className="text-sm font-bold text-gray-700 w-20">下架磅重</label>
+                          <input type="number" step="0.01" min="0"
+                                 className="flex-1 border-2 border-blue-400 rounded px-3 py-2 text-right font-bold text-lg focus:outline-none focus:border-blue-600"
+                                 value={u !== undefined ? u : c.loadWeight}
+                                 onChange={function(e){ setUnload(c.moveId, e.target.value); }} />
+                          <span className="text-gray-500">kg</span>
+                          <button onClick={function(){ setUnload(c.moveId, c.loadWeight); }}
+                                  className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-2 rounded text-xs font-bold">
+                            全數歸回
+                          </button>
+                          <button onClick={function(){ setUnload(c.moveId, 0); }}
+                                  className="bg-red-100 hover:bg-red-200 text-red-700 px-3 py-2 rounded text-xs font-bold">
+                            全數消耗
+                          </button>
+                        </div>
+                        <div className="mt-2 text-xs text-right">
+                          <span className="text-gray-500">本捲消耗：</span>
+                          <span className={'font-bold ' + (consumed > 0 ? 'text-red-600' : 'text-gray-500')}>
+                            {consumed >= 0 ? consumed.toFixed(2) : '—'} kg
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="flex space-x-3">
+                  <button onClick={function(){ setPhase('D'); }}
+                          className="flex-1 py-3 rounded-lg font-bold text-gray-700 bg-gray-200 hover:bg-gray-300">
+                    ← 上一步
+                  </button>
+                  <button onClick={applyAllUnload}
+                          className="flex-1 py-3 rounded-lg font-bold text-white text-lg bg-purple-600 hover:bg-purple-700">
+                    下一步：完工結束 →
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Phase F：完工結束 */}
+            {phase === 'F' && (
+              <div className="p-6">
+                <div className="text-lg font-bold text-gray-800 mb-4">⑥ 完工結束</div>
+                {!completionResult ? (
+                  <div>
+                    <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-4 mb-6">
+                      <div className="font-bold text-yellow-900 mb-2">即將執行：</div>
+                      <ul className="text-sm text-yellow-800 space-y-1 ml-4 list-disc">
+                        <li>結算派工 <span className="font-mono font-bold">{dispatchId}</span> → 產出回單 R{dispatchId}</li>
+                        <li>對每捲鋼捲：產線倉扣消耗量 (loadWeight − unloadWeight)</li>
+                        <li>下架剩料歸回鋼捲倉</li>
+                        <li>已刷 {scannedLabels.length} 張標籤 → 寫入 dispatch_return_items</li>
+                        <li>關閉作業人員工時段（目前工時 {workHours}）</li>
+                      </ul>
+                    </div>
+                    <div className="flex space-x-3">
+                      <button onClick={function(){ setPhase('E'); }}
+                              className="flex-1 py-3 rounded-lg font-bold text-gray-700 bg-gray-200 hover:bg-gray-300">
+                        ← 上一步
+                      </button>
+                      <button onClick={finishWork} disabled={completing}
+                              className={'flex-1 py-3 rounded-lg font-bold text-white text-lg ' +
+                                (completing ? 'bg-gray-300 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700')}>
+                        {completing ? '結算中...' : '✓ 確認完工結束'}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="bg-green-50 border-2 border-green-400 rounded-lg p-6 mb-6">
+                      <div className="text-2xl font-bold text-green-900 mb-3">✓ 完工結束成功</div>
+                      <div className="grid grid-cols-2 gap-3 text-sm">
+                        <div className="bg-white rounded p-2 border border-green-200">
+                          <div className="text-xs text-gray-500">派工單</div>
+                          <div className="font-mono font-bold text-blue-700">{dispatchId}</div>
+                        </div>
+                        <div className="bg-white rounded p-2 border border-green-200">
+                          <div className="text-xs text-gray-500">回單</div>
+                          <div className="font-mono font-bold text-purple-700">{completionResult.returnId}</div>
+                        </div>
+                        <div className="bg-white rounded p-2 border border-green-200">
+                          <div className="text-xs text-gray-500">入庫明細</div>
+                          <div className="font-bold">{completionResult.itemCount} 筆</div>
+                        </div>
+                        <div className="bg-white rounded p-2 border border-green-200">
+                          <div className="text-xs text-gray-500">扣庫鋼捲</div>
+                          <div className="font-bold">{completionResult.deductCount} 捲</div>
+                        </div>
+                        <div className="bg-white rounded p-2 border border-green-200">
+                          <div className="text-xs text-gray-500">總上架</div>
+                          <div className="font-bold text-orange-600">{(completionResult.totalIn || 0).toFixed(2)} kg</div>
+                        </div>
+                        <div className="bg-white rounded p-2 border border-green-200">
+                          <div className="text-xs text-gray-500">總消耗</div>
+                          <div className="font-bold text-red-600">{(completionResult.totalDeduct || 0).toFixed(2)} kg</div>
+                        </div>
+                        <div className="bg-white rounded p-2 border border-green-200">
+                          <div className="text-xs text-gray-500">耗損率</div>
+                          <div className="font-bold">{(completionResult.lossRate || 0).toFixed(2)} %</div>
+                        </div>
+                        <div className="bg-white rounded p-2 border border-green-200">
+                          <div className="text-xs text-gray-500">有效工時</div>
+                          <div className="font-mono font-bold text-green-700">{completionResult.workHours || workHours}</div>
+                        </div>
+                      </div>
+                    </div>
+                    <button onClick={resetAll}
+                            className="w-full py-3 rounded-lg font-bold text-white text-lg bg-purple-600 hover:bg-purple-700">
+                      🔄 開始新一輪報工
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* 人員選擇 Modal */}
+          {showOpModal && (
+            <div className="fixed inset-0 z-[9999] flex items-center justify-center" style={{background:'rgba(0,0,0,0.6)'}}>
+              <div className="bg-white rounded-xl shadow-2xl p-6 w-80 border-2 border-blue-600">
+                <div className="text-base font-bold text-blue-800 mb-1">👷 作業人員選擇</div>
+                <div className="text-xs text-gray-500 mb-3">可複選，確定後記錄到本次報工</div>
+                <div className="space-y-2 mb-4">
+                  {PRESET_OPERATORS.map(function(op){
+                    return (
+                      <label key={op} className="flex items-center space-x-3 cursor-pointer p-2 rounded hover:bg-blue-50 border border-gray-200">
+                        <input type="checkbox" checked={tempOps.includes(op)}
+                               onChange={function(){ toggleTempOp(op); }}
+                               className="w-5 h-5 accent-blue-600" />
+                        <span className="text-base font-bold text-gray-800">{op}</span>
+                        {tempOps.includes(op) && <span className="text-green-600 text-xs ml-auto">✓ 已選</span>}
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="text-xs text-gray-400 mb-3">已選：{tempOps.length > 0 ? tempOps.join('、') : '（無）'}</div>
+                <div className="flex space-x-2">
+                  <button onClick={function(){ setShowOpModal(false); }}
+                          className="flex-1 py-2 rounded border border-gray-300 text-gray-600 hover:bg-gray-100 text-sm">取消</button>
+                  <button onClick={confirmOps}
+                          className="flex-1 py-2 rounded bg-blue-600 text-white font-bold hover:bg-blue-700 text-sm">
+                    確定 {tempOps.length > 0 ? '(' + tempOps.length + '人)' : ''}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 鋼捲上架 Modal */}
+          {showCoilModal && (
+            <div className="fixed inset-0 z-[9990] flex items-center justify-center" style={{background:'rgba(0,0,0,0.6)'}}>
+              <div className="bg-white rounded-xl shadow-2xl border border-gray-300 flex flex-col w-96 overflow-hidden">
+                <div className="bg-gradient-to-r from-green-500 to-green-600 text-white p-3 font-bold text-base flex justify-between items-center">
+                  <span>🔩 鋼捲上架</span>
+                  <button onClick={function(){ setShowCoilModal(false); setCoilInfo(null); setCoilBatchNo(''); }}
+                          className="hover:text-gray-200 text-xl font-bold">×</button>
+                </div>
+                <div className="p-4 flex flex-col space-y-3">
+                  <div className="flex space-x-2">
+                    <input type="text" placeholder="請輸入鋼捲批號..."
+                           className="flex-1 border border-gray-400 px-3 py-2 rounded focus:outline-none focus:border-green-600"
+                           value={coilBatchNo}
+                           onChange={function(e){ setCoilBatchNo(e.target.value); }}
+                           onKeyDown={function(e){ if(e.key==='Enter') searchCoil(); }}
+                           autoFocus />
+                    <button onClick={searchCoil} disabled={coilSearching}
+                            className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 font-bold">
+                      {coilSearching ? '...' : '查詢'}
+                    </button>
+                  </div>
+                  {coilInfo && (
+                    <div className="bg-green-50 border border-green-200 rounded p-3 text-sm space-y-1">
+                      <div className="flex"><span className="w-20 font-bold text-gray-600">批號</span><span className="font-mono font-bold text-green-800">{coilInfo.batchNo}</span></div>
+                      <div className="flex"><span className="w-20 font-bold text-gray-600">料號</span><span>{coilInfo.model}</span></div>
+                      <div className="flex"><span className="w-20 font-bold text-gray-600">材質</span><span>{coilInfo.material}</span></div>
+                      <div className="flex"><span className="w-20 font-bold text-gray-600">倉庫/儲位</span><span className="text-blue-700">{coilInfo.warehouse} / {coilInfo.location}</span></div>
+                      <div className="flex"><span className="w-20 font-bold text-gray-600">可用重量</span><span className="font-bold text-red-600 text-lg">{coilInfo.weight} kg</span></div>
+                    </div>
+                  )}
+                  {coilInfo && (
+                    <div className="border-t pt-3">
+                      <div className="text-xs text-gray-500 mb-2">⚖️ 上架磅重（實際過磅重量）</div>
+                      <div className="flex space-x-2">
+                        <input type="number" step="0.01" min="0"
+                               id="lrCoilWeighIn"
+                               defaultValue={coilInfo.weight}
+                               className="flex-1 border-2 border-orange-300 rounded px-3 py-2 text-right text-base font-bold focus:outline-none focus:border-orange-500" />
+                        <span className="flex items-center font-semibold text-gray-500">kg</span>
+                      </div>
+                      <div className="flex space-x-2 mt-3">
+                        <button onClick={function(){ setShowCoilModal(false); setCoilInfo(null); setCoilBatchNo(''); }}
+                                className="flex-1 py-2 rounded border border-gray-300 text-gray-600 hover:bg-gray-100 text-sm">取消</button>
+                        <button onClick={function(){
+                          var inp = document.getElementById('lrCoilWeighIn');
+                          var loadKg = parseFloat(inp ? inp.value : 0) || 0;
+                          if (loadKg <= 0) return alert('請輸入有效磅重');
+                          uploadCoil(loadKg);
+                        }} className="flex-1 py-2 rounded bg-orange-500 text-white font-bold hover:bg-orange-600 text-sm">
+                          確認上架
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
         </div>
       );
     }
