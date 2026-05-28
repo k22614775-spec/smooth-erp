@@ -2118,33 +2118,28 @@ function switchTopMode(mode) {
       var q=String(code||'').trim();
       if(!q){ if(cb) cb(null); return; }
       _cb((async function(){
-        // 1. id 精確匹配
+        // 「全量抓取 + 前端比對」最穩定的方式，避開 PostgREST 對特殊字元 id 的 quirk
         try {
-          var rows=await _get('labels',{'id':'eq.'+q,'limit':'5'});
-          if(rows && rows.length) return rows[0];
-        } catch(e){ console.warn('[findLabelByCode] id eq 失敗:', e && e.message || e); }
-        // 2. labelNo 精確匹配
-        try {
-          var rows=await _get('labels',{'labelNo':'eq.'+q,'limit':'5'});
-          if(rows && rows.length) return rows[0];
-        } catch(e){ console.warn('[findLabelByCode] labelNo eq 失敗:', e && e.message || e); }
-        // 3. labelno 小寫精確匹配（相容 003 未跑的環境）
-        try {
-          var rows=await _get('labels',{'labelno':'eq.'+q,'limit':'5'});
-          if(rows && rows.length) return rows[0];
-        } catch(e){ console.warn('[findLabelByCode] labelno eq 失敗:', e && e.message || e); }
-        // 4. 備援：抓最近 1000 張 label 全量在前端比對（含 trim / 大小寫容錯）
-        try {
-          var rows=await _get('labels',{'order':'createTime.desc','limit':'1000'});
-          var qLower = q.toLowerCase();
+          var rows=await _get('labels',{'limit':'2000'});
+          console.log('[findLabelByCode] 抓到', (rows||[]).length, '張 labels，搜尋 q=', q);
+          var qLower=q.toLowerCase();
           var hit=(rows||[]).find(function(l){
             var lid=String(l.id||'').trim();
             var lno=String(l.labelNo||l.labelno||'').trim();
-            return lid===q || lno===q || lid.toLowerCase()===qLower || lno.toLowerCase()===qLower;
+            return lid===q || lno===q ||
+                   lid.toLowerCase()===qLower || lno.toLowerCase()===qLower;
           });
-          if(hit) return hit;
-        } catch(e){ console.warn('[findLabelByCode] 全量備援失敗:', e && e.message || e); }
-        return null;
+          if(hit){
+            console.log('[findLabelByCode] 命中:', hit.id, hit.labelNo||hit.labelno);
+            return hit;
+          }
+          console.warn('[findLabelByCode] 未命中，labels 中前 3 筆 id/labelNo 範例：',
+            (rows||[]).slice(0,3).map(function(l){ return {id:l.id, labelNo:l.labelNo||l.labelno}; }));
+          return null;
+        } catch(e){
+          console.error('[findLabelByCode] 全量抓取失敗:', e && e.message || e);
+          throw e;
+        }
       })(), cb, errCb);
     },
     addLeftoverInbound: function(dispatchId, leftover, cb, errCb){
