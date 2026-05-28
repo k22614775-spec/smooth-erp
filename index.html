@@ -9708,6 +9708,14 @@ window.addEventListener('DOMContentLoaded', function(){
             setScanInput('');
             return;
           }
+          // 拒絕「接單報工模式」已完工的標籤（startTime + endTime 都有值表示 stage-1 單段完工，不需 stage-2）
+          var hasSt = !!(label.startTime || label.starttime);
+          var hasEt = !!(label.endTime || label.endtime);
+          if (hasSt && hasEt && !did) {
+            setScanMsg('✗ 此標籤已由「接單報工模式」單段完工，無需條碼標籤報工');
+            setScanInput('');
+            return;
+          }
           // 寫入後端：labels.dispatchId + startTime + endTime + operator
           window.API.attachLabelToDispatch(label.id, dispatchId, {
             operator: operatorString
