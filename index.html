@@ -2116,11 +2116,35 @@ function switchTopMode(mode) {
     },
     findLabelByCode: function(code, cb, errCb){
       var q=String(code||'').trim();
+      if(!q){ if(cb) cb(null); return; }
       _cb((async function(){
-        var rows=await _get('labels',{'id':'eq.'+q,'limit':'1'}).catch(function(){ return []; });
-        if(rows && rows.length) return rows[0];
-        rows=await _get('labels',{'labelNo':'eq.'+q,'limit':'1'}).catch(function(){ return []; });
-        return (rows && rows[0]) || null;
+        // 1. id 精確匹配
+        try {
+          var rows=await _get('labels',{'id':'eq.'+q,'limit':'5'});
+          if(rows && rows.length) return rows[0];
+        } catch(e){ console.warn('[findLabelByCode] id eq 失敗:', e && e.message || e); }
+        // 2. labelNo 精確匹配
+        try {
+          var rows=await _get('labels',{'labelNo':'eq.'+q,'limit':'5'});
+          if(rows && rows.length) return rows[0];
+        } catch(e){ console.warn('[findLabelByCode] labelNo eq 失敗:', e && e.message || e); }
+        // 3. labelno 小寫精確匹配（相容 003 未跑的環境）
+        try {
+          var rows=await _get('labels',{'labelno':'eq.'+q,'limit':'5'});
+          if(rows && rows.length) return rows[0];
+        } catch(e){ console.warn('[findLabelByCode] labelno eq 失敗:', e && e.message || e); }
+        // 4. 備援：抓最近 1000 張 label 全量在前端比對（含 trim / 大小寫容錯）
+        try {
+          var rows=await _get('labels',{'order':'createTime.desc','limit':'1000'});
+          var qLower = q.toLowerCase();
+          var hit=(rows||[]).find(function(l){
+            var lid=String(l.id||'').trim();
+            var lno=String(l.labelNo||l.labelno||'').trim();
+            return lid===q || lno===q || lid.toLowerCase()===qLower || lno.toLowerCase()===qLower;
+          });
+          if(hit) return hit;
+        } catch(e){ console.warn('[findLabelByCode] 全量備援失敗:', e && e.message || e); }
+        return null;
       })(), cb, errCb);
     },
     addLeftoverInbound: function(dispatchId, leftover, cb, errCb){
