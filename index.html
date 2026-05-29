@@ -1860,10 +1860,20 @@ function switchTopMode(mode) {
         const y=d.getFullYear()-1911;
         const mm=String(d.getMonth()+1).padStart(2,'0');
         const dd=String(d.getDate()).padStart(2,'0');
-        const prefix=y+''+mm+dd;
+        // ★ idPrefix 須包含 "D" 否則 startsWith 永遠 false 導致同日續編失效
+        const idPrefix='D'+y+mm+dd;
         let maxSeq=0;
-        if(allDisp.length){ const last=String(allDisp[0].id||''); if(last.startsWith(prefix)) maxSeq=parseInt(last.slice(prefix.length),10)||0; }
-        const newId='D'+prefix+String(maxSeq+1).padStart(3,'0');
+        try {
+          const recent=await _get('dispatch_orders',{'select':'id','id':'like.'+idPrefix+'*','order':'id.desc','limit':'50'});
+          (recent||[]).forEach(function(r){
+            const s=String(r.id||'');
+            if(s.startsWith(idPrefix)){
+              const n=parseInt(s.slice(idPrefix.length),10)||0;
+              if(n>maxSeq) maxSeq=n;
+            }
+          });
+        } catch(e){ console.warn('[createDispatchFromOrder] 同日續編查詢失敗:', e&&e.message||e); }
+        const newId=idPrefix+String(maxSeq+1).padStart(3,'0');
         const now=_nowIso();
         const disp={id:newId,date:new Date().toLocaleDateString('zh-TW'),
           docCategory:'派工',docType:opts.docType||'',source:opts.source||'',
@@ -2066,15 +2076,24 @@ function switchTopMode(mode) {
     createLabelReportDispatch: function(opts, cb, errCb){
       opts = opts || {};
       _cb((async function(){
-        var allDisp = await _get('dispatch_orders',{'select':'id','order':'id.desc','limit':'1'});
         var d=new Date();
         var y=d.getFullYear()-1911;
         var mm=String(d.getMonth()+1).padStart(2,'0');
         var dd=String(d.getDate()).padStart(2,'0');
-        var prefix=y+''+mm+dd;
+        // ★ idPrefix 須包含 "D"
+        var idPrefix='D'+y+mm+dd;
         var maxSeq=0;
-        if(allDisp.length){ var last=String(allDisp[0].id||''); if(last.startsWith(prefix)) maxSeq=parseInt(last.slice(prefix.length),10)||0; }
-        var newId='D'+prefix+String(maxSeq+1).padStart(3,'0');
+        try {
+          var recent=await _get('dispatch_orders',{'select':'id','id':'like.'+idPrefix+'*','order':'id.desc','limit':'50'});
+          (recent||[]).forEach(function(r){
+            var s=String(r.id||'');
+            if(s.startsWith(idPrefix)){
+              var n=parseInt(s.slice(idPrefix.length),10)||0;
+              if(n>maxSeq) maxSeq=n;
+            }
+          });
+        } catch(e){ console.warn('[createLabelReportDispatch] 同日續編查詢失敗:', e&&e.message||e); }
+        var newId=idPrefix+String(maxSeq+1).padStart(3,'0');
         var now=_nowIso();
         var disp={
           id:newId, date:new Date().toLocaleDateString('zh-TW'),
@@ -2085,7 +2104,38 @@ function switchTopMode(mode) {
           receiveTime:now, status:'active', createdAt:now, updatedAt:now,
           remark:opts.remark||'條碼標籤報工（跨訂單）'
         };
-        await _upsert('dispatch_orders',disp);
+        // 用原生 INSERT（不 upsert）避免撞號時靜默覆寫舊資料
+        var _insRes = await fetch(_base()+'/dispatch_orders', {
+          method:'POST',
+          headers:_hdr({'Prefer':'return=minimal'}),
+          body: JSON.stringify(_cleanWriteObj(disp))
+        });
+        if(!_insRes.ok){
+          var _errTxt = await _insRes.text();
+          if(_errTxt.indexOf('23505')>=0 || _errTxt.indexOf('duplicate')>=0){
+            // 撞號 → 重新算 maxSeq+1 再 insert 一次
+            console.warn('[createLabelReportDispatch] ID '+newId+' 撞號，重新計算序號');
+            var _recent2 = await _get('dispatch_orders',{'select':'id','id':'like.'+idPrefix+'*','order':'id.desc','limit':'50'});
+            var _maxSeq2 = 0;
+            (_recent2||[]).forEach(function(r){
+              var s=String(r.id||'');
+              if(s.startsWith(idPrefix)){
+                var n=parseInt(s.slice(idPrefix.length),10)||0;
+                if(n>_maxSeq2) _maxSeq2=n;
+              }
+            });
+            newId = idPrefix + String(_maxSeq2+1).padStart(3,'0');
+            disp.id = newId;
+            var _insRes2 = await fetch(_base()+'/dispatch_orders', {
+              method:'POST',
+              headers:_hdr({'Prefer':'return=minimal'}),
+              body: JSON.stringify(_cleanWriteObj(disp))
+            });
+            if(!_insRes2.ok) throw new Error('重試 insert 仍失敗：'+await _insRes2.text());
+          } else {
+            throw new Error('createLabelReportDispatch insert 失敗：'+_errTxt);
+          }
+        }
         if(opts.operator){
           var rs={
             id:_uid('RS'), dispatchId:newId,
