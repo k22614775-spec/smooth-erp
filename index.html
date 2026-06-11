@@ -1097,6 +1097,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
                         <input type="text" id="pr-type-filter" style="width:130px; padding:2px 6px;" placeholder="關鍵字"
                                oninput="_renderPricingDoc(PricingState.curDocNo)">
                         <span style="margin-left:auto;"></span>
+                        <button class="btn-group" style="cursor:pointer; padding:3px 14px; font-weight:bold;" onclick="openPricingCopyModal()">📋 複製</button>
                         <select id="pr-print-layout" style="padding:3px 6px;"><option value="">— 選擇報價單版面 —</option></select>
                         <button class="btn-group" style="cursor:pointer; padding:3px 14px; font-weight:bold;" onclick="printPricingSheet()">🖨 列印報價單</button>
                     </div>
@@ -1106,6 +1107,51 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
                     </table>
                 </div>
             </div>
+        </div>
+
+        <!-- 複製 Modal -->
+        <div id="pricing-copy-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:9000; align-items:center; justify-content:center;">
+          <div style="background:#fff; border:1px solid #888; border-radius:6px; width:470px; max-width:95vw; box-shadow:0 6px 24px rgba(0,0,0,.3);">
+            <div style="background:#1e3a5f; color:#fff; padding:8px 12px; font-weight:bold; border-radius:6px 6px 0 0;">📋 定價複製</div>
+            <div style="padding:12px 16px; font-size:13px;">
+                <div style="margin-bottom:10px;">
+                    <label style="margin-right:18px;"><input type="radio" name="pc-scope" value="doc" checked onchange="pricingCopyScopeChanged()"> 整張定價單</label>
+                    <label><input type="radio" name="pc-scope" value="type" onchange="pricingCopyScopeChanged()"> 單一定價形式</label>
+                </div>
+                <!-- A1 整張定價單 -->
+                <div id="pc-doc-box">
+                    <div style="display:grid; grid-template-columns:110px 1fr; gap:6px 8px; align-items:center;">
+                        <span>來源定價編號</span><select id="pc-src-no" style="padding:3px 6px;"></select>
+                        <span>目的定價編號</span><input type="text" id="pc-dst-no" style="padding:3px 6px;" placeholder="新編號或既有編號">
+                        <span>目的定價名稱</span><input type="text" id="pc-dst-name" style="padding:3px 6px;" placeholder="新表頭必填；既有表頭留空＝不變">
+                        <span>生效日期起</span><input type="text" id="pc-dst-start" style="padding:3px 6px;" placeholder="YYY/MM/DD">
+                        <span>生效日期止</span><input type="text" id="pc-dst-end" style="padding:3px 6px;" placeholder="空白=無期限">
+                    </div>
+                    <div style="margin-top:8px;">
+                        <label style="margin-right:12px;"><input type="checkbox" id="pc-with-extras" checked> 連同配件(pricing_extras)一併複製</label>
+                    </div>
+                </div>
+                <!-- A2 單一定價形式 -->
+                <div id="pc-type-box" style="display:none;">
+                    <div style="display:grid; grid-template-columns:110px 1fr; gap:6px 8px; align-items:center;">
+                        <span>定價編號</span><span id="pc-cur-no" style="font-weight:bold;"></span>
+                        <span>來源定價形式</span><select id="pc-src-type" style="padding:3px 6px;"></select>
+                        <span>目的定價形式</span><select id="pc-dst-type" style="padding:3px 6px;"></select>
+                    </div>
+                </div>
+                <!-- 已存在資料 -->
+                <fieldset style="border:1px solid #bbb; margin-top:12px; padding:6px 10px;">
+                    <legend style="font-size:12px; padding:0 4px;">目的地已存在資料</legend>
+                    <label style="margin-right:18px;"><input type="radio" name="pc-mode" value="overwrite" checked> 清除後覆蓋</label>
+                    <label><input type="radio" name="pc-mode" value="append"> 附加（只補不存在的組合）</label>
+                </fieldset>
+                <div id="pc-msg" style="color:#b71c1c; min-height:18px; margin-top:6px;"></div>
+            </div>
+            <div style="padding:10px 16px; border-top:1px solid #ddd; text-align:right;">
+                <button class="btn-group" style="cursor:pointer; padding:5px 22px; font-weight:bold;" onclick="execPricingCopy()">✔ 確定</button>
+                <button class="btn-group" style="cursor:pointer; padding:5px 22px; margin-left:8px;" onclick="closePricingCopyModal()">✕ 取消</button>
+            </div>
+          </div>
         </div>
 
         <!-- 定價導覽工具列 -->
@@ -3646,6 +3692,95 @@ function switchTopMode(mode) {
     getPricingExtras: function(no, cat, cb, errCb){
       _cb(_get('pricing_extras',{'pricingNo':'eq.'+no,'category':'eq.'+cat,'order':'seq'}), cb, errCb);
     },
+    // ── 定價複製：整張定價單 ──
+    copyPricingDoc: function(srcNo, dst, mode, withExtras, cb, errCb){
+      var dstNo = dst.pricingNo;
+      var p = Promise.all([
+        _get('pricing_table',{'pricingNo':'eq.'+srcNo}),
+        _get('pricing_headers',{'pricingNo':'eq.'+dstNo}),
+        _get('pricing_table',{'pricingNo':'eq.'+dstNo}),
+      ]).then(function(r){
+        var srcRows = r[0]||[], dstHdr = r[1]||[], dstRows = r[2]||[];
+        if (!srcRows.length) throw new Error('來源定價編號「'+srcNo+'」沒有表身明細');
+        // 1. 表頭：新表頭必須有名稱；既有表頭名稱留空則沿用
+        var hdr = { pricingNo: dstNo,
+                    name: dst.name || (dstHdr[0] && (dstHdr[0].name||'')) || '',
+                    startDate: dst.startDate || (dstHdr[0] && (dstHdr[0].startDate||dstHdr[0].startdate||'')) || '',
+                    endDate: dst.endDate || (dstHdr[0] && (dstHdr[0].endDate||dstHdr[0].enddate||'')) || '' };
+        if (!hdr.name) throw new Error('目的為新表頭，請輸入「目的定價名稱」');
+        return _upsert('pricing_headers',[hdr]).then(function(){
+          // 2. 表身
+          var pre = (mode==='overwrite' && dstRows.length)
+            ? _del('pricing_table',{'pricingNo':'eq.'+dstNo}) : Promise.resolve(true);
+          return pre.then(function(){
+            var existKeys = {};
+            if (mode==='append'){
+              dstRows.forEach(function(d){
+                existKeys[(d.pricingType||d.pricingtype)+'|'+(d.pricingMachineType||d.pricingmachinetype)] = 1;
+              });
+            }
+            var newRows = [];
+            srcRows.forEach(function(s){
+              var ty=s.pricingType||s.pricingtype, mt=s.pricingMachineType||s.pricingmachinetype;
+              if (mode==='append' && existKeys[ty+'|'+mt]) return;
+              newRows.push({ pricingNo:dstNo, pricingType:ty, pricingMachineType:mt,
+                             price:s.price||0, remark:s.remark||'', updatedAt:'' });
+            });
+            return newRows.length ? _upsert('pricing_table', newRows).then(function(){ return newRows.length; })
+                                  : Promise.resolve(0);
+          });
+        }).then(function(n){
+          // 3. 配件
+          if (!withExtras) return { rows:n, extras:0 };
+          return Promise.all([
+            _get('pricing_extras',{'pricingNo':'eq.'+srcNo}),
+            _get('pricing_extras',{'pricingNo':'eq.'+dstNo}),
+          ]).then(function(e){
+            var se=e[0]||[], de=e[1]||[];
+            var pre = (mode==='overwrite' && de.length)
+              ? _del('pricing_extras',{'pricingNo':'eq.'+dstNo}) : Promise.resolve(true);
+            return pre.then(function(){
+              var exist = {};
+              if (mode==='append') de.forEach(function(x){ exist[(x.category||'')+'|'+(x.name||'')] = 1; });
+              var rows = [];
+              se.forEach(function(x){
+                if (mode==='append' && exist[(x.category||'')+'|'+(x.name||'')]) return;
+                rows.push({ pricingNo:dstNo, category:x.category||'', grp:x.grp||'', name:x.name||'',
+                            unit:x.unit||'', price:x.price||0, remark:x.remark||'', seq:x.seq||0 });
+              });
+              return rows.length ? _upsert('pricing_extras', rows).then(function(){ return { rows:n, extras:rows.length }; })
+                                 : Promise.resolve({ rows:n, extras:0 });
+            });
+          });
+        });
+      });
+      _cb(p, cb, errCb);
+    },
+    // ── 定價複製：單一定價形式（同一定價編號內）──
+    copyPricingType: function(no, srcType, dstType, mode, cb, errCb){
+      var p = _get('pricing_table',{'pricingNo':'eq.'+no}).then(function(rows){
+        rows = rows||[];
+        var srcRows = rows.filter(function(r){ return (r.pricingType||r.pricingtype)===srcType; });
+        if (!srcRows.length) throw new Error('來源定價形式「'+srcType+'」在此定價編號沒有明細');
+        var dstRows = rows.filter(function(r){ return (r.pricingType||r.pricingtype)===dstType; });
+        var pre = (mode==='overwrite' && dstRows.length)
+          ? _del('pricing_table',{'pricingNo':'eq.'+no,'pricingType':'eq.'+dstType}) : Promise.resolve(true);
+        return pre.then(function(){
+          var exist = {};
+          if (mode==='append') dstRows.forEach(function(d){ exist[d.pricingMachineType||d.pricingmachinetype] = 1; });
+          var newRows = [];
+          srcRows.forEach(function(s){
+            var mt = s.pricingMachineType||s.pricingmachinetype;
+            if (mode==='append' && exist[mt]) return;
+            newRows.push({ pricingNo:no, pricingType:dstType, pricingMachineType:mt,
+                           price:s.price||0, remark:s.remark||'', updatedAt:'' });
+          });
+          return newRows.length ? _upsert('pricing_table', newRows).then(function(){ return newRows.length; })
+                                : Promise.resolve(0);
+        });
+      });
+      _cb(p, cb, errCb);
+    },
     getMachinesFull: function(cb, errCb){
       _cb(Promise.all([
         _get('machines',{'order':'id'}),
@@ -4336,6 +4471,75 @@ window.addEventListener('DOMContentLoaded', function(){
             w.document.write(html.join('\n'));
             w.document.close(); w.focus();
             setTimeout(function(){ try { w.print(); } catch(e){} }, 400);
+        }
+
+        // ── 定價複製 Modal ──
+        function openPricingCopyModal(){
+            var m = document.getElementById('pricing-copy-modal'); if (!m) return;
+            // 來源定價編號
+            var sSrc = document.getElementById('pc-src-no');
+            sSrc.innerHTML = (PricingState.headers||[]).map(function(h){
+                var no=_prHdrNo(h);
+                return '<option'+(no===PricingState.curDocNo?' selected':'')+'>'+_esc(no)+'</option>';
+            }).join('');
+            // 形式下拉
+            var opts = '<option value=""></option>' + (PricingState.types||[]).map(function(r){
+                return '<option>'+_esc(r.value||'')+'</option>'; }).join('');
+            document.getElementById('pc-src-type').innerHTML = opts;
+            document.getElementById('pc-dst-type').innerHTML = opts;
+            document.getElementById('pc-cur-no').textContent = PricingState.curDocNo || '（未選擇）';
+            document.getElementById('pc-msg').textContent = '';
+            document.getElementById('pc-dst-no').value = '';
+            document.getElementById('pc-dst-name').value = '';
+            document.getElementById('pc-dst-start').value = '';
+            document.getElementById('pc-dst-end').value = '';
+            m.style.display = 'flex';
+        }
+        function closePricingCopyModal(){
+            var m = document.getElementById('pricing-copy-modal'); if (m) m.style.display = 'none';
+        }
+        function pricingCopyScopeChanged(){
+            var scope = (document.querySelector('input[name="pc-scope"]:checked')||{}).value || 'doc';
+            document.getElementById('pc-doc-box').style.display  = (scope==='doc')  ? '' : 'none';
+            document.getElementById('pc-type-box').style.display = (scope==='type') ? '' : 'none';
+        }
+        function execPricingCopy(){
+            var msg = document.getElementById('pc-msg');
+            var scope = (document.querySelector('input[name="pc-scope"]:checked')||{}).value || 'doc';
+            var mode  = (document.querySelector('input[name="pc-mode"]:checked')||{}).value || 'overwrite';
+            var g = function(i){ var el=document.getElementById(i); return el?el.value.trim():''; };
+            if (scope === 'doc'){
+                var srcNo = g('pc-src-no'), dstNo = g('pc-dst-no');
+                if (!dstNo) return msg.textContent = '請輸入目的定價編號';
+                if (dstNo === srcNo) return msg.textContent = '來源與目的定價編號不可相同';
+                var isNew = !(PricingState.headers||[]).some(function(h){ return _prHdrNo(h)===dstNo; });
+                if (isNew && !g('pc-dst-name')) return msg.textContent = '目的為新表頭，請輸入定價名稱';
+                if (mode==='overwrite' && !isNew &&
+                    !confirm('目的「'+dstNo+'」已存在，將清除其表身後覆蓋，確定？')) return;
+                msg.textContent = '複製中…';
+                window.API.copyPricingDoc(srcNo,
+                    { pricingNo:dstNo, name:g('pc-dst-name'), startDate:g('pc-dst-start'), endDate:g('pc-dst-end') },
+                    mode, !!document.getElementById('pc-with-extras').checked,
+                    function(res){
+                        closePricingCopyModal();
+                        alert('✅ 複製完成：表身 '+res.rows+' 筆'+(res.extras?('、配件 '+res.extras+' 筆'):'')+
+                              '\n建議：調價時用新生效日期的新定價編號保留歷史。');
+                        loadPricingPage(dstNo);
+                    },
+                    function(e){ msg.textContent = '複製失敗：'+(e&&e.message||e); });
+            } else {
+                var no = PricingState.curDocNo;
+                if (!no) return msg.textContent = '請先在主檔選擇定價編號';
+                var st = g('pc-src-type'), dt = g('pc-dst-type');
+                if (!st || !dt) return msg.textContent = '請選擇來源與目的定價形式';
+                if (st === dt) return msg.textContent = '來源與目的定價形式不可相同';
+                msg.textContent = '複製中…';
+                window.API.copyPricingType(no, st, dt, mode, function(n){
+                    closePricingCopyModal();
+                    alert('✅ 已複製 '+n+' 筆（'+st+' → '+dt+'）');
+                    loadPricingPage(no);
+                }, function(e){ msg.textContent = '複製失敗：'+(e&&e.message||e); });
+            }
         }
 
         // ==========================================
