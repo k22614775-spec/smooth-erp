@@ -1062,12 +1062,16 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
     <div id="pricing-app" class="app-view">
         <div class="toolbar"><span id="pricing-title">[定價設定]</span></div>
 
-        <!-- 表頭 -->
-        <div class="main-form">
-            <div class="form-label red">定價編號</div><input type="text" id="pr-no" class="form-input">
-            <div class="form-label red">定價名稱</div><input type="text" id="pr-name" class="form-input">
-            <div class="form-label">生效日期起</div><input type="text" id="pr-start" class="form-input" placeholder="YYY/MM/DD">
-            <div class="form-label">生效日期止</div><input type="text" id="pr-end" class="form-input" placeholder="空白=無期限">
+        <!-- 表頭（單行）-->
+        <div style="display:flex; gap:6px; padding:6px 10px; align-items:center; flex-wrap:wrap; background:#eef3fa; border-bottom:1px solid #c9d6e8;">
+            <span style="font-weight:bold; color:#c00000;">定價編號</span>
+            <input type="text" id="pr-no" style="width:110px; padding:3px 6px; border:1px solid #aaa;">
+            <span style="font-weight:bold; color:#c00000; margin-left:14px;">定價名稱</span>
+            <input type="text" id="pr-name" style="width:240px; padding:3px 6px; border:1px solid #aaa;">
+            <span style="font-weight:bold; margin-left:14px;">生效日期起</span>
+            <input type="text" id="pr-start" style="width:110px; padding:3px 6px; border:1px solid #aaa;" placeholder="YYY/MM/DD">
+            <span style="font-weight:bold; margin-left:14px;">生效日期止</span>
+            <input type="text" id="pr-end" style="width:110px; padding:3px 6px; border:1px solid #aaa;" placeholder="空白=無期限">
         </div>
 
         <!-- 表身（可直接編輯；最後一列按 ↓ 自動新增下一筆）-->
