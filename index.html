@@ -1070,24 +1070,6 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
             <div class="form-label">生效日期止</div><input type="text" id="pr-end" class="form-input" placeholder="空白=無期限">
         </div>
 
-        <!-- 代碼維護 -->
-        <div style="display:flex; gap:8px; padding:2px 8px 4px 8px;">
-            <div style="flex:1; border:1px solid #ccc; max-height:96px; overflow:auto; background:#fff;">
-                <div style="background:#dce9f7; padding:2px 6px; font-weight:bold; position:sticky; top:0;">定價形式代碼
-                    <input type="text" id="pr-new-type" style="width:140px;">
-                    <button style="cursor:pointer;" onclick="addPricingCodeUI('pricing_types','pr-new-type')">加入</button>
-                </div>
-                <div id="pr-type-list" style="padding:2px 6px; font-size:12px;"></div>
-            </div>
-            <div style="flex:1; border:1px solid #ccc; max-height:96px; overflow:auto; background:#fff;">
-                <div style="background:#dce9f7; padding:2px 6px; font-weight:bold; position:sticky; top:0;">機台定價形式代碼
-                    <input type="text" id="pr-new-mtype" style="width:140px;">
-                    <button style="cursor:pointer;" onclick="addPricingCodeUI('pricing_machine_types','pr-new-mtype')">加入</button>
-                </div>
-                <div id="pr-mtype-list" style="padding:2px 6px; font-size:12px;"></div>
-            </div>
-        </div>
-
         <!-- 表身（可直接編輯；最後一列按 ↓ 自動新增下一筆）-->
         <div class="grid-container">
             <table>
@@ -3944,7 +3926,6 @@ window.addEventListener('DOMContentLoaded', function(){
                 PricingState.mtypes  = d.mtypes  || [];
                 PricingState.rows    = d.rows    || [];
                 PricingState.deletedIds = [];
-                renderPricingCodeLists();
                 _initPricingNav();
                 var nos = PricingState.headers.map(_prHdrNo);
                 var idx = 0;
@@ -4149,56 +4130,6 @@ window.addEventListener('DOMContentLoaded', function(){
             }, function(e){ alert('儲存失敗：' + (e && e.message || e)); });
         }
 
-        // ── 代碼表 ──
-        function _prCodeChips(list, table){
-            if (!list.length) return '<span style="color:#999;">（無資料）</span>';
-            return list.map(function(r){
-                return '<span style="display:inline-block; border:1px solid #bbb; border-radius:3px; padding:0 4px; margin:1px; background:#f8f8f8;">' +
-                    _esc(r.value || '') +
-                    ' <a href="javascript:void(0)" style="color:#c00; text-decoration:none;" title="刪除" ' +
-                    'onclick="delPricingCodeUI(\'' + table + '\',' + r.id + ')">✕</a></span>';
-            }).join('');
-        }
-        function renderPricingCodeLists(){
-            var t = document.getElementById('pr-type-list');
-            if (t) t.innerHTML = _prCodeChips(PricingState.types, 'pricing_types');
-            var m = document.getElementById('pr-mtype-list');
-            if (m) m.innerHTML = _prCodeChips(PricingState.mtypes, 'pricing_machine_types');
-        }
-        function addPricingCodeUI(table, inputId){
-            var el = document.getElementById(inputId);
-            var v = el ? el.value.trim() : '';
-            if (!v) return alert('請先輸入代碼內容');
-            window.API.addPricingCode(table, v, function(){
-                if (el) el.value = '';
-                // 只更新代碼清單，不重載整頁（避免未儲存的表身被洗掉）
-                window.API.getPricingData(function(d){
-                    PricingState.types = d.types || []; PricingState.mtypes = d.mtypes || [];
-                    renderPricingCodeLists();
-                    _refreshPricingRowSelects();
-                });
-            }, function(e){ alert('加入失敗（可能重複）：' + (e && e.message || e)); });
-        }
-        function delPricingCodeUI(table, id){
-            if (!confirm('確定刪除此代碼？\n（已使用此代碼的定價列不受影響）')) return;
-            window.API.deletePricingCode(table, id, function(){
-                window.API.getPricingData(function(d){
-                    PricingState.types = d.types || []; PricingState.mtypes = d.mtypes || [];
-                    renderPricingCodeLists();
-                    _refreshPricingRowSelects();
-                });
-            }, function(e){ alert('刪除失敗：' + (e && e.message || e)); });
-        }
-        function _refreshPricingRowSelects(){
-            var body = document.getElementById('pricing-body');
-            if (!body) return;
-            Array.prototype.forEach.call(body.rows, function(tr){
-                var s1 = tr.cells[1].querySelector('select');
-                var s2 = tr.cells[2].querySelector('select');
-                if (s1) s1.innerHTML = _pricingSelectHtml(PricingState.types, s1.value);
-                if (s2) s2.innerHTML = _pricingSelectHtml(PricingState.mtypes, s2.value);
-            });
-        }
         function _nowLocalStr(){
             var d = new Date(), p = function(n){ return String(n).padStart(2,'0'); };
             return d.getFullYear() + '/' + p(d.getMonth()+1) + '/' + p(d.getDate()) +
@@ -7463,6 +7394,8 @@ window.addEventListener('DOMContentLoaded', function(){
     var orderIdInputId = findOrderIdInput();
     var purchaseIdInputId = findPurchaseIdInput();
     if (!orderIdInputId || !purchaseIdInputId) return;
+
+    window.RecordNav = RecordNav;   // 暴露給其他 script 區塊（定價設定使用）
 
     window.OrderNav = RecordNav({
       sysName:'order',
