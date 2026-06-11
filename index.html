@@ -1099,6 +1099,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
                                oninput="_renderPricingDoc(PricingState.curKey)">
                         <span style="margin-left:auto;"></span>
                         <button class="btn-group" style="cursor:pointer; padding:3px 14px; font-weight:bold;" onclick="openPricingCopyModal()">📋 複製</button>
+                        <button class="btn-group" style="cursor:pointer; padding:3px 14px; font-weight:bold;" onclick="openPricingAdjModal()">📈 調價</button>
                         <select id="pr-print-layout" style="padding:3px 6px;"><option value="">— 選擇報價單版面 —</option></select>
                         <button class="btn-group" style="cursor:pointer; padding:3px 14px; font-weight:bold;" onclick="printPricingSheet()">🖨 列印報價單</button>
                     </div>
@@ -1108,6 +1109,60 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
                     </table>
                 </div>
             </div>
+        </div>
+
+        <!-- 調價 Modal -->
+        <div id="pricing-adj-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:9000; align-items:center; justify-content:center;">
+          <div style="background:#fff; border:1px solid #888; border-radius:6px; width:720px; max-width:96vw; box-shadow:0 6px 24px rgba(0,0,0,.3); display:flex; flex-direction:column; max-height:92vh;">
+            <div style="background:#1e3a5f; color:#fff; padding:8px 12px; font-weight:bold; border-radius:6px 6px 0 0;">📈 材料售價調價</div>
+            <div style="padding:10px 14px; font-size:13px; overflow:auto;">
+                <div style="display:grid; grid-template-columns:90px 1fr 110px 1fr; gap:6px 8px; align-items:center;">
+                    <span>定價版本</span>
+                    <select id="pa-key" style="padding:3px 6px;"></select>
+                    <span>類別</span>
+                    <select id="pa-cat" style="padding:3px 6px;"></select>
+                    <span>定價形式</span>
+                    <input type="text" id="pa-type" style="padding:3px 6px;" placeholder="關鍵字，空白＝全部">
+                    <span>機台定價形式</span>
+                    <input type="text" id="pa-mtype" style="padding:3px 6px;" placeholder="關鍵字，空白＝全部">
+                </div>
+                <fieldset style="border:1px solid #bbb; margin-top:10px; padding:8px 10px;">
+                    <legend style="font-size:12px; padding:0 4px;">單價計算</legend>
+                    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                        <span>自定值</span>
+                        <input type="number" step="0.01" id="pa-fixed" style="width:90px; padding:3px 6px;" placeholder="直接設值">
+                        <span style="color:#888;">｜或　計算值：</span>
+                        <span style="background:#e8f5e9; padding:2px 8px; border:1px solid #1F7A46;">1.資料值(現價)</span>
+                        <select id="pa-op" style="padding:3px 6px;">
+                            <option value="add">1.加</option><option value="sub">2.減</option>
+                            <option value="mul">3.乘</option><option value="div">4.除</option>
+                            <option value="set">5.等於</option>
+                        </select>
+                        <input type="number" step="0.0001" id="pa-val" style="width:90px; padding:3px 6px;">
+                        <label><input type="checkbox" id="pa-round"> 取整數</label>
+                        <button class="btn-group" style="cursor:pointer; padding:2px 10px;" onclick="pricingAdjClear()">清除計算式</button>
+                    </div>
+                </fieldset>
+                <div style="display:flex; gap:8px; margin-top:10px; align-items:center;">
+                    <button class="btn-group" style="cursor:pointer; padding:4px 18px; font-weight:bold;" onclick="pricingAdjList()">列出</button>
+                    <button class="btn-group" style="cursor:pointer; padding:4px 18px; font-weight:bold;" onclick="pricingAdjCalc()">試算</button>
+                    <button class="btn-group" style="cursor:pointer; padding:4px 18px; font-weight:bold; color:#b71c1c;" onclick="pricingAdjApply()">調整</button>
+                    <button class="btn-group" style="cursor:pointer; padding:4px 18px;" onclick="closePricingAdjModal()">結束</button>
+                    <span id="pa-msg" style="color:#1e3a5f; font-weight:bold;"></span>
+                </div>
+                <div style="border:1px solid #aaa; margin-top:8px; max-height:330px; overflow:auto;">
+                    <table style="width:100%; border-collapse:collapse; font-size:12px;">
+                        <thead style="position:sticky; top:0;"><tr style="background:#dce9f7;">
+                            <th style="border:1px solid #bbb; padding:2px 6px;">定價形式</th>
+                            <th style="border:1px solid #bbb; padding:2px 6px;">機台定價形式</th>
+                            <th style="border:1px solid #bbb; padding:2px 6px; width:80px;">原單價</th>
+                            <th style="border:1px solid #bbb; padding:2px 6px; width:80px;">新單價</th>
+                        </tr></thead>
+                        <tbody id="pa-body"><tr><td colspan="4" style="text-align:center; color:#999; padding:14px;">（請設定條件後按「列出」）</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+          </div>
         </div>
 
         <!-- 複製 Modal -->
@@ -3776,6 +3831,10 @@ function switchTopMode(mode) {
       });
       _cb(p, cb, errCb);
     },
+    adjustPricingRows: function(rows, cb, errCb){
+      // rows 含 id（PK），POST merge-duplicates＝批次更新一次完成
+      _cb(_upsert('pricing_table', rows).then(function(){ return { ok:true, n:rows.length }; }), cb, errCb);
+    },
     // ── 定價複製：單一定價形式（同一版本內）──
     copyPricingType: function(no, start, srcType, dstType, mode, cb, errCb){
       var p = _get('pricing_table',{'pricingNo':'eq.'+no,'startDate':'eq.'+start}).then(function(rows){
@@ -4509,6 +4568,134 @@ window.addEventListener('DOMContentLoaded', function(){
             w.document.write(html.join('\n'));
             w.document.close(); w.focus();
             setTimeout(function(){ try { w.print(); } catch(e){} }, 400);
+        }
+
+        // ── 調價 Modal（列出 → 試算 → 調整 → 結束）──
+        var PricingAdj = { listed: [], calced: false };
+        function openPricingAdjModal(){
+            var m = document.getElementById('pricing-adj-modal'); if (!m) return;
+            var sKey = document.getElementById('pa-key');
+            sKey.innerHTML = (PricingState.headers||[]).map(function(h){
+                var k = _hk(h);
+                var sel = _keyEq(k, PricingState.curKey) ? ' selected' : '';
+                return '<option value="' + _esc(_keyStr(k)) + '"' + sel + '>' +
+                    _esc(k.no + '（起 ' + (k.start || '無') + '）' + (h.name ? ' ' + h.name : '')) + '</option>';
+            }).join('');
+            var sCat = document.getElementById('pa-cat');
+            sCat.innerHTML = '<option value="">全部</option>' + PRICING_CATS.map(function(c){
+                return '<option' + (c === PricingState.activeCat ? ' selected' : '') + '>' + c + '</option>';
+            }).join('');
+            PricingAdj.listed = []; PricingAdj.calced = false;
+            document.getElementById('pa-msg').textContent = '';
+            document.getElementById('pa-body').innerHTML =
+                '<tr><td colspan="4" style="text-align:center; color:#999; padding:14px;">（請設定條件後按「列出」）</td></tr>';
+            m.style.display = 'flex';
+        }
+        function closePricingAdjModal(){
+            var m = document.getElementById('pricing-adj-modal'); if (m) m.style.display = 'none';
+        }
+        function pricingAdjClear(){
+            document.getElementById('pa-fixed').value = '';
+            document.getElementById('pa-val').value = '';
+            document.getElementById('pa-op').value = 'add';
+            document.getElementById('pa-round').checked = false;
+            PricingAdj.calced = false;
+            _paRender();
+        }
+        function pricingAdjList(){
+            var key = _parseKey(_prG('pa-key'));
+            var cat = _prG('pa-cat');
+            var fTy = _prG('pa-type'), fMt = _prG('pa-mtype');
+            PricingAdj.listed = (PricingState.rows||[]).filter(function(r){
+                if (!_rowOfKey(r, key)) return false;
+                var ty = String(r.pricingType || r.pricingtype || '');
+                var mt = String(r.pricingMachineType || r.pricingmachinetype || '');
+                if (cat && _mtypeCat(mt) !== cat) return false;
+                if (fTy && ty.indexOf(fTy) < 0) return false;
+                if (fMt && mt.indexOf(fMt) < 0) return false;
+                return true;
+            }).map(function(r){
+                return { id: r.id, key: key,
+                         ty: r.pricingType || r.pricingtype || '',
+                         mt: r.pricingMachineType || r.pricingmachinetype || '',
+                         oldP: parseFloat(r.price) || 0, newP: null };
+            });
+            PricingAdj.calced = false;
+            document.getElementById('pa-msg').textContent = '符合 ' + PricingAdj.listed.length + ' 筆';
+            _paRender();
+        }
+        function _paFormula(cur){
+            var fixed = _prG('pa-fixed');
+            var v;
+            if (fixed !== ''){ v = parseFloat(fixed); }
+            else {
+                var x = parseFloat(_prG('pa-val'));
+                if (isNaN(x)) return null;
+                var op = _prG('pa-op');
+                if (op === 'add') v = cur + x;
+                else if (op === 'sub') v = cur - x;
+                else if (op === 'mul') v = cur * x;
+                else if (op === 'div'){ if (!x) return null; v = cur / x; }
+                else v = x;
+            }
+            if (isNaN(v)) return null;
+            if (document.getElementById('pa-round').checked) v = Math.round(v);
+            else v = Math.round(v * 100) / 100;
+            if (v < 0) v = 0;
+            return v;
+        }
+        function pricingAdjCalc(){
+            if (!PricingAdj.listed.length) pricingAdjList();
+            if (!PricingAdj.listed.length) return;
+            var fixed = _prG('pa-fixed'), val = _prG('pa-val');
+            if (fixed === '' && val === '')
+                return document.getElementById('pa-msg').textContent = '請輸入自定值或計算值';
+            var changed = 0;
+            PricingAdj.listed.forEach(function(r){
+                r.newP = _paFormula(r.oldP);
+                if (r.newP != null && r.newP !== r.oldP) changed++;
+            });
+            PricingAdj.calced = true;
+            document.getElementById('pa-msg').textContent =
+                '試算完成：' + PricingAdj.listed.length + ' 筆中 ' + changed + ' 筆將變動（尚未寫入）';
+            _paRender();
+        }
+        function _paRender(){
+            var body = document.getElementById('pa-body'); if (!body) return;
+            if (!PricingAdj.listed.length){
+                body.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#999; padding:14px;">（無符合資料）</td></tr>';
+                return;
+            }
+            body.innerHTML = PricingAdj.listed.map(function(r){
+                var diff = (r.newP != null && r.newP !== r.oldP);
+                return '<tr>' +
+                    '<td style="border:1px solid #ccc; padding:2px 6px;">' + _esc(r.ty) + '</td>' +
+                    '<td style="border:1px solid #ccc; padding:2px 6px;">' + _esc(r.mt) + '</td>' +
+                    '<td style="border:1px solid #ccc; padding:2px 6px; text-align:right;">' + _fmtPrice(r.oldP) + '</td>' +
+                    '<td style="border:1px solid #ccc; padding:2px 6px; text-align:right;' +
+                        (diff ? ' color:#c00; font-weight:bold;' : '') + '">' +
+                        (r.newP != null ? _fmtPrice(r.newP) : '') + '</td>' +
+                '</tr>';
+            }).join('');
+        }
+        function pricingAdjApply(){
+            if (!PricingAdj.calced) return document.getElementById('pa-msg').textContent = '請先按「試算」確認結果';
+            var rows = [];
+            var key = PricingAdj.listed.length ? PricingAdj.listed[0].key : null;
+            PricingAdj.listed.forEach(function(r){
+                if (r.newP == null || r.newP === r.oldP) return;
+                rows.push({ id: r.id, pricingNo: r.key.no, startDate: r.key.start,
+                            pricingType: r.ty, pricingMachineType: r.mt,
+                            price: r.newP, updatedAt: _nowLocalStr() });
+            });
+            if (!rows.length) return document.getElementById('pa-msg').textContent = '沒有需要變動的資料';
+            if (!confirm('確定調整 ' + rows.length + ' 筆單價？\n（建議重大調價先用「📋 複製」開新生效日版本再調，保留歷史）')) return;
+            document.getElementById('pa-msg').textContent = '寫入中…';
+            window.API.adjustPricingRows(rows, function(res){
+                closePricingAdjModal();
+                alert('✅ 調價完成：' + res.n + ' 筆已更新');
+                loadPricingPage(key ? _keyStr(key) : '');
+            }, function(e){ document.getElementById('pa-msg').textContent = '調整失敗：' + (e && e.message || e); });
         }
 
         // ── 定價複製 Modal（來源/目的＝版本）──
