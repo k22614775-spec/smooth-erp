@@ -1062,6 +1062,13 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
     <div id="pricing-app" class="app-view">
         <div class="toolbar"><span id="pricing-title">[定價設定]</span></div>
 
+        <!-- 主表：定價表頭清單（點選載入明細）-->
+        <div class="grid-container" style="max-height:150px; overflow:auto;">
+            <table><thead><tr><th style="width:120px;">定價編號</th><th>定價名稱</th><th style="width:110px;">生效日期起</th><th style="width:110px;">生效日期止</th><th style="width:80px;">明細筆數</th></tr></thead>
+                <tbody id="pricing-master-body"><tr><td colspan="5" style="text-align:center; color:#999; padding:10px;">（載入中…）</td></tr></tbody>
+            </table>
+        </div>
+
         <!-- 表頭（單行）-->
         <div style="display:flex; gap:6px; padding:6px 10px; align-items:center; flex-wrap:wrap; background:#eef3fa; border-bottom:1px solid #c9d6e8;">
             <span style="font-weight:bold; color:#c00000;">定價編號</span>
@@ -1074,12 +1081,17 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
             <input type="text" id="pr-end" style="width:110px; padding:3px 6px; border:1px solid #aaa;" placeholder="空白=無期限">
         </div>
 
-        <!-- 類別頁籤 + 列印報價單 -->
-        <div style="display:flex; gap:4px; padding:6px 10px 0 10px; align-items:flex-end; background:#f7fafc; border-bottom:1px solid #c9d6e8;">
-            <span id="pricing-cat-tabs" style="display:flex; gap:2px;"></span>
+        <!-- 明細篩選 + 列印報價單 -->
+        <div style="display:flex; gap:8px; padding:5px 10px; align-items:center; background:#f7fafc; border-bottom:1px solid #c9d6e8; flex-wrap:wrap;">
+            <span style="font-weight:bold;">明細篩選</span>
+            <span>類別</span>
+            <select id="pr-cat-filter" onchange="setPricingCat(this.value)" style="padding:2px 6px;"></select>
+            <span>定價形式</span>
+            <input type="text" id="pr-type-filter" style="width:150px; padding:2px 6px;" placeholder="關鍵字"
+                   oninput="_renderPricingDoc(PricingState.curDocNo)">
             <span style="margin-left:auto;"></span>
-            <select id="pr-print-layout" style="padding:3px 6px; margin-bottom:2px;"><option value="">— 選擇報價單版面 —</option></select>
-            <button class="btn-group" style="cursor:pointer; padding:3px 14px; font-weight:bold; margin-bottom:2px;" onclick="printPricingSheet()">🖨 列印報價單</button>
+            <select id="pr-print-layout" style="padding:3px 6px;"><option value="">— 選擇報價單版面 —</option></select>
+            <button class="btn-group" style="cursor:pointer; padding:3px 14px; font-weight:bold;" onclick="printPricingSheet()">🖨 列印報價單</button>
         </div>
 
         <!-- 表身（可直接編輯；最後一列按 ↓ 自動新增下一筆）-->
@@ -3946,7 +3958,8 @@ window.addEventListener('DOMContentLoaded', function(){
                 PricingState.rows    = d.rows    || [];
                 PricingState.deletedIds = [];
                 _initPricingNav();
-                renderPricingCatTabs();
+                renderPricingMasterGrid();
+                _populateCatFilter();
                 _populatePrintLayoutSelect();
                 var nos = PricingState.headers.map(_prHdrNo);
                 var idx = 0;
@@ -4009,6 +4022,8 @@ window.addEventListener('DOMContentLoaded', function(){
                     var mt = r.pricingMachineType || r.pricingmachinetype || '';
                     if (_mtypeCat(mt) !== PricingState.activeCat) return false;
                 }
+                var kw = (document.getElementById('pr-type-filter') || {}).value || '';
+                if (kw && String(r.pricingType || r.pricingtype || '').indexOf(kw) < 0) return false;
                 return true;
             });
             var body = document.getElementById('pricing-body');
@@ -4016,6 +4031,7 @@ window.addEventListener('DOMContentLoaded', function(){
             body.innerHTML = '';
             rows.forEach(function(r){ _appendPricingRow(r); });
             if (!rows.length) _appendPricingRow(null);   // 空白單給一列起頭
+            if (typeof renderPricingMasterGrid === 'function') renderPricingMasterGrid();
         }
 
         function _clearPricingDoc(no){
@@ -4172,18 +4188,41 @@ window.addEventListener('DOMContentLoaded', function(){
             if (PricingState.activeCat === '全部') return PricingState.mtypes;
             return PricingState.mtypes.filter(function(r){ return (r.category || '') === PricingState.activeCat; });
         }
-        function renderPricingCatTabs(){
-            var box = document.getElementById('pricing-cat-tabs'); if (!box) return;
-            box.innerHTML = PRICING_CATS.map(function(c){
-                var on = (c === PricingState.activeCat);
-                return '<button style="cursor:pointer; padding:4px 14px; border:1px solid #9db5d4; border-bottom:none;' +
-                    ' border-radius:5px 5px 0 0; background:' + (on ? '#fff' : '#dce9f7') +
-                    '; font-weight:' + (on ? 'bold' : 'normal') + ';" onclick="setPricingCat(\'' + c + '\')">' + c + '</button>';
+        function renderPricingMasterGrid(){
+            var body = document.getElementById('pricing-master-body'); if (!body) return;
+            var hs = PricingState.headers || [];
+            if (!hs.length){
+                body.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#999; padding:10px;">（尚無定價表頭，請按底部「新增I」建立）</td></tr>';
+                return;
+            }
+            body.innerHTML = hs.map(function(h){
+                var no = _prHdrNo(h);
+                var cnt = (PricingState.rows || []).filter(function(r){
+                    return String(r.pricingNo || r.pricingno || '') === String(no);
+                }).length;
+                var sel = (no === PricingState.curDocNo) ? ' class="selected-row"' : '';
+                return '<tr' + sel + ' style="cursor:pointer;" onclick="selectPricingMaster(\'' + _esc(no) + '\')">' +
+                    '<td style="font-weight:bold;">' + _esc(no) + '</td>' +
+                    '<td>' + _esc(h.name || '') + '</td>' +
+                    '<td>' + _esc(h.startDate || h.startdate || '') + '</td>' +
+                    '<td>' + _esc(h.endDate || h.enddate || '') + '</td>' +
+                    '<td class="text-right">' + cnt + '</td></tr>';
+            }).join('');
+        }
+        function selectPricingMaster(no){
+            if (!window.PricingNav) return;
+            var idx = window.PricingNav.list.indexOf(no);
+            if (idx >= 0) window.PricingNav.load(idx);
+        }
+        function _populateCatFilter(){
+            var sel = document.getElementById('pr-cat-filter');
+            if (!sel || sel.options.length) return;
+            sel.innerHTML = PRICING_CATS.map(function(c){
+                return '<option' + (c === PricingState.activeCat ? ' selected' : '') + '>' + c + '</option>';
             }).join('');
         }
         function setPricingCat(c){
-            PricingState.activeCat = c;
-            renderPricingCatTabs();
+            PricingState.activeCat = c || '全部';
             _renderPricingDoc(PricingState.curDocNo);
         }
         function _populatePrintLayoutSelect(){
