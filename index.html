@@ -1071,7 +1071,8 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
             <span style="font-weight:bold; margin-left:14px;">生效日期起</span>
             <input type="text" id="pr-start" style="width:110px; padding:3px 6px; border:1px solid #aaa;" placeholder="YYY/MM/DD">
             <span style="font-weight:bold; margin-left:14px;">生效日期止</span>
-            <input type="text" id="pr-end" style="width:110px; padding:3px 6px; border:1px solid #aaa;" placeholder="空白=無期限">
+            <input type="text" id="pr-end" readonly style="width:110px; padding:3px 6px; border:1px solid #aaa; background:#eee;" placeholder="自動帶入" title="自動帶入同編號下一版本的生效日期起；最後一版＝無期限">
+            <input type="hidden" id="pr-key" value="">
         </div>
 
         <!-- 主檔：定價表頭（上方全寬，點選載入明細）-->
@@ -1095,7 +1096,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
                     <div style="display:flex; gap:8px; padding:4px 8px; align-items:center; background:#f7fafc; border-bottom:1px solid #c9d6e8; flex-wrap:wrap;">
                         <span>定價形式</span>
                         <input type="text" id="pr-type-filter" style="width:130px; padding:2px 6px;" placeholder="關鍵字"
-                               oninput="_renderPricingDoc(PricingState.curDocNo)">
+                               oninput="_renderPricingDoc(PricingState.curKey)">
                         <span style="margin-left:auto;"></span>
                         <button class="btn-group" style="cursor:pointer; padding:3px 14px; font-weight:bold;" onclick="openPricingCopyModal()">📋 複製</button>
                         <select id="pr-print-layout" style="padding:3px 6px;"><option value="">— 選擇報價單版面 —</option></select>
@@ -1121,11 +1122,10 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
                 <!-- A1 整張定價單 -->
                 <div id="pc-doc-box">
                     <div style="display:grid; grid-template-columns:110px 1fr; gap:6px 8px; align-items:center;">
-                        <span>來源定價編號</span><select id="pc-src-no" style="padding:3px 6px;"></select>
+                        <span>來源（編號/起日）</span><select id="pc-src-no" style="padding:3px 6px;"></select>
                         <span>目的定價編號</span><input type="text" id="pc-dst-no" style="padding:3px 6px;" placeholder="新編號或既有編號">
                         <span>目的定價名稱</span><input type="text" id="pc-dst-name" style="padding:3px 6px;" placeholder="新表頭必填；既有表頭留空＝不變">
-                        <span>生效日期起</span><input type="text" id="pc-dst-start" style="padding:3px 6px;" placeholder="YYY/MM/DD">
-                        <span>生效日期止</span><input type="text" id="pc-dst-end" style="padding:3px 6px;" placeholder="空白=無期限">
+                        <span>生效日期起</span><input type="text" id="pc-dst-start" style="padding:3px 6px;" placeholder="YYY/MM/DD（同編號新版本必填不同起日）">
                     </div>
                     <div style="margin-top:8px;">
                         <label style="margin-right:12px;"><input type="checkbox" id="pc-with-extras" checked> 連同配件(pricing_extras)一併複製</label>
@@ -3655,33 +3655,54 @@ function switchTopMode(mode) {
         });
       }), cb, errCb);
     },
-    // ── 定價設定（pricing_headers 表頭 / pricing_table 表身 / 兩代碼表）──
+    // ── 定價設定（複合鍵：定價編號＋生效日期起；迄日自動＝下一版起日）──
     getPricingData: function(cb, errCb){
       _cb(Promise.all([
-        _get('pricing_headers',{'order':'pricingNo'}),
+        _get('pricing_headers',{'order':'pricingNo,startDate'}),
         _get('pricing_types',{'order':'id'}),
         _get('pricing_machine_types',{'order':'id'}),
         _get('pricing_table',{'order':'id'}),
       ]).then(function(r){ return {headers:r[0],types:r[1],mtypes:r[2],rows:r[3]}; }), cb, errCb);
     },
+    _recomputePricingEnds: function(no){
+      return _get('pricing_headers',{'pricingNo':'eq.'+no,'order':'startDate'}).then(function(hs){
+        hs = hs || [];
+        var ops = [];
+        for (var i = 0; i < hs.length; i++){
+          var want = (i < hs.length - 1) ? (hs[i+1].startDate || hs[i+1].startdate || '') : '';
+          var cur  = hs[i].endDate || hs[i].enddate || '';
+          if (cur !== want){
+            ops.push(_patch('pricing_headers',
+              {'pricingNo':'eq.'+no,'startDate':'eq.'+(hs[i].startDate || hs[i].startdate || '')},
+              { endDate: want }));
+          }
+        }
+        return Promise.all(ops);
+      });
+    },
     savePricingDoc: function(header, details, delIds, cb, errCb){
+      var self = this;
       var p = _upsert('pricing_headers',[header]).then(function(){
         var ops = [];
-        (delIds || []).forEach(function(id){
-          ops.push(_del('pricing_table',{'id':'eq.'+id}));
-        });
+        (delIds || []).forEach(function(id){ ops.push(_del('pricing_table',{'id':'eq.'+id})); });
         (details || []).forEach(function(d){
           if (d.id) ops.push(_patch('pricing_table',{'id':'eq.'+d.id}, d.row));
           else      ops.push(_upsert('pricing_table',[d.row]));
         });
         return Promise.all(ops);
+      }).then(function(){
+        return self._recomputePricingEnds(header.pricingNo);
       }).then(function(){ return {ok:true}; });
       _cb(p, cb, errCb);
     },
-    deletePricingHeader: function(no, cb, errCb){
-      _cb(_del('pricing_table',{'pricingNo':'eq.'+no}).then(function(){
-        return _del('pricing_headers',{'pricingNo':'eq.'+no});
-      }), cb, errCb);
+    deletePricingHeader: function(no, start, cb, errCb){
+      var self = this;
+      var p = _del('pricing_table',{'pricingNo':'eq.'+no,'startDate':'eq.'+start}).then(function(){
+        return _del('pricing_headers',{'pricingNo':'eq.'+no,'startDate':'eq.'+start});
+      }).then(function(){
+        return self._recomputePricingEnds(no);
+      });
+      _cb(p, cb, errCb);
     },
     addPricingCode: function(table, value, cb, errCb){
       _cb(_upsert(table,[{value:value}]).then(function(){ return {ok:true}; }), cb, errCb);
@@ -3692,91 +3713,91 @@ function switchTopMode(mode) {
     getPricingExtras: function(no, cat, cb, errCb){
       _cb(_get('pricing_extras',{'pricingNo':'eq.'+no,'category':'eq.'+cat,'order':'seq'}), cb, errCb);
     },
-    // ── 定價複製：整張定價單 ──
-    copyPricingDoc: function(srcNo, dst, mode, withExtras, cb, errCb){
-      var dstNo = dst.pricingNo;
+    // ── 定價複製：整張定價單（來源/目的均為 編號＋起日 版本）──
+    copyPricingDoc: function(srcKey, dst, mode, withExtras, cb, errCb){
+      var self = this;
       var p = Promise.all([
-        _get('pricing_table',{'pricingNo':'eq.'+srcNo}),
-        _get('pricing_headers',{'pricingNo':'eq.'+dstNo}),
-        _get('pricing_table',{'pricingNo':'eq.'+dstNo}),
+        _get('pricing_table',{'pricingNo':'eq.'+srcKey.no,'startDate':'eq.'+srcKey.start}),
+        _get('pricing_headers',{'pricingNo':'eq.'+dst.no,'startDate':'eq.'+dst.start}),
+        _get('pricing_table',{'pricingNo':'eq.'+dst.no,'startDate':'eq.'+dst.start}),
       ]).then(function(r){
         var srcRows = r[0]||[], dstHdr = r[1]||[], dstRows = r[2]||[];
-        if (!srcRows.length) throw new Error('來源定價編號「'+srcNo+'」沒有表身明細');
-        // 1. 表頭：新表頭必須有名稱；既有表頭名稱留空則沿用
-        var hdr = { pricingNo: dstNo,
-                    name: dst.name || (dstHdr[0] && (dstHdr[0].name||'')) || '',
-                    startDate: dst.startDate || (dstHdr[0] && (dstHdr[0].startDate||dstHdr[0].startdate||'')) || '',
-                    endDate: dst.endDate || (dstHdr[0] && (dstHdr[0].endDate||dstHdr[0].enddate||'')) || '' };
+        if (!srcRows.length) throw new Error('來源版本沒有表身明細');
+        var hdr = { pricingNo: dst.no, startDate: dst.start,
+                    name: dst.name || (dstHdr[0] && (dstHdr[0].name||'')) || '' };
         if (!hdr.name) throw new Error('目的為新表頭，請輸入「目的定價名稱」');
         return _upsert('pricing_headers',[hdr]).then(function(){
-          // 2. 表身
           var pre = (mode==='overwrite' && dstRows.length)
-            ? _del('pricing_table',{'pricingNo':'eq.'+dstNo}) : Promise.resolve(true);
+            ? _del('pricing_table',{'pricingNo':'eq.'+dst.no,'startDate':'eq.'+dst.start})
+            : Promise.resolve(true);
           return pre.then(function(){
-            var existKeys = {};
+            var exist = {};
             if (mode==='append'){
               dstRows.forEach(function(d){
-                existKeys[(d.pricingType||d.pricingtype)+'|'+(d.pricingMachineType||d.pricingmachinetype)] = 1;
+                exist[(d.pricingType||d.pricingtype)+'|'+(d.pricingMachineType||d.pricingmachinetype)] = 1;
               });
             }
-            var newRows = [];
+            var rows = [];
             srcRows.forEach(function(s){
               var ty=s.pricingType||s.pricingtype, mt=s.pricingMachineType||s.pricingmachinetype;
-              if (mode==='append' && existKeys[ty+'|'+mt]) return;
-              newRows.push({ pricingNo:dstNo, pricingType:ty, pricingMachineType:mt,
-                             price:s.price||0, remark:s.remark||'', updatedAt:'' });
+              if (mode==='append' && exist[ty+'|'+mt]) return;
+              rows.push({ pricingNo:dst.no, startDate:dst.start, pricingType:ty, pricingMachineType:mt,
+                          price:s.price||0, remark:s.remark||'', updatedAt:'' });
             });
-            return newRows.length ? _upsert('pricing_table', newRows).then(function(){ return newRows.length; })
-                                  : Promise.resolve(0);
+            return rows.length ? _upsert('pricing_table', rows).then(function(){ return rows.length; })
+                               : Promise.resolve(0);
           });
         }).then(function(n){
-          // 3. 配件
-          if (!withExtras) return { rows:n, extras:0 };
+          // 配件不分版本，僅在「不同編號」時複製
+          if (!withExtras || dst.no === srcKey.no) return { rows:n, extras:0 };
           return Promise.all([
-            _get('pricing_extras',{'pricingNo':'eq.'+srcNo}),
-            _get('pricing_extras',{'pricingNo':'eq.'+dstNo}),
+            _get('pricing_extras',{'pricingNo':'eq.'+srcKey.no}),
+            _get('pricing_extras',{'pricingNo':'eq.'+dst.no}),
           ]).then(function(e){
             var se=e[0]||[], de=e[1]||[];
             var pre = (mode==='overwrite' && de.length)
-              ? _del('pricing_extras',{'pricingNo':'eq.'+dstNo}) : Promise.resolve(true);
+              ? _del('pricing_extras',{'pricingNo':'eq.'+dst.no}) : Promise.resolve(true);
             return pre.then(function(){
               var exist = {};
               if (mode==='append') de.forEach(function(x){ exist[(x.category||'')+'|'+(x.name||'')] = 1; });
               var rows = [];
               se.forEach(function(x){
                 if (mode==='append' && exist[(x.category||'')+'|'+(x.name||'')]) return;
-                rows.push({ pricingNo:dstNo, category:x.category||'', grp:x.grp||'', name:x.name||'',
+                rows.push({ pricingNo:dst.no, category:x.category||'', grp:x.grp||'', name:x.name||'',
                             unit:x.unit||'', price:x.price||0, remark:x.remark||'', seq:x.seq||0 });
               });
               return rows.length ? _upsert('pricing_extras', rows).then(function(){ return { rows:n, extras:rows.length }; })
                                  : Promise.resolve({ rows:n, extras:0 });
             });
           });
+        }).then(function(res){
+          return self._recomputePricingEnds(dst.no).then(function(){ return res; });
         });
       });
       _cb(p, cb, errCb);
     },
-    // ── 定價複製：單一定價形式（同一定價編號內）──
-    copyPricingType: function(no, srcType, dstType, mode, cb, errCb){
-      var p = _get('pricing_table',{'pricingNo':'eq.'+no}).then(function(rows){
+    // ── 定價複製：單一定價形式（同一版本內）──
+    copyPricingType: function(no, start, srcType, dstType, mode, cb, errCb){
+      var p = _get('pricing_table',{'pricingNo':'eq.'+no,'startDate':'eq.'+start}).then(function(rows){
         rows = rows||[];
         var srcRows = rows.filter(function(r){ return (r.pricingType||r.pricingtype)===srcType; });
-        if (!srcRows.length) throw new Error('來源定價形式「'+srcType+'」在此定價編號沒有明細');
+        if (!srcRows.length) throw new Error('來源定價形式「'+srcType+'」在此版本沒有明細');
         var dstRows = rows.filter(function(r){ return (r.pricingType||r.pricingtype)===dstType; });
         var pre = (mode==='overwrite' && dstRows.length)
-          ? _del('pricing_table',{'pricingNo':'eq.'+no,'pricingType':'eq.'+dstType}) : Promise.resolve(true);
+          ? _del('pricing_table',{'pricingNo':'eq.'+no,'startDate':'eq.'+start,'pricingType':'eq.'+dstType})
+          : Promise.resolve(true);
         return pre.then(function(){
           var exist = {};
           if (mode==='append') dstRows.forEach(function(d){ exist[d.pricingMachineType||d.pricingmachinetype] = 1; });
-          var newRows = [];
+          var rows2 = [];
           srcRows.forEach(function(s){
             var mt = s.pricingMachineType||s.pricingmachinetype;
             if (mode==='append' && exist[mt]) return;
-            newRows.push({ pricingNo:no, pricingType:dstType, pricingMachineType:mt,
-                           price:s.price||0, remark:s.remark||'', updatedAt:'' });
+            rows2.push({ pricingNo:no, startDate:start, pricingType:dstType, pricingMachineType:mt,
+                         price:s.price||0, remark:s.remark||'', updatedAt:'' });
           });
-          return newRows.length ? _upsert('pricing_table', newRows).then(function(){ return newRows.length; })
-                                : Promise.resolve(0);
+          return rows2.length ? _upsert('pricing_table', rows2).then(function(){ return rows2.length; })
+                              : Promise.resolve(0);
         });
       });
       _cb(p, cb, errCb);
@@ -4079,18 +4100,30 @@ window.addEventListener('DOMContentLoaded', function(){
         // ───────────────────────────────────────────────────────────────────
 
         // ==========================================
-        // 定價設定 (pricing-app)：單據模式（RecordNav + 表身 inline 編輯）
+        // 定價設定 (pricing-app)：複合鍵版本（編號＋生效日期起）
         // ==========================================
         var PricingState = { headers: [], types: [], mtypes: [], rows: [], deletedIds: [],
-                             activeCat: '烤漆板', curDocNo: '' };
+                             activeCat: '烤漆板', curKey: null };
         var PRICING_CATS = ['烤漆板','特殊斷面','白鐵板','裝潢板','壓花壁板'];
-        // 五份報價單列印版面（由 定價/*.xlsx 自動產生：列=定價形式、欄=機台定價形式）
+        // 五份報價單列印版面（由 定價/*.xlsx 自動產生）
         var PRICING_PRINT_LAYOUTS = [{"name": "烤漆板", "title": "(烤漆板)-報價單", "extrasCat": "烤漆板", "sections": [{"colGroups": null, "cols": [{"g": "5溝型/760型", "l": "清板", "c": "5溝760型-清板"}, {"g": "5溝型/760型", "l": "PU", "c": "5溝760型-PU"}, {"g": "5溝型/760型", "l": "PU雙層", "c": "5溝760型-PU雙層"}, {"g": "高三溝/750型", "l": "清板", "c": "高三溝750型-清板"}, {"g": "高三溝/750型", "l": "PU", "c": "高三溝750型-PU"}, {"g": "高三溝/750型", "l": "PU雙層", "c": "高三溝750型-PU雙層"}, {"g": "高三溝/750型", "l": "PU雙層3.5公分", "c": "高三溝750型-PU雙層3.5公分"}, {"g": "高三溝/750型", "l": "PU雙層5公分", "c": "高三溝750型-PU雙層5公分"}, {"g": "琉璃瓦", "l": "清板", "c": "琉璃瓦-清板"}, {"g": "琉璃瓦", "l": "PU", "c": "琉璃瓦-PU"}, {"g": "琉璃瓦", "l": "PU雙層", "c": "琉璃瓦-PU雙層"}], "rows": [{"l": "副牌(鍍鋁)", "t": "0.5", "c": "副牌(鍍鋁)-0.5"}, {"l": "副牌(鍍鋁)", "t": "0.6", "c": "副牌(鍍鋁)-0.6"}, {"l": "副牌(消光)", "t": "0.5", "c": "副牌(消光)-0.5"}, {"l": "副牌(消光)", "t": "0.6", "c": "副牌(消光)-0.6"}, {"l": "燁輝(鍍鋅)", "t": "0.5", "c": "燁輝(鍍鋅)-0.5"}, {"l": "燁輝(鍍鋅)", "t": "0.6", "c": "燁輝(鍍鋅)-0.6"}, {"l": "燁輝(消光)", "t": "0.5", "c": "燁輝(消光)-0.5"}, {"l": "燁輝(消光)", "t": "0.6", "c": "燁輝(消光)-0.6"}, {"l": "燁輝(鋁鋅)", "t": "0.5", "c": "燁輝(鋁鋅)-0.5"}, {"l": "燁輝(鋁鋅)", "t": "0.6", "c": "燁輝(鋁鋅)-0.6"}, {"l": "盛餘(鋁鋅)", "t": "0.5", "c": "盛餘(鋁鋅)-0.5"}, {"l": "盛餘(鋁鋅)", "t": "0.6", "c": "盛餘(鋁鋅)-0.6"}, {"l": "盛餘(消光)", "t": "0.5", "c": "盛餘(消光)-0.5"}, {"l": "盛餘(消光)", "t": "0.6", "c": "盛餘(消光)-0.6"}, {"l": "燁輝(礦纖)", "t": "0.5", "c": "燁輝(礦纖)-0.5"}, {"l": "燁輝(礦纖)", "t": "0.6", "c": "燁輝(礦纖)-0.6"}, {"l": "燁輝(玄鐵)", "t": "0.5", "c": "燁輝(玄鐵)-0.5"}, {"l": "燁輝(玄鐵)", "t": "0.6", "c": "燁輝(玄鐵)-0.6"}, {"l": "燁輝樹脂牙/果/灰", "t": "單面", "c": "燁輝樹脂牙/果/灰-單面"}, {"l": "燁輝樹脂牙/果", "t": "雙面", "c": "燁輝樹脂牙/果-雙面"}, {"l": "燁輝樹脂墨綠", "t": "單面", "c": "燁輝樹脂墨綠-單面"}, {"l": "燁輝樹脂紅", "t": "單面", "c": "燁輝樹脂紅-單面"}, {"l": "盛餘SMP", "t": "0.6", "c": "盛餘SMP-0.6"}, {"l": "盛餘PVDF", "t": "0.6", "c": "盛餘PVDF-0.6"}, {"l": "鎂合金(烤漆)k22", "t": "0.5", "c": "鎂合金(烤漆)k22-0.5"}, {"l": "鎂合金(烤漆)k22", "t": "0.6", "c": "鎂合金(烤漆)k22-0.6"}, {"l": "鎂合金(烤漆)k27", "t": "0.5", "c": "鎂合金(烤漆)k27-0.5"}, {"l": "鎂合金(烤漆)k27", "t": "0.6", "c": "鎂合金(烤漆)k27-0.6"}, {"l": "木石紋(盛餘)", "t": "0.5", "c": "木石紋(盛餘)-0.5"}, {"l": "髮絲(盛餘)", "t": "0.6", "c": "髮絲(盛餘)-0.6"}]}], "notes": ["OPP金龍板 每尺 +8", "彎弓(5H-750) 每尺 +4", "防火系列另行報價"]}, {"name": "特殊斷面", "title": "(特殊斷面)-報價單", "extrasCat": "特殊斷面", "sections": [{"cols": [{"g": "310型扣合式", "l": "清板（10.7尺/m2）", "c": "310型扣合式-清板"}, {"g": "425B型咬合式", "l": "清板（7.8尺/m2）", "c": "425B型咬合式-清板"}, {"g": "430型2H扣合式", "l": "清板（7.8尺/m2）", "c": "430型2H扣合式-清板"}, {"g": "430型3H扣合式", "l": "清板（7.8尺/m2）", "c": "430型3H扣合式-清板"}, {"g": "730B型咬合式", "l": "清板（4.6尺/m2）", "c": "730B型咬合式-清板"}, {"g": "1000型螺栓式", "l": "清板（3.3尺/m2）", "c": "1000型螺栓式-清板"}], "rows": [{"l": "副牌(鍍鋁)", "t": "0.5", "c": "副牌(鍍鋁)-0.5"}, {"l": "副牌(鍍鋁)", "t": "0.6", "c": "副牌(鍍鋁)-0.6"}, {"l": "副牌(消光)", "t": "0.5", "c": "副牌(消光)-0.5"}, {"l": "副牌(消光)", "t": "0.6", "c": "副牌(消光)-0.6"}, {"l": "燁輝(鍍鋅)", "t": "0.5", "c": "燁輝(鍍鋅)-0.5"}, {"l": "燁輝(鍍鋅)", "t": "0.6", "c": "燁輝(鍍鋅)-0.6"}, {"l": "燁輝(消光)", "t": "0.5", "c": "燁輝(消光)-0.5"}, {"l": "燁輝(消光)", "t": "0.6", "c": "燁輝(消光)-0.6"}, {"l": "燁輝(鋁鋅)", "t": "0.5", "c": "燁輝(鋁鋅)-0.5"}, {"l": "燁輝(鋁鋅)", "t": "0.6", "c": "燁輝(鋁鋅)-0.6"}, {"l": "盛餘(鋁鋅)", "t": "0.5", "c": "盛餘(鋁鋅)-0.5"}, {"l": "盛餘(鋁鋅)", "t": "0.6", "c": "盛餘(鋁鋅)-0.6"}, {"l": "盛餘(消光)", "t": "0.5", "c": "盛餘(消光)-0.5"}, {"l": "燁輝(礦纖玄鐵)", "t": "0.6", "c": "燁輝(礦纖玄鐵)-0.6"}, {"l": "盛餘(木石紋)", "t": "0.5", "c": "木石紋(盛餘)-0.5"}, {"l": "盛餘(髮絲)", "t": "0.6", "c": "髮絲(盛餘)-0.6"}, {"l": "SMP盛餘", "t": "0.6", "c": "盛餘SMP-0.6"}, {"l": "PVDF盛餘", "t": "0.6", "c": "盛餘PVDF-0.6"}, {"l": "白鐵(烤漆)", "t": "0.4", "c": "白鐵(烤漆)-0.4"}, {"l": "白鐵(烤漆)", "t": "0.5", "c": "白鐵(烤漆)-0.5"}]}], "notes": ["730B型 0.5 建議改用 0.6"]}, {"name": "白鐵板", "title": "(白鐵板)-報價單", "extrasCat": "白鐵板", "sections": [{"cols": [{"g": "4溝/770型", "l": "清板", "c": "4溝770型-清板"}, {"g": "4溝/770型", "l": "金龍板OPP", "c": "4溝770型-金龍板OPP"}, {"g": "5溝/760型", "l": "PU", "c": "5溝760型-PU"}, {"g": "5溝/760型", "l": "PU雙層", "c": "5溝760型-PU雙層"}, {"g": "5溝/760型", "l": "PU雙層 底:白鐵(烤鋁白)", "c": "5溝760型-PU雙層底白鐵"}, {"g": "3溝/750型", "l": "清板", "c": "高三溝750型-清板"}, {"g": "3溝/750型", "l": "PU", "c": "高三溝750型-PU"}, {"g": "3溝/750型", "l": "PU雙層", "c": "高三溝750型-PU雙層"}, {"g": "琉璃瓦", "l": "清板", "c": "琉璃瓦-清板"}, {"g": "琉璃瓦", "l": "PU", "c": "琉璃瓦-PU"}, {"g": "琉璃瓦", "l": "PU雙層", "c": "琉璃瓦-PU雙層"}], "rows": [{"l": "白鐵(烤透明漆)", "t": "0.4", "c": "白鐵(烤透明漆)-0.4"}, {"l": "白鐵(烤透明漆)", "t": "0.5", "c": "白鐵(烤透明漆)-0.5"}, {"l": "白鐵(烤鋁鋅色)", "t": "0.4", "c": "白鐵(烤鋁鋅色)-0.4"}, {"l": "白鐵(烤鋁鋅色)", "t": "0.5", "c": "白鐵(烤鋁鋅色)-0.5"}, {"l": "白鐵(烤鋁鋅色)", "t": "0.6", "c": "白鐵(烤鋁鋅色)-0.6"}, {"l": "白鐵(烤消光色)", "t": "0.4", "c": "白鐵(烤消光色)-0.4"}, {"l": "白鐵(烤消光色)", "t": "0.5", "c": "白鐵(烤消光色)-0.5"}, {"l": "白鐵(烤消光色)", "t": "0.6", "c": "白鐵(烤消光色)-0.6"}]}], "notes": ["5溝/750型-彎弓:每尺加 6 元", "680型貨櫃浪/770型磁鋼板同5溝/760 清板單價", "0.4白鐵(烤鋁鋅色) 顏色:鋁牙白 /鋁翠/ 鋁灰/ 鋁白", "0.4白鐵(烤消光色) 顏色:消光灰", "0.5白鐵(烤鋁鋅色) 顏色:鋁牙白 /鋁翠/ 鋁灰/ 鋁紅/ 鋁白", "0.5白鐵(烤消光色) 顏色:消光灰 /消光紅", "0.6白鐵(烤鋁鋅色) 顏色:鋁牙白 /鋁灰", "0.6白鐵(烤消光色) 顏色:消光灰"]}, {"name": "裝潢板", "title": "(裝潢板)-報價單", "extrasCat": "裝潢板", "sections": [{"cols": [{"g": "350裝潢板(31尺/坪)", "l": "PU鋁箔", "c": "350裝潢板-PU鋁箔"}, {"g": "350裝潢板(31尺/坪)", "l": "PU烤板", "c": "350裝潢板-PU烤板"}, {"g": "153型企口板(72尺/坪)", "l": "清板", "c": "153型企口板-清板"}, {"g": "240型小圓浪(46.2尺/坪)", "l": "清板", "c": "240型小圓浪-清板"}, {"g": "265型企口板(41尺/坪)", "l": "清板", "c": "265型企口板-清板"}, {"g": "307型貨櫃浪(35.5尺/坪)", "l": "清板", "c": "307型貨櫃浪-清板"}, {"g": "320型三平面(34尺/坪)", "l": "清板", "c": "320型三平面-清板"}, {"g": "680型貨櫃浪(16尺/坪)", "l": "清板", "c": "680型貨櫃浪-清板"}, {"g": "770型磁鋼板(14.5尺/坪)", "l": "清板", "c": "770型磁鋼板-清板"}], "rows": [{"l": "(烤漆)一般", "t": "0.5", "c": "(烤漆)一般-0.5"}, {"l": "(消光)一般", "t": "0.5", "c": "(消光)一般-0.5"}, {"l": "燁輝(鍍鋅)", "t": "0.5", "c": "燁輝(鍍鋅)-0.5"}, {"l": "燁輝(消光)", "t": "0.5", "c": "燁輝(消光)-0.5"}, {"l": "燁輝(鋁鋅)", "t": "0.5", "c": "燁輝(鋁鋅)-0.5"}, {"l": "盛餘(鋁鋅)", "t": "0.5", "c": "盛餘(鋁鋅)-0.5"}, {"l": "盛餘消光/燁輝玄鐵", "t": "0.5", "c": "盛餘消光/燁輝玄鐵-0.5"}, {"l": "燁輝(礦纖)", "t": "0.5", "c": "燁輝(礦纖)-0.5"}, {"l": "盛餘(木石紋)", "t": "0.5", "c": "木石紋(盛餘)-0.5"}, {"l": "盛餘(髮絲)", "t": "0.6", "c": "髮絲(盛餘)-0.6"}, {"l": "盛餘(SMP)", "t": "0.6", "c": "盛餘SMP-0.6"}, {"l": "盛餘(PVDF)", "t": "0.6", "c": "盛餘PVDF-0.6"}, {"l": "燁輝單面樹脂/牙/果", "t": "0.5", "c": "燁輝單面樹脂/牙/果-0.5"}, {"l": "白鐵(烤漆)", "t": "0.4", "c": "白鐵(烤漆)-0.4"}, {"l": "白鐵(烤漆)", "t": "0.5", "c": "白鐵(烤漆)-0.5"}]}], "notes": ["0.6 加價：一般副牌 350型+4／153型+3／240~320型+4／680‧770型+8", "0.6 加價：燁輝盛餘 350型+5／153型+3／240~320型+5／680‧770型+9", "350裝潢板專用鋁料／琉璃瓦副件 詳附表（特殊色另報）"]}, {"name": "壓花壁板", "title": "(裝潢板/壓花壁板)-報價單", "extrasCat": "壓花壁板", "sections": [{"cols": [{"g": "350型壓花壁板(31尺/坪)", "l": "PU鋁箔", "c": "350型壓花壁板-PU鋁箔"}, {"g": "350型壓花壁板(31尺/坪)", "l": "PU錏板", "c": "350型壓花壁板-PU錏板"}, {"g": "350型壓花壁板(31尺/坪)", "l": "PU烤板", "c": "350型壓花壁板-PU烤板"}], "rows": [{"l": "一般色(烤漆)", "t": "", "c": "一般色(烤漆)"}, {"l": "特殊色(消光)", "t": "", "c": "特殊色(消光)"}, {"l": "盛餘(鋁鋅)", "t": "", "c": "盛餘(鋁鋅)"}, {"l": "盛餘(消光)", "t": "", "c": "盛餘(消光)"}, {"l": "燁輝(礦纖)", "t": "", "c": "燁輝(礦纖)"}, {"l": "木紋.石紋", "t": "", "c": "木紋.石紋"}, {"l": "燁輝(樹脂)牙.果", "t": "", "c": "燁輝(樹脂)牙.果"}]}, {"cols": [{"g": "360型壓花壁板(30尺/坪)", "l": "PU鋁箔", "c": "360型壓花壁板-PU鋁箔"}, {"g": "360型壓花壁板(30尺/坪)", "l": "PU錏板", "c": "360型壓花壁板-PU錏板"}, {"g": "360型壓花壁板(30尺/坪)", "l": "PU烤板", "c": "360型壓花壁板-PU烤板"}], "rows": [{"l": "盛餘(烤漆.消光)", "t": "", "c": "盛餘(烤漆.消光)"}, {"l": "盛餘(木紋.岩石)", "t": "", "c": "盛餘(木紋.岩石)"}]}, {"cols": [{"g": "395型壓花壁板(28尺/坪)", "l": "PU鋁箔", "c": "395型壓花壁板-PU鋁箔"}, {"g": "395型壓花壁板(28尺/坪)", "l": "PU錏板", "c": "395型壓花壁板-PU錏板"}, {"g": "395型壓花壁板(28尺/坪)", "l": "PU烤板", "c": "395型壓花壁板-PU烤板"}], "rows": [{"l": "盛餘(烤漆.消光)", "t": "", "c": "盛餘(烤漆.消光)"}, {"l": "盛餘(岩石)", "t": "", "c": "盛餘(岩石)"}]}, {"cols": [{"g": "385型壓花壁板(28.4尺/坪)", "l": "PU鋁箔", "c": "385型壓花壁板-PU鋁箔"}, {"g": "385型壓花壁板(28.4尺/坪)", "l": "PU烤板", "c": "385型壓花壁板-PU烤板"}], "rows": [{"l": "盛餘(消光)", "t": "", "c": "盛餘(消光)"}, {"l": "盛餘(石紋)", "t": "", "c": "盛餘(石紋)"}, {"l": "燁輝(礦纖)", "t": "", "c": "燁輝(礦纖)"}, {"l": "385城寶石(燁輝)", "t": "", "c": "385城寶石(燁輝)"}]}, {"cols": [{"g": "760型磚型壁板(14.5尺/坪)", "l": "PU", "c": "760型磚型壁板-PU"}, {"g": "760型磚型壁板(14.5尺/坪)", "l": "清板", "c": "760型磚型壁板-清板"}], "rows": [{"l": "方塊磚.小口磚(一般)", "t": "", "c": "方塊磚.小口磚(一般)"}, {"l": "方塊磚.小口磚(盛餘.燁輝)", "t": "", "c": "方塊磚.小口磚(盛餘.燁輝)"}, {"l": "交丁型.直丁型(一般)", "t": "", "c": "交丁型.直丁型(一般)"}, {"l": "交丁型.直丁型(盛餘.燁輝)", "t": "", "c": "交丁型.直丁型(盛餘.燁輝)"}]}, {"cols": [{"g": "210型壓花壁板(52尺/坪)", "l": "PU鋁箔", "c": "210型壓花壁板-PU鋁箔"}, {"g": "210型壓花壁板(52尺/坪)", "l": "PU錏板", "c": "210型壓花壁板-PU錏板"}, {"g": "210型壓花壁板(52尺/坪)", "l": "清板", "c": "210型壓花壁板-清板"}], "rows": [{"l": "盛餘(烤漆.消光)", "t": "", "c": "盛餘(烤漆.消光)"}, {"l": "盛餘(木紋.岩石)", "t": "", "c": "盛餘(木紋.岩石)"}]}], "notes": ["各型適用花色請參考型錄", "(無清板/無錏板/無烤板) 表示該型不提供該工法"]}];
 
         function _prG(i){ var el = document.getElementById(i); return el ? el.value.trim() : ''; }
         function _prHdrNo(h){ return h.pricingNo || h.pricingno || ''; }
+        function _hStart(h){ return h.startDate || h.startdate || ''; }
+        function _hk(h){ return { no: _prHdrNo(h), start: _hStart(h) }; }
+        function _keyStr(k){ return k ? (k.no + '||' + k.start) : ''; }
+        function _parseKey(s){ var p = String(s||'').split('||'); return { no: p[0]||'', start: p[1]||'' }; }
+        function _keyEq(a,b){ return a && b && a.no === b.no && a.start === b.start; }
+        function _rowStart(r){ return r.startDate || r.startdate || ''; }
+        function _rowOfKey(r, k){
+            return String(r.pricingNo || r.pricingno || '') === k.no && _rowStart(r) === k.start;
+        }
+        function _findHeader(k){
+            return (PricingState.headers||[]).find(function(h){ return _keyEq(_hk(h), k); });
+        }
 
-        function loadPricingPage(gotoNo) {
+        function loadPricingPage(gotoKeyStr) {
             if (!window.API || !window.API.getPricingData) return;
             window.API.getPricingData(function(d){
                 PricingState.headers = d.headers || [];
@@ -4099,19 +4132,16 @@ window.addEventListener('DOMContentLoaded', function(){
                 PricingState.rows    = d.rows    || [];
                 PricingState.deletedIds = [];
                 _initPricingNav();
-                renderPricingMasterGrid();
                 renderPricingCatTabs();
                 _populatePrintLayoutSelect();
-                var nos = PricingState.headers.map(_prHdrNo);
+                var keys = PricingState.headers.map(function(h){ return _keyStr(_hk(h)); });
                 var idx = 0;
-                if (gotoNo){ var k = nos.indexOf(gotoNo); if (k >= 0) idx = k; }
-                else if (window.PricingNav && window.PricingNav.list && window.PricingNav.list.length){
-                    var cur = window.PricingNav.list[window.PricingNav.idx];
-                    var k2 = nos.indexOf(cur); if (k2 >= 0) idx = k2;
-                }
-                window.PricingNav.setList(nos, idx);
-                if (!nos.length) _renderPricingDoc('');
-            }, function(e){ alert('定價資料載入失敗：' + (e && e.message || e) + '\n（請確認已執行 migration 009、010）'); });
+                var want = gotoKeyStr || _keyStr(PricingState.curKey);
+                if (want){ var k = keys.indexOf(want); if (k >= 0) idx = k; }
+                window.PricingNav.setList(keys, idx);
+                if (!keys.length) _renderPricingDoc(null);
+                renderPricingMasterGrid();
+            }, function(e){ alert('定價資料載入失敗：' + (e && e.message || e) + '\n（請確認已執行 migration 009～012）'); });
         }
 
         function _initPricingNav(){
@@ -4121,71 +4151,108 @@ window.addEventListener('DOMContentLoaded', function(){
                 appId:    'pricing-app',
                 toolbarId:'pricing-nav-toolbar',
                 counterId:'pricing-nav-counter',
-                idField:  'pr-no',
-                onLoad:   function(no){ _renderPricingDoc(no); },
-                onSave:   function(no){ savePricingDocFromUI(no); },
+                idField:  'pr-key',
+                onLoad:   function(keyStr){ _renderPricingDoc(_parseKey(keyStr)); },
+                onSave:   function(){ savePricingDocFromUI(); },
                 onAdd:    function(){
-                    var no = prompt('請輸入新定價編號：');
+                    var no = prompt('請輸入定價編號（輸入既有編號＝開新版本）：',
+                                    PricingState.curKey ? PricingState.curKey.no : '');
                     if (!no) return null;
                     no = no.trim();
-                    if (PricingState.headers.some(function(h){ return _prHdrNo(h) === no; })){
-                        alert('定價編號「' + no + '」已存在'); return null;
+                    var start = prompt('請輸入生效日期起（YYY/MM/DD）：', '');
+                    if (start == null) return null;
+                    start = start.trim();
+                    var key = { no: no, start: start };
+                    if (_findHeader(key)){
+                        alert('「' + no + '／' + (start || '無起日') + '」版本已存在'); return null;
                     }
-                    _clearPricingDoc(no);
-                    return no;
+                    _clearPricingDoc(key);
+                    return _keyStr(key);
                 },
-                onDelete: function(no){
-                    window.API.deletePricingHeader(no, function(){ loadPricingPage(); },
-                        function(e){ alert('刪除失敗：' + (e && e.message || e)); });
+                onDelete: function(keyStr){
+                    var k = _parseKey(keyStr);
+                    window.API.deletePricingHeader(k.no, k.start, function(){
+                        PricingState.curKey = null;
+                        loadPricingPage();
+                    }, function(e){ alert('刪除失敗：' + (e && e.message || e)); });
                 },
                 onSearch: function(kw){
                     return PricingState.headers.findIndex(function(h){
-                        return _prHdrNo(h).indexOf(kw) >= 0 || String(h.name || '').indexOf(kw) >= 0;
+                        return _prHdrNo(h).indexOf(kw) >= 0 || String(h.name || '').indexOf(kw) >= 0 ||
+                               _hStart(h).indexOf(kw) >= 0;
                     });
                 }
             });
         }
 
-        function _renderPricingDoc(no){
-            PricingState.curDocNo = no;
-            var h = PricingState.headers.find(function(x){ return _prHdrNo(x) === no; }) || {};
+        function _renderPricingDoc(key){
+            PricingState.curKey = key || null;
+            var h = key ? (_findHeader(key) || {}) : {};
             var s = function(i, v){ var el = document.getElementById(i); if (el) el.value = (v == null ? '' : v); };
-            s('pr-no', no);
+            s('pr-key',   _keyStr(key));
+            s('pr-no',    key ? key.no : '');
+            s('pr-start', key ? key.start : '');
             s('pr-name',  h.name || '');
-            s('pr-start', h.startDate || h.startdate || '');
             s('pr-end',   h.endDate || h.enddate || '');
             var t = document.getElementById('pricing-title');
-            if (t) t.textContent = '[定價設定] 目前定價編號：' + (no || '（無）') + (h.name ? '　' + h.name : '');
+            if (t) t.textContent = '[定價設定] ' + (key ? ('目前：' + key.no + '（起 ' + (key.start || '無') + '）' + (h.name ? '　' + h.name : '')) : '（無資料）');
             PricingState.deletedIds = [];
-            var rows = PricingState.rows.filter(function(r){
-                if (String(r.pricingNo || r.pricingno || '') !== String(no)) return false;
-                if (PricingState.activeCat !== '全部'){
-                    var mt = r.pricingMachineType || r.pricingmachinetype || '';
-                    if (_mtypeCat(mt) !== PricingState.activeCat) return false;
-                }
-                var kw = (document.getElementById('pr-type-filter') || {}).value || '';
-                if (kw && String(r.pricingType || r.pricingtype || '').indexOf(kw) < 0) return false;
-                return true;
-            });
             var body = document.getElementById('pricing-body');
             if (!body) return;
             body.innerHTML = '';
+            if (!key){ renderPricingMasterGrid(); return; }
+            var kw = (document.getElementById('pr-type-filter') || {}).value || '';
+            var rows = PricingState.rows.filter(function(r){
+                if (!_rowOfKey(r, key)) return false;
+                var mt = r.pricingMachineType || r.pricingmachinetype || '';
+                if (_mtypeCat(mt) !== PricingState.activeCat) return false;
+                if (kw && String(r.pricingType || r.pricingtype || '').indexOf(kw) < 0) return false;
+                return true;
+            });
             rows.forEach(function(r){ _appendPricingRow(r); });
-            if (!rows.length) _appendPricingRow(null);   // 空白單給一列起頭
-            if (typeof renderPricingMasterGrid === 'function') renderPricingMasterGrid();
+            if (!rows.length) _appendPricingRow(null);
+            renderPricingMasterGrid();
         }
 
-        function _clearPricingDoc(no){
-            ['pr-name','pr-start','pr-end'].forEach(function(i){
-                var el = document.getElementById(i); if (el) el.value = '';
-            });
+        function _clearPricingDoc(key){
+            PricingState.curKey = key;
+            var s = function(i, v){ var el = document.getElementById(i); if (el) el.value = (v == null ? '' : v); };
+            s('pr-key', _keyStr(key));
+            s('pr-no', key.no); s('pr-start', key.start);
+            s('pr-name', ''); s('pr-end', '');
             PricingState.deletedIds = [];
             var body = document.getElementById('pricing-body');
             if (body){ body.innerHTML = ''; _appendPricingRow(null); }
             var t = document.getElementById('pricing-title');
-            if (t) t.textContent = '[定價設定] 新增定價編號：' + (no || '');
+            if (t) t.textContent = '[定價設定] 新增版本：' + key.no + '（起 ' + (key.start || '無') + '）';
         }
 
+        // ── 主檔（上方表頭清單，一版本一列）──
+        function renderPricingMasterGrid(){
+            var body = document.getElementById('pricing-master-body'); if (!body) return;
+            var hs = PricingState.headers || [];
+            if (!hs.length){
+                body.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#999; padding:10px;">（尚無定價表頭，請按底部「新增I」建立）</td></tr>';
+                return;
+            }
+            body.innerHTML = hs.map(function(h, i){
+                var k = _hk(h);
+                var cnt = (PricingState.rows || []).filter(function(r){ return _rowOfKey(r, k); }).length;
+                var sel = _keyEq(k, PricingState.curKey) ? ' class="selected-row"' : '';
+                return '<tr' + sel + ' style="cursor:pointer;" onclick="selectPricingMaster(' + i + ')">' +
+                    '<td style="font-weight:bold;">' + _esc(k.no) + '</td>' +
+                    '<td>' + _esc(h.name || '') + '</td>' +
+                    '<td>' + _esc(k.start) + '</td>' +
+                    '<td>' + _esc(h.endDate || h.enddate || '') + '</td>' +
+                    '<td class="text-right">' + cnt + '</td></tr>';
+            }).join('');
+        }
+        function selectPricingMaster(i){
+            if (!window.PricingNav) return;
+            if (i >= 0 && i < window.PricingNav.list.length) window.PricingNav.load(i);
+        }
+
+        // ── 表身列 ──
         function _pricingSelectHtml(list, cur){
             var found = false;
             var opts = ['<option value=""></option>'];
@@ -4197,7 +4264,6 @@ window.addEventListener('DOMContentLoaded', function(){
             if (cur && !found) opts.push('<option selected>' + _esc(cur) + '</option>');
             return opts.join('');
         }
-
         function _appendPricingRow(r){
             var body = document.getElementById('pricing-body');
             if (!body) return;
@@ -4224,32 +4290,23 @@ window.addEventListener('DOMContentLoaded', function(){
             body.appendChild(tr);
             return tr;
         }
-
         function addPricingDetailRow(){
             var tr = _appendPricingRow(null);
-            if (tr){
-                var sel = tr.cells[1].querySelector('select');
-                if (sel) sel.focus();
-            }
+            if (tr){ var sel = tr.cells[1].querySelector('select'); if (sel) sel.focus(); }
         }
-
         function removePricingRow(a){
-            var tr = a.closest('tr');
-            if (!tr) return;
+            var tr = a.closest('tr'); if (!tr) return;
             var id = tr.dataset.rowid;
             if (id) PricingState.deletedIds.push(id);
             tr.remove();
             _renumberPricingRows();
         }
         function _renumberPricingRows(){
-            var body = document.getElementById('pricing-body');
-            if (!body) return;
+            var body = document.getElementById('pricing-body'); if (!body) return;
             Array.prototype.forEach.call(body.rows, function(tr, i){
                 tr.cells[0].textContent = ((i + 1) * 10).toString().padStart(4, '0');
             });
         }
-
-        // 表身鍵盤：Enter → 下一欄；最後一列按 ↓ → 直接新增下一筆
         function handlePricingKeydown(event, input){
             var tr = input.closest('tr');
             var tbody = tr.parentElement;
@@ -4262,7 +4319,6 @@ window.addEventListener('DOMContentLoaded', function(){
                     if (nx){ nx.focus(); if (nx.select) nx.select(); return; }
                     nextCell = nextCell.nextElementSibling;
                 }
-                // 列尾按 Enter → 跳到下一列第一欄
                 if (rowIndex < tbody.rows.length - 1){
                     var f = tbody.rows[rowIndex + 1].querySelector('input, select');
                     if (f) f.focus();
@@ -4273,87 +4329,68 @@ window.addEventListener('DOMContentLoaded', function(){
             } else if (event.key === 'ArrowDown'){
                 var below = tbody.rows[rowIndex + 1];
                 if (below){
-                    var cellIdx = Array.prototype.indexOf.call(tr.cells, input.closest('td'));
-                    var t2 = below.cells[cellIdx] && below.cells[cellIdx].querySelector('input, select');
+                    var ci = Array.prototype.indexOf.call(tr.cells, input.closest('td'));
+                    var t2 = below.cells[ci] && below.cells[ci].querySelector('input, select');
                     if (t2){ event.preventDefault(); t2.focus(); }
                 }
             } else if (event.key === 'ArrowUp' && rowIndex > 0){
                 var above = tbody.rows[rowIndex - 1];
-                var cellIdx2 = Array.prototype.indexOf.call(tr.cells, input.closest('td'));
-                var t3 = above.cells[cellIdx2] && above.cells[cellIdx2].querySelector('input, select');
+                var ci2 = Array.prototype.indexOf.call(tr.cells, input.closest('td'));
+                var t3 = above.cells[ci2] && above.cells[ci2].querySelector('input, select');
                 if (t3){ event.preventDefault(); t3.focus(); }
             }
         }
 
-        function savePricingDocFromUI(no){
-            no = (no || _prG('pr-no')).trim();
-            if (!no) return alert('「定價編號」必填');
-            var header = { pricingNo: no, name: _prG('pr-name'),
-                           startDate: _prG('pr-start'), endDate: _prG('pr-end') };
-            if (!header.name) return alert('「定價名稱」必填');
+        // ── 儲存（同鍵＝更新；編號或起日變更＝另存新版本）──
+        function savePricingDocFromUI(){
+            var now = { no: _prG('pr-no'), start: _prG('pr-start') };
+            if (!now.no) return alert('「定價編號」必填');
+            var name = _prG('pr-name');
+            if (!name) return alert('「定價名稱」必填');
+            var loaded = PricingState.curKey;
+            var asNew = !loaded || !_keyEq(now, loaded);
+            if (asNew && _findHeader(now) && loaded && !_keyEq(now, loaded)){
+                return alert('「' + now.no + '／' + (now.start || '無起日') + '」版本已存在，無法另存');
+            }
+            if (asNew && loaded && !confirm('編號或生效日期起已變更，將「另存為新版本」\n（原版本 ' +
+                loaded.no + '／' + (loaded.start || '無') + ' 保留不動），確定？')) return;
+            var header = { pricingNo: now.no, startDate: now.start, name: name };
             var body = document.getElementById('pricing-body');
             var details = [], seen = {}, bad = [];
-            Array.prototype.forEach.call(body ? body.rows : [], function(tr, i){
+            Array.prototype.forEach.call(body ? body.rows : [], function(tr){
                 var ty = tr.cells[1].querySelector('select').value.trim();
                 var mt = tr.cells[2].querySelector('select').value.trim();
                 var pr = parseFloat(tr.cells[3].querySelector('input').value) || 0;
                 var rk = tr.cells[4].querySelector('input').value.trim();
-                if (!ty && !mt && !pr && !rk) return;          // 整列空白 → 略過
+                if (!ty && !mt && !pr && !rk) return;
                 if (!ty || !mt){ bad.push(tr.cells[0].textContent); return; }
-                var key = ty + '|' + mt;
-                if (seen[key]){ bad.push(tr.cells[0].textContent + '(重複 ' + ty + '×' + mt + ')'); return; }
-                seen[key] = true;
-                details.push({ id: tr.dataset.rowid || '',
-                    row: { pricingNo: no, pricingType: ty, pricingMachineType: mt,
+                var k2 = ty + '|' + mt;
+                if (seen[k2]){ bad.push(tr.cells[0].textContent + '(重複 ' + ty + '×' + mt + ')'); return; }
+                seen[k2] = true;
+                details.push({ id: asNew ? '' : (tr.dataset.rowid || ''),
+                    row: { pricingNo: now.no, startDate: now.start, pricingType: ty, pricingMachineType: mt,
                            price: pr, remark: rk, updatedAt: _nowLocalStr() } });
             });
             if (bad.length) return alert('下列項次資料不完整或重複，請修正後再確認：\n' + bad.join('、'));
-            window.API.savePricingDoc(header, details, PricingState.deletedIds.slice(), function(){
+            var delIds = asNew ? [] : PricingState.deletedIds.slice();
+            window.API.savePricingDoc(header, details, delIds, function(){
                 PricingState.deletedIds = [];
-                loadPricingPage(no);
+                loadPricingPage(_keyStr(now));
             }, function(e){ alert('儲存失敗：' + (e && e.message || e)); });
         }
-
         function _nowLocalStr(){
             var d = new Date(), p = function(n){ return String(n).padStart(2,'0'); };
             return d.getFullYear() + '/' + p(d.getMonth()+1) + '/' + p(d.getDate()) +
                    ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
         }
 
-        // ── 類別頁籤 ──
+        // ── 分類（左側直式選單）──
         function _mtypeCat(v){
             var r = PricingState.mtypes.find(function(x){ return (x.value || '') === v; });
             return r ? (r.category || '') : '';
         }
         function _filteredMtypes(){
-            if (PricingState.activeCat === '全部') return PricingState.mtypes;
             return PricingState.mtypes.filter(function(r){ return (r.category || '') === PricingState.activeCat; });
-        }
-        function renderPricingMasterGrid(){
-            var body = document.getElementById('pricing-master-body'); if (!body) return;
-            var hs = PricingState.headers || [];
-            if (!hs.length){
-                body.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#999; padding:10px;">（尚無定價表頭，請按底部「新增I」建立）</td></tr>';
-                return;
-            }
-            body.innerHTML = hs.map(function(h){
-                var no = _prHdrNo(h);
-                var cnt = (PricingState.rows || []).filter(function(r){
-                    return String(r.pricingNo || r.pricingno || '') === String(no);
-                }).length;
-                var sel = (no === PricingState.curDocNo) ? ' class="selected-row"' : '';
-                return '<tr' + sel + ' style="cursor:pointer;" onclick="selectPricingMaster(\'' + _esc(no) + '\')">' +
-                    '<td style="font-weight:bold;">' + _esc(no) + '</td>' +
-                    '<td>' + _esc(h.name || '') + '</td>' +
-                    '<td>' + _esc(h.startDate || h.startdate || '') + '</td>' +
-                    '<td>' + _esc(h.endDate || h.enddate || '') + '</td>' +
-                    '<td class="text-right">' + cnt + '</td></tr>';
-            }).join('');
-        }
-        function selectPricingMaster(no){
-            if (!window.PricingNav) return;
-            var idx = window.PricingNav.list.indexOf(no);
-            if (idx >= 0) window.PricingNav.load(idx);
         }
         function renderPricingCatTabs(){
             var box = document.getElementById('pricing-cat-tabs'); if (!box) return;
@@ -4368,7 +4405,7 @@ window.addEventListener('DOMContentLoaded', function(){
         function setPricingCat(c){
             PricingState.activeCat = c || PRICING_CATS[0];
             renderPricingCatTabs();
-            _renderPricingDoc(PricingState.curDocNo);
+            _renderPricingDoc(PricingState.curKey);
         }
         function _populatePrintLayoutSelect(){
             var sel = document.getElementById('pr-print-layout');
@@ -4377,25 +4414,25 @@ window.addEventListener('DOMContentLoaded', function(){
                 PRICING_PRINT_LAYOUTS.map(function(l){ return '<option>' + l.name + '</option>'; }).join('');
         }
 
-        // ── 列印報價單 ──
+        // ── 列印報價單（取目前版本價格）──
         function printPricingSheet(){
             var name = (document.getElementById('pr-print-layout') || {}).value || '';
             var lay = PRICING_PRINT_LAYOUTS.find(function(l){ return l.name === name; });
             if (!lay) return alert('請先選擇報價單版面');
-            var no = PricingState.curDocNo || _prG('pr-no');
-            if (!no) return alert('請先選擇定價編號');
-            var h = PricingState.headers.find(function(x){ return _prHdrNo(x) === no; }) || {};
+            var key = PricingState.curKey;
+            if (!key) return alert('請先選擇定價版本');
+            var h = _findHeader(key) || {};
             var pm = {};
             PricingState.rows.forEach(function(r){
-                if (String(r.pricingNo || r.pricingno || '') !== String(no)) return;
+                if (!_rowOfKey(r, key)) return;
                 pm[(r.pricingType || r.pricingtype) + '|' + (r.pricingMachineType || r.pricingmachinetype)] = r.price;
             });
             if (window.API && window.API.getPricingExtras){
-                window.API.getPricingExtras(no, lay.extrasCat, function(extras){
-                    _openPrintWindow(lay, no, h, pm, extras || []);
-                }, function(){ _openPrintWindow(lay, no, h, pm, []); });
+                window.API.getPricingExtras(key.no, lay.extrasCat, function(extras){
+                    _openPrintWindow(lay, key, h, pm, extras || []);
+                }, function(){ _openPrintWindow(lay, key, h, pm, []); });
             } else {
-                _openPrintWindow(lay, no, h, pm, []);
+                _openPrintWindow(lay, key, h, pm, []);
             }
         }
         function _fmtPrice(v){
@@ -4403,7 +4440,7 @@ window.addEventListener('DOMContentLoaded', function(){
             var n = parseFloat(v); if (isNaN(n)) return '';
             return (n % 1 === 0) ? String(n) : n.toFixed(2);
         }
-        function _openPrintWindow(lay, no, h, pm, extras){
+        function _openPrintWindow(lay, key, h, pm, extras){
             var today = new Date();
             var roc = (today.getFullYear() - 1911) + '年' +
                 String(today.getMonth() + 1).padStart(2, '0') + '月' +
@@ -4424,7 +4461,8 @@ window.addEventListener('DOMContentLoaded', function(){
             html.push('<div class="hd">誼冠鋼品股份有限公司</div>');
             html.push('<div class="tt">' + _esc(lay.title) + '</div>');
             html.push('<div class="sub"><span>客戶名稱：＿＿＿＿＿＿＿＿</span>' +
-                '<span>定價編號：' + _esc(no) + '　' + _esc(h.name || '') + '</span>' +
+                '<span>定價編號：' + _esc(key.no) + '　' + _esc(h.name || '') +
+                '（生效 ' + _esc(key.start || '—') + (h.endDate ? ' ～ ' + _esc(h.endDate) : ' 起') + '）</span>' +
                 '<span>電話:04-23359335　傳真:04-23356335</span><span>日期：' + roc + '</span></div>');
             (lay.sections || []).forEach(function(sec){
                 var groups = [];
@@ -4473,26 +4511,27 @@ window.addEventListener('DOMContentLoaded', function(){
             setTimeout(function(){ try { w.print(); } catch(e){} }, 400);
         }
 
-        // ── 定價複製 Modal ──
+        // ── 定價複製 Modal（來源/目的＝版本）──
         function openPricingCopyModal(){
             var m = document.getElementById('pricing-copy-modal'); if (!m) return;
-            // 來源定價編號
             var sSrc = document.getElementById('pc-src-no');
             sSrc.innerHTML = (PricingState.headers||[]).map(function(h){
-                var no=_prHdrNo(h);
-                return '<option'+(no===PricingState.curDocNo?' selected':'')+'>'+_esc(no)+'</option>';
+                var k = _hk(h);
+                var sel = _keyEq(k, PricingState.curKey) ? ' selected' : '';
+                return '<option value="' + _esc(_keyStr(k)) + '"' + sel + '>' +
+                    _esc(k.no + '（起 ' + (k.start || '無') + '）' + (h.name ? ' ' + h.name : '')) + '</option>';
             }).join('');
-            // 形式下拉
             var opts = '<option value=""></option>' + (PricingState.types||[]).map(function(r){
-                return '<option>'+_esc(r.value||'')+'</option>'; }).join('');
+                return '<option>' + _esc(r.value||'') + '</option>'; }).join('');
             document.getElementById('pc-src-type').innerHTML = opts;
             document.getElementById('pc-dst-type').innerHTML = opts;
-            document.getElementById('pc-cur-no').textContent = PricingState.curDocNo || '（未選擇）';
+            var ck = PricingState.curKey;
+            document.getElementById('pc-cur-no').textContent =
+                ck ? (ck.no + '（起 ' + (ck.start || '無') + '）') : '（未選擇）';
             document.getElementById('pc-msg').textContent = '';
-            document.getElementById('pc-dst-no').value = '';
+            document.getElementById('pc-dst-no').value = ck ? ck.no : '';
             document.getElementById('pc-dst-name').value = '';
             document.getElementById('pc-dst-start').value = '';
-            document.getElementById('pc-dst-end').value = '';
             m.style.display = 'flex';
         }
         function closePricingCopyModal(){
@@ -4507,38 +4546,38 @@ window.addEventListener('DOMContentLoaded', function(){
             var msg = document.getElementById('pc-msg');
             var scope = (document.querySelector('input[name="pc-scope"]:checked')||{}).value || 'doc';
             var mode  = (document.querySelector('input[name="pc-mode"]:checked')||{}).value || 'overwrite';
-            var g = function(i){ var el=document.getElementById(i); return el?el.value.trim():''; };
             if (scope === 'doc'){
-                var srcNo = g('pc-src-no'), dstNo = g('pc-dst-no');
-                if (!dstNo) return msg.textContent = '請輸入目的定價編號';
-                if (dstNo === srcNo) return msg.textContent = '來源與目的定價編號不可相同';
-                var isNew = !(PricingState.headers||[]).some(function(h){ return _prHdrNo(h)===dstNo; });
-                if (isNew && !g('pc-dst-name')) return msg.textContent = '目的為新表頭，請輸入定價名稱';
-                if (mode==='overwrite' && !isNew &&
-                    !confirm('目的「'+dstNo+'」已存在，將清除其表身後覆蓋，確定？')) return;
+                var srcKey = _parseKey(_prG('pc-src-no'));
+                var dst = { no: _prG('pc-dst-no'), start: _prG('pc-dst-start'), name: _prG('pc-dst-name') };
+                if (!dst.no) return msg.textContent = '請輸入目的定價編號';
+                if (dst.no === srcKey.no && dst.start === srcKey.start)
+                    return msg.textContent = '來源與目的版本不可相同（同編號請改生效日期起）';
+                var exists = !!_findHeader(dst);
+                if (!exists && !dst.name) return msg.textContent = '目的為新表頭，請輸入定價名稱';
+                if (mode==='overwrite' && exists &&
+                    !confirm('目的「' + dst.no + '／' + (dst.start || '無起日') + '」已存在，將清除其表身後覆蓋，確定？')) return;
                 msg.textContent = '複製中…';
-                window.API.copyPricingDoc(srcNo,
-                    { pricingNo:dstNo, name:g('pc-dst-name'), startDate:g('pc-dst-start'), endDate:g('pc-dst-end') },
-                    mode, !!document.getElementById('pc-with-extras').checked,
+                window.API.copyPricingDoc(srcKey, dst, mode,
+                    !!document.getElementById('pc-with-extras').checked,
                     function(res){
                         closePricingCopyModal();
-                        alert('✅ 複製完成：表身 '+res.rows+' 筆'+(res.extras?('、配件 '+res.extras+' 筆'):'')+
-                              '\n建議：調價時用新生效日期的新定價編號保留歷史。');
-                        loadPricingPage(dstNo);
+                        alert('✅ 複製完成：表身 ' + res.rows + ' 筆' + (res.extras ? ('、配件 ' + res.extras + ' 筆') : '') +
+                              '\n生效日期止已自動依版本順序重算。');
+                        loadPricingPage(_keyStr(dst));
                     },
-                    function(e){ msg.textContent = '複製失敗：'+(e&&e.message||e); });
+                    function(e){ msg.textContent = '複製失敗：' + (e && e.message || e); });
             } else {
-                var no = PricingState.curDocNo;
-                if (!no) return msg.textContent = '請先在主檔選擇定價編號';
-                var st = g('pc-src-type'), dt = g('pc-dst-type');
+                var key = PricingState.curKey;
+                if (!key) return msg.textContent = '請先在主檔選擇定價版本';
+                var st = _prG('pc-src-type'), dt = _prG('pc-dst-type');
                 if (!st || !dt) return msg.textContent = '請選擇來源與目的定價形式';
                 if (st === dt) return msg.textContent = '來源與目的定價形式不可相同';
                 msg.textContent = '複製中…';
-                window.API.copyPricingType(no, st, dt, mode, function(n){
+                window.API.copyPricingType(key.no, key.start, st, dt, mode, function(n){
                     closePricingCopyModal();
-                    alert('✅ 已複製 '+n+' 筆（'+st+' → '+dt+'）');
-                    loadPricingPage(no);
-                }, function(e){ msg.textContent = '複製失敗：'+(e&&e.message||e); });
+                    alert('✅ 已複製 ' + n + ' 筆（' + st + ' → ' + dt + '）');
+                    loadPricingPage(_keyStr(key));
+                }, function(e){ msg.textContent = '複製失敗：' + (e && e.message || e); });
             }
         }
 
