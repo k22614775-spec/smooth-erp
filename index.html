@@ -1062,14 +1062,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
     <div id="pricing-app" class="app-view">
         <div class="toolbar"><span id="pricing-title">[定價設定]</span></div>
 
-        <!-- 主表：定價表頭清單（點選載入明細）-->
-        <div class="grid-container" style="max-height:150px; overflow:auto;">
-            <table><thead><tr><th style="width:120px;">定價編號</th><th>定價名稱</th><th style="width:110px;">生效日期起</th><th style="width:110px;">生效日期止</th><th style="width:80px;">明細筆數</th></tr></thead>
-                <tbody id="pricing-master-body"><tr><td colspan="5" style="text-align:center; color:#999; padding:10px;">（載入中…）</td></tr></tbody>
-            </table>
-        </div>
-
-        <!-- 表頭（單行）-->
+        <!-- 表頭（單行編輯）-->
         <div style="display:flex; gap:6px; padding:6px 10px; align-items:center; flex-wrap:wrap; background:#eef3fa; border-bottom:1px solid #c9d6e8;">
             <span style="font-weight:bold; color:#c00000;">定價編號</span>
             <input type="text" id="pr-no" style="width:110px; padding:3px 6px; border:1px solid #aaa;">
@@ -1081,25 +1074,34 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
             <input type="text" id="pr-end" style="width:110px; padding:3px 6px; border:1px solid #aaa;" placeholder="空白=無期限">
         </div>
 
-        <!-- 明細篩選 + 列印報價單 -->
-        <div style="display:flex; gap:8px; padding:5px 10px; align-items:center; background:#f7fafc; border-bottom:1px solid #c9d6e8; flex-wrap:wrap;">
-            <span style="font-weight:bold;">明細篩選</span>
-            <span>類別</span>
-            <select id="pr-cat-filter" onchange="setPricingCat(this.value)" style="padding:2px 6px;"></select>
-            <span>定價形式</span>
-            <input type="text" id="pr-type-filter" style="width:150px; padding:2px 6px;" placeholder="關鍵字"
-                   oninput="_renderPricingDoc(PricingState.curDocNo)">
-            <span style="margin-left:auto;"></span>
-            <select id="pr-print-layout" style="padding:3px 6px;"><option value="">— 選擇報價單版面 —</option></select>
-            <button class="btn-group" style="cursor:pointer; padding:3px 14px; font-weight:bold;" onclick="printPricingSheet()">🖨 列印報價單</button>
-        </div>
-
-        <!-- 表身（可直接編輯；最後一列按 ↓ 自動新增下一筆）-->
+        <!-- Master-Detail 主從分割視圖 -->
         <div class="grid-container">
-            <table>
-                <thead><tr><th style="width:60px;">項次</th><th>定價形式</th><th>機台定價形式</th><th style="width:100px;">定價</th><th>備註</th><th style="width:40px;"></th></tr></thead>
-                <tbody id="pricing-body"></tbody>
-            </table>
+            <div class="split-view">
+                <div class="split-left">
+                    <div style="background-color: #e0e0e0; color: #000080; padding: 3px 5px; font-weight: bold; border-bottom: 1px solid #999; font-size: 12px;">◀ 定價表頭 (點選載入右側明細)</div>
+                    <table>
+                        <thead><tr><th>定價編號</th><th>定價名稱</th><th>生效日期起</th><th>生效日期止</th><th class="text-right">筆數</th></tr></thead>
+                        <tbody id="pricing-master-body"><tr><td colspan="5" style="text-align:center; color:#999; padding:10px;">（載入中…）</td></tr></tbody>
+                    </table>
+                </div>
+                <div class="split-right">
+                    <div style="background-color: #e0e0e0; color: #000080; padding: 3px 5px; font-weight: bold; border-bottom: 1px solid #999; font-size: 12px;">▶ 表身明細 (定價形式 × 機台定價形式；最後一列按 ↓ 自動新增)</div>
+                    <div style="display:flex; gap:8px; padding:4px 8px; align-items:center; background:#f7fafc; border-bottom:1px solid #c9d6e8; flex-wrap:wrap;">
+                        <span>類別</span>
+                        <select id="pr-cat-filter" onchange="setPricingCat(this.value)" style="padding:2px 6px;"></select>
+                        <span>定價形式</span>
+                        <input type="text" id="pr-type-filter" style="width:130px; padding:2px 6px;" placeholder="關鍵字"
+                               oninput="_renderPricingDoc(PricingState.curDocNo)">
+                        <span style="margin-left:auto;"></span>
+                        <select id="pr-print-layout" style="padding:3px 6px;"><option value="">— 選擇報價單版面 —</option></select>
+                        <button class="btn-group" style="cursor:pointer; padding:3px 14px; font-weight:bold;" onclick="printPricingSheet()">🖨 列印報價單</button>
+                    </div>
+                    <table>
+                        <thead><tr><th style="width:56px;">項次</th><th>定價形式</th><th>機台定價形式</th><th style="width:90px;">定價</th><th>備註</th><th style="width:36px;"></th></tr></thead>
+                        <tbody id="pricing-body"></tbody>
+                    </table>
+                </div>
+            </div>
         </div>
 
         <!-- 定價導覽工具列 -->
