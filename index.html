@@ -225,6 +225,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
         <button class="main-nav-btn" onclick="switchMainApp('dispatch', this)">派工系統</button>
         <button class="main-nav-btn" onclick="switchMainApp('dispatchReturn', this)">派工回單</button>
         <button class="main-nav-btn" onclick="switchMainApp('machine', this)">機台設定</button>
+        <button class="main-nav-btn" onclick="switchMainApp('pricing', this)">定價設定</button>
         <button class="main-nav-btn" onclick="switchMainApp('coilTx', this)">鋼捲異動</button>
 
         <button class="main-nav-btn" id="reset-sim-btn" onclick="resetSimulationDataWithConfirm()" style="background-color: #b71c1c; color: white; border-color: #7f0000; margin-left: auto;" title="把派工/派工回單/標籤清除，庫存與訂單還原到只有進貨後的狀態">模擬資料還原</button>
@@ -288,7 +289,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
             <div class="form-label">建檔日期</div><input type="text" id="inv-create-date" class="form-input" placeholder="YYY/MM/DD">
             <div class="form-label">庫存管控YN</div><select id="inv-stock-ctrl" class="form-input"><option value="Y">Y.是</option><option value="N">N.否</option></select>
             <div class="form-label">預設倉號</div><input type="text" id="inv-def-warehouse" class="form-input" value="A鋼捲倉">
-            <div class="form-label">定價形式</div><input type="text" id="inv-pricing-type" class="form-input">
+            <div class="form-label">定價形式</div><select id="inv-pricing-type" class="form-input"><option value=""></option></select>
         </div>
         <div class="tabs">
             <button class="tab-btn active" onclick="switchInvTab('master', this)">庫存主檔</button>
@@ -1056,6 +1057,53 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
         </div>
     </div>
 
+
+    <!-- 5-b. 定價設定 -->
+    <div id="pricing-app" class="app-view">
+        <div class="toolbar"><span>[定價設定 - 以定價編號區分客戶價目，含生效起訖]</span></div>
+        <div class="main-form">
+            <div class="form-label red">定價編號</div><input type="text" id="pr-no" class="form-input" value="STD" placeholder="STD=標準牌價">
+            <div class="form-label">客戶編號</div><input type="text" id="pr-customer" class="form-input" placeholder="選填">
+            <div class="form-label red">定價形式</div><select id="pr-type" class="form-input"></select>
+            <div class="form-label red">機台定價形式</div><select id="pr-mtype" class="form-input"></select>
+            <div class="form-label red">定價</div><input type="text" id="pr-price" class="form-input text-right">
+            <div class="form-label">生效起日</div><input type="text" id="pr-start" class="form-input" placeholder="YYY/MM/DD">
+            <div class="form-label">生效迄日</div><input type="text" id="pr-end" class="form-input" placeholder="空白=無期限">
+            <div class="form-label">備註</div><input type="text" id="pr-remark" class="form-input">
+        </div>
+        <div style="display:flex; gap:8px; padding:4px 8px; align-items:center; flex-wrap:wrap;">
+            <input type="hidden" id="pr-edit-id" value="">
+            <button class="btn-group" style="cursor:pointer; padding:3px 14px; font-weight:bold;" onclick="savePricingFromForm()">＋ 新增 / 更新</button>
+            <button class="btn-group" style="cursor:pointer; padding:3px 14px;" onclick="clearPricingForm()">清空表單</button>
+            <button class="btn-group" style="cursor:pointer; padding:3px 14px;" onclick="loadPricingPage()">⟳ 重新載入</button>
+            <span style="margin-left:16px;">篩選 定價編號:</span>
+            <input type="text" id="pr-filter-no" style="width:110px;" oninput="renderPricingGrid()">
+            <span>定價形式:</span>
+            <input type="text" id="pr-filter-type" style="width:150px;" oninput="renderPricingGrid()">
+        </div>
+        <div style="display:flex; gap:8px; padding:0 8px 4px 8px;">
+            <div style="flex:1; border:1px solid #ccc; max-height:120px; overflow:auto; background:#fff;">
+                <div style="background:#dce9f7; padding:2px 6px; font-weight:bold; position:sticky; top:0;">定價形式代碼
+                    <input type="text" id="pr-new-type" style="width:150px;">
+                    <button style="cursor:pointer;" onclick="addPricingCodeUI('pricing_types','pr-new-type')">加入</button>
+                </div>
+                <div id="pr-type-list" style="padding:2px 6px; font-size:12px;"></div>
+            </div>
+            <div style="flex:1; border:1px solid #ccc; max-height:120px; overflow:auto; background:#fff;">
+                <div style="background:#dce9f7; padding:2px 6px; font-weight:bold; position:sticky; top:0;">機台定價形式代碼
+                    <input type="text" id="pr-new-mtype" style="width:150px;">
+                    <button style="cursor:pointer;" onclick="addPricingCodeUI('pricing_machine_types','pr-new-mtype')">加入</button>
+                </div>
+                <div id="pr-mtype-list" style="padding:2px 6px; font-size:12px;"></div>
+            </div>
+        </div>
+        <div class="grid-container">
+            <table><thead><tr><th>定價編號</th><th>客戶編號</th><th>定價形式</th><th>機台定價形式</th><th>定價</th><th>生效起日</th><th>生效迄日</th><th>備註</th><th>操作</th></tr></thead>
+                <tbody id="pricing-body"><tr><td colspan="9" style="text-align:center; color:#999; padding:20px;">（載入中…）</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+
     <!-- 6. 鋼捲異動系統 -->
     <div id="coilTx-app" class="app-view">
         <div class="toolbar"><span id="ctx-toolbar-title">[鋼捲異動系統]</span></div>
@@ -1440,6 +1488,8 @@ function switchTopMode(mode) {
     companyname:'companyName', vendortype:'vendorType',
     // inventory.定價形式 / machines.定價機臺形式
     pricingtype:'pricingType', pricingmachinetype:'pricingMachineType',
+    pricingno:'pricingNo', startdate:'startDate', enddate:'endDate',
+    widthstart:'widthStart', widthend:'widthEnd',
   };
   function _normRow(row){
     const out={};
@@ -3535,6 +3585,37 @@ function switchTopMode(mode) {
         });
       }), cb, errCb);
     },
+    // ── 定價設定（pricing_types / pricing_machine_types / pricing_table）──
+    getPricingData: function(cb, errCb){
+      _cb(Promise.all([
+        _get('pricing_types',{'order':'id'}),
+        _get('pricing_machine_types',{'order':'id'}),
+        _get('pricing_table',{'order':'id'}),
+      ]).then(function(r){ return {types:r[0],mtypes:r[1],rows:r[2]}; }), cb, errCb);
+    },
+    addPricingCode: function(table, value, cb, errCb){
+      _cb(_upsert(table,[{value:value}]).then(function(){ return {ok:true}; }), cb, errCb);
+    },
+    deletePricingCode: function(table, id, cb, errCb){
+      _cb(_del(table,{'id':'eq.'+id}), cb, errCb);
+    },
+    savePricingRow: function(row, id, cb, errCb){
+      var p = id ? _patch('pricing_table',{'id':'eq.'+id}, row)
+                 : _upsert('pricing_table',[row]);
+      _cb(p.then(function(){ return {ok:true}; }), cb, errCb);
+    },
+    deletePricingRow: function(id, cb, errCb){
+      _cb(_del('pricing_table',{'id':'eq.'+id}), cb, errCb);
+    },
+    getMachinesFull: function(cb, errCb){
+      _cb(Promise.all([
+        _get('machines',{'order':'id'}),
+        _get('pricing_machine_types',{'order':'id'}),
+      ]).then(function(r){ return {machines:r[0],mtypes:r[1]}; }), cb, errCb);
+    },
+    updateMachinePricingType: function(machineId, val, cb, errCb){
+      _cb(_patch('machines',{'id':'eq.'+machineId},{pricingMachineType:val}), cb, errCb);
+    },
     saveInventory: function(payload, cb, errCb){
       const ops=[];
       if(Array.isArray(payload.inventory)){
@@ -3823,6 +3904,208 @@ window.addEventListener('DOMContentLoaded', function(){
         }
         // ───────────────────────────────────────────────────────────────────
 
+        // ==========================================
+        // 定價設定 (pricing-app)
+        // ==========================================
+        var PricingState = { types: [], mtypes: [], rows: [] };
+
+        function loadPricingPage() {
+            if (!window.API || !window.API.getPricingData) return;
+            window.API.getPricingData(function(d){
+                PricingState.types  = d.types  || [];
+                PricingState.mtypes = d.mtypes || [];
+                PricingState.rows   = d.rows   || [];
+                renderPricingCodeLists();
+                populatePricingSelects();
+                renderPricingGrid();
+            }, function(e){ alert('定價資料載入失敗：' + (e && e.message || e) + '\n（請確認已執行 migration 009）'); });
+        }
+        function _prCodeChips(list, table){
+            if (!list.length) return '<span style="color:#999;">（無資料）</span>';
+            return list.map(function(r){
+                return '<span style="display:inline-block; border:1px solid #bbb; border-radius:3px; padding:0 4px; margin:1px; background:#f8f8f8;">' +
+                    _esc(r.value || '') +
+                    ' <a href="javascript:void(0)" style="color:#c00; text-decoration:none;" title="刪除" ' +
+                    'onclick="delPricingCodeUI(\'' + table + '\',' + r.id + ')">✕</a></span>';
+            }).join('');
+        }
+        function renderPricingCodeLists(){
+            var t = document.getElementById('pr-type-list');
+            if (t) t.innerHTML = _prCodeChips(PricingState.types, 'pricing_types');
+            var m = document.getElementById('pr-mtype-list');
+            if (m) m.innerHTML = _prCodeChips(PricingState.mtypes, 'pricing_machine_types');
+        }
+        function populatePricingSelects(){
+            var selT = document.getElementById('pr-type'), selM = document.getElementById('pr-mtype');
+            function fill(sel, list){
+                if (!sel) return;
+                var cur = sel.value;
+                sel.innerHTML = '<option value=""></option>' + list.map(function(r){
+                    return '<option>' + _esc(r.value || '') + '</option>';
+                }).join('');
+                if (cur) _ensureSelectValue(sel, cur);
+            }
+            fill(selT, PricingState.types);
+            fill(selM, PricingState.mtypes);
+        }
+        function addPricingCodeUI(table, inputId){
+            var el = document.getElementById(inputId);
+            var v = el ? el.value.trim() : '';
+            if (!v) return alert('請先輸入代碼內容');
+            window.API.addPricingCode(table, v, function(){ if (el) el.value=''; loadPricingPage(); },
+                function(e){ alert('加入失敗（可能重複）：' + (e && e.message || e)); });
+        }
+        function delPricingCodeUI(table, id){
+            if (!confirm('確定刪除此代碼？\n（已使用此代碼的定價列不受影響）')) return;
+            window.API.deletePricingCode(table, id, loadPricingPage,
+                function(e){ alert('刪除失敗：' + (e && e.message || e)); });
+        }
+        function renderPricingGrid(){
+            var body = document.getElementById('pricing-body'); if (!body) return;
+            var fN = (document.getElementById('pr-filter-no')   || {}).value || '';
+            var fT = (document.getElementById('pr-filter-type') || {}).value || '';
+            var rows = (PricingState.rows || []).filter(function(r){
+                var no = String(r.pricingNo || r.pricingno || '');
+                var ty = String(r.pricingType || r.pricingtype || '');
+                return (!fN || no.indexOf(fN) >= 0) && (!fT || ty.indexOf(fT) >= 0);
+            });
+            if (!rows.length){
+                body.innerHTML = '<tr><td colspan="9" style="text-align:center; color:#999; padding:20px;">（無符合資料）</td></tr>';
+                return;
+            }
+            body.innerHTML = rows.map(function(r){
+                return '<tr style="cursor:pointer;" onclick="loadPricingRow(' + r.id + ')">' +
+                    '<td>' + _esc(r.pricingNo || r.pricingno || '') + '</td>' +
+                    '<td>' + _esc(r.customerCode || r.customercode || '') + '</td>' +
+                    '<td>' + _esc(r.pricingType || r.pricingtype || '') + '</td>' +
+                    '<td>' + _esc(r.pricingMachineType || r.pricingmachinetype || '') + '</td>' +
+                    '<td class="text-right">' + _num(r.price, 2) + '</td>' +
+                    '<td>' + _esc(r.startDate || r.startdate || '') + '</td>' +
+                    '<td>' + _esc(r.endDate || r.enddate || '') + '</td>' +
+                    '<td>' + _esc(r.remark || '') + '</td>' +
+                    '<td><a href="javascript:void(0)" style="color:#c00;" onclick="event.stopPropagation(); delPricingRow(' + r.id + ')">刪除</a></td>' +
+                '</tr>';
+            }).join('');
+        }
+        function loadPricingRow(id){
+            var r = (PricingState.rows || []).find(function(x){ return String(x.id) === String(id); });
+            if (!r) return;
+            var s = function(i, v){ var el = document.getElementById(i); if (el) el.value = (v == null ? '' : v); };
+            s('pr-edit-id', r.id);
+            s('pr-no',       r.pricingNo || r.pricingno || 'STD');
+            s('pr-customer', r.customerCode || r.customercode || '');
+            _ensureSelectValue(document.getElementById('pr-type'),  r.pricingType || r.pricingtype || '');
+            _ensureSelectValue(document.getElementById('pr-mtype'), r.pricingMachineType || r.pricingmachinetype || '');
+            s('pr-price',  r.price);
+            s('pr-start',  r.startDate || r.startdate || '');
+            s('pr-end',    r.endDate || r.enddate || '');
+            s('pr-remark', r.remark || '');
+        }
+        function clearPricingForm(){
+            ['pr-edit-id','pr-customer','pr-price','pr-start','pr-end','pr-remark'].forEach(function(i){
+                var el = document.getElementById(i); if (el) el.value = '';
+            });
+            var no = document.getElementById('pr-no'); if (no) no.value = 'STD';
+            var t = document.getElementById('pr-type');  if (t) t.value = '';
+            var m = document.getElementById('pr-mtype'); if (m) m.value = '';
+        }
+        function savePricingFromForm(){
+            var g = function(i){ var el = document.getElementById(i); return el ? el.value.trim() : ''; };
+            var row = {
+                pricingNo:          g('pr-no') || 'STD',
+                customerCode:       g('pr-customer'),
+                pricingType:        g('pr-type'),
+                pricingMachineType: g('pr-mtype'),
+                price:              parseFloat(g('pr-price')) || 0,
+                startDate:          g('pr-start'),
+                endDate:            g('pr-end'),
+                remark:             g('pr-remark'),
+                updatedAt:          _nowLocalStr()
+            };
+            if (!row.pricingType || !row.pricingMachineType) return alert('「定價形式」與「機台定價形式」必填');
+            var id = g('pr-edit-id');
+            window.API.savePricingRow(row, id, function(){ clearPricingForm(); loadPricingPage(); },
+                function(e){ alert('儲存失敗：' + (e && e.message || e) +
+                    '\n（若為重複組合，請點選清單中既有列後修改再儲存）'); });
+        }
+        function delPricingRow(id){
+            if (!confirm('確定刪除此定價列？')) return;
+            window.API.deletePricingRow(id, loadPricingPage,
+                function(e){ alert('刪除失敗：' + (e && e.message || e)); });
+        }
+        function _nowLocalStr(){
+            var d = new Date(), p = function(n){ return String(n).padStart(2,'0'); };
+            return d.getFullYear() + '/' + p(d.getMonth()+1) + '/' + p(d.getDate()) +
+                   ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+        }
+
+        // ==========================================
+        // 機台設定：由 DB 渲染 + 定價機臺形式下拉即時儲存
+        // ==========================================
+        function loadMachineSettings(){
+            if (!window.API || !window.API.getMachinesFull) return;
+            window.API.getMachinesFull(function(d){
+                var body = document.getElementById('machine-body'); if (!body) return;
+                var ms = d.machines || [];
+                var mtypes = (d.mtypes || []).map(function(r){ return r.value || ''; });
+                if (!ms.length){
+                    body.innerHTML = '<tr><td colspan="8" style="text-align:center; color:#999; padding:20px;">（machines 資料表尚無資料）</td></tr>';
+                    return;
+                }
+                body.innerHTML = ms.map(function(m){
+                    var cur = m.pricingMachineType || m.pricingmachinetype || '';
+                    var opts = ['<option value=""></option>'];
+                    var found = false;
+                    mtypes.forEach(function(v){
+                        if (v === cur) found = true;
+                        opts.push('<option' + (v === cur ? ' selected' : '') + '>' + _esc(v) + '</option>');
+                    });
+                    if (cur && !found) opts.push('<option selected>' + _esc(cur) + '</option>');
+                    return '<tr>' +
+                        '<td>' + _esc(m.id) + '</td>' +
+                        '<td>' + _esc(m.name || '') + '</td>' +
+                        '<td>' + _esc(m.method || '') + '</td>' +
+                        '<td>' + _esc(m.widthStart || m.widthstart || '') + '</td>' +
+                        '<td>' + _esc(m.widthEnd || m.widthend || '') + '</td>' +
+                        '<td>' + _esc(m.material || '') + '</td>' +
+                        '<td>' + _esc(m.remark || '') + '</td>' +
+                        '<td><select style="min-width:140px;" onchange="updateMachinePricingTypeUI(\'' + _esc(m.id) + '\', this.value)">' +
+                            opts.join('') + '</select></td>' +
+                    '</tr>';
+                }).join('');
+            }, function(e){ console.error('載入機台失敗', e); });
+        }
+        function updateMachinePricingTypeUI(id, val){
+            if (!window.API || !window.API.updateMachinePricingType) return;
+            window.API.updateMachinePricingType(id, val, function(){
+                console.log('[機台設定] 定價機臺形式已更新', id, '→', val);
+            }, function(e){ alert('更新失敗：' + (e && e.message || e)); });
+        }
+
+        // ==========================================
+        // 庫存「定價形式」下拉選項
+        // ==========================================
+        function loadInvPricingTypes(){
+            if (!window.API || !window.API.getPricingData) return;
+            window.API.getPricingData(function(d){
+                var sel = document.getElementById('inv-pricing-type'); if (!sel) return;
+                var cur = sel.value;
+                sel.innerHTML = '<option value=""></option>' + (d.types || []).map(function(r){
+                    return '<option>' + _esc(r.value || '') + '</option>';
+                }).join('');
+                if (cur) _ensureSelectValue(sel, cur);
+            }, function(){ /* 定價表未建立時靜默略過 */ });
+        }
+        function _ensureSelectValue(sel, val){
+            if (!sel) return;
+            if (sel.tagName !== 'SELECT'){ sel.value = val || ''; return; }
+            if (val && !Array.prototype.some.call(sel.options, function(o){ return o.value === val; })){
+                var o = document.createElement('option'); o.value = val; o.textContent = val;
+                sel.appendChild(o);
+            }
+            sel.value = val || '';
+        }
+
         function switchMainApp(appId, btn) {
             document.querySelectorAll('.main-nav-btn').forEach(b => b.classList.remove('active'));
             if (btn) btn.classList.add('active');
@@ -3845,7 +4128,17 @@ window.addEventListener('DOMContentLoaded', function(){
             if (appId === 'inventory') {
                 try {
                     if (typeof loadInventoryFromServer === 'function') loadInventoryFromServer();
+                    if (typeof loadInvPricingTypes === 'function') loadInvPricingTypes();
                 } catch (e) { console.error('自動載入庫存失敗:', e); }
+            }
+
+            // 切到機台設定 → 由 DB 渲染機台清單（含定價機臺形式下拉）
+            if (appId === 'machine') {
+                try { if (typeof loadMachineSettings === 'function') loadMachineSettings(); } catch(e){}
+            }
+            // 切到定價設定 → 載入定價資料
+            if (appId === 'pricing') {
+                try { if (typeof loadPricingPage === 'function') loadPricingPage(); } catch(e){}
             }
 
             // 切到派工回單時，自動載入最新一張回單
@@ -5107,7 +5400,7 @@ window.addEventListener('DOMContentLoaded', function(){
             setInput('inv-stock-ctrl', getVal(21));
             setInput('inv-def-warehouse', getVal(22));
             setInput('inv-remark', getVal(23));
-            setInput('inv-pricing-type', getVal(24));
+            _ensureSelectValue(document.getElementById('inv-pricing-type'), getVal(24));
 
             const today = new Date();
             setInput('inv-date', `${today.getFullYear() - 1911}年${(today.getMonth()+1).toString().padStart(2, '0')}月${today.getDate().toString().padStart(2, '0')}日`);
