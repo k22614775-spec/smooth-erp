@@ -288,7 +288,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
             <div class="form-label">建檔日期</div><input type="text" id="inv-create-date" class="form-input" placeholder="YYY/MM/DD">
             <div class="form-label">庫存管控YN</div><select id="inv-stock-ctrl" class="form-input"><option value="Y">Y.是</option><option value="N">N.否</option></select>
             <div class="form-label">預設倉號</div><input type="text" id="inv-def-warehouse" class="form-input" value="A鋼捲倉">
-            <span></span><span></span>
+            <div class="form-label">定價形式</div><input type="text" id="inv-pricing-type" class="form-input">
         </div>
         <div class="tabs">
             <button class="tab-btn active" onclick="switchInvTab('master', this)">庫存主檔</button>
@@ -297,7 +297,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
         </div>
         <div id="grid-inv-master" class="grid-container">
             <table style="min-width: 2000px;">
-                <thead><tr><th>類別</th><th>型號</th><th>品名規格</th><th>銷貨品名</th><th>材質編號</th><th>廠別</th><th>尺寸</th><th>顏色</th><th>色碼</th><th>漆種</th><th>正面漆種</th><th>背面漆種</th><th>正面漆膜厚</th><th>背面漆膜厚</th><th>鍍層</th><th>強度</th><th>包裝方式</th><th>單位</th><th>數量</th><th>總數</th><th>建檔日期</th><th>管控YN</th><th>預設倉號</th><th>備註</th></tr></thead>
+                <thead><tr><th>類別</th><th>型號</th><th>品名規格</th><th>銷貨品名</th><th>材質編號</th><th>廠別</th><th>尺寸</th><th>顏色</th><th>色碼</th><th>漆種</th><th>正面漆種</th><th>背面漆種</th><th>正面漆膜厚</th><th>背面漆膜厚</th><th>鍍層</th><th>強度</th><th>包裝方式</th><th>單位</th><th>數量</th><th>總數</th><th>建檔日期</th><th>管控YN</th><th>預設倉號</th><th>備註</th><th>定價形式</th></tr></thead>
                 <tbody id="inv-master-body">
                     <tr class="selected-row" onclick="loadInvRowData(this)"><td>鋼捲</td><td>ZAE0.420*0457E100</td><td>鍍鋅燁輝*0.42*457*鍍米黃</td><td>鍍鋅*燁輝*0.5*鍍米黃</td><td>鍍鋅</td><td>燁輝</td><td>0.42x 457.0x 0.0</td><td>鍍米黃</td><td>C01</td><td>PE</td><td>A漆</td><td>B漆</td><td>15</td><td>5</td><td>AZ100</td><td>G550</td><td>捲裝</td><td>KG</td><td class="text-right">1</td><td class="text-right">2,000.00</td><td>115/01/01</td><td>Y</td><td>A鋼捲倉</td><td></td></tr>
                     <tr onclick="loadInvRowData(this)"><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
@@ -1048,9 +1048,9 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
     <div id="machine-app" class="app-view">
         <div class="toolbar"><span>[機台設定]</span></div>
         <div class="grid-container">
-            <table><thead><tr><th>機台編號</th><th>機台名稱</th><th>製作方式</th><th>起寬</th><th>迄寬</th><th>底板用料</th><th>備註</th></tr></thead>
+            <table><thead><tr><th>機台編號</th><th>機台名稱</th><th>製作方式</th><th>起寬</th><th>迄寬</th><th>底板用料</th><th>備註</th><th>定價機臺形式</th></tr></thead>
                 <tbody id="machine-body">
-                    <tr class="selected-row"><td>255</td><td>255成型機</td><td>3.清版</td><td>255</td><td>400</td><td></td><td>預設機台</td></tr>
+                    <tr class="selected-row"><td>255</td><td>255成型機</td><td>3.清版</td><td>255</td><td>400</td><td></td><td>預設機台</td><td></td></tr>
                 </tbody>
             </table>
         </div>
@@ -1438,6 +1438,8 @@ function switchTopMode(mode) {
     orderno:'orderNo', warehousecode:'warehouseCode',
     totalkg:'totalKg', companycode:'companyCode',
     companyname:'companyName', vendortype:'vendorType',
+    // inventory.定價形式 / machines.定價機臺形式
+    pricingtype:'pricingType', pricingmachinetype:'pricingMachineType',
   };
   function _normRow(row){
     const out={};
@@ -3562,7 +3564,8 @@ function switchTopMode(mode) {
         frontpaintthick:'正面漆膜厚',frontPaintThick:'正面漆膜厚',
         backpaintthick:'背面漆膜厚',backPaintThick:'背面漆膜厚',
         coating:'鍍層',strength:'強度',packagingmethod:'包裝方式',packagingMethod:'包裝方式',
-        unit:'單位',qty:'數量',total:'總數',remark:'備註'};
+        unit:'單位',qty:'數量',total:'總數',remark:'備註',
+        pricingtype:'定價形式',pricingType:'定價形式'};
       var STK_MAP = {model:'型號',warehouseno:'倉庫編號',warehouseNo:'倉庫編號',
         qty:'數量',total:'總數',price:'進價',amount:'金額',
         movedate:'異動日期',moveDate:'異動日期',remark:'備註'};
@@ -4869,7 +4872,7 @@ window.addEventListener('DOMContentLoaded', function(){
             if (!body) return;
             var rows = InventoryState.masters || [];
             if (!rows.length) {
-                body.innerHTML = '<tr><td colspan="24" style="text-align:center; color:#999; padding:20px;">（庫存主檔尚無資料）</td></tr>';
+                body.innerHTML = '<tr><td colspan="25" style="text-align:center; color:#999; padding:20px;">（庫存主檔尚無資料）</td></tr>';
                 return;
             }
             body.innerHTML = rows.map(function(r, i){
@@ -4898,6 +4901,7 @@ window.addEventListener('DOMContentLoaded', function(){
                     '<td>' + _esc(r['管控YN'] || 'Y') + '</td>' +
                     '<td>' + _esc(r['預設倉號'] || '') + '</td>' +
                     '<td>' + _esc(r['備註'] || '') + '</td>' +
+                    '<td>' + _esc(r['定價形式'] || r.pricingType || r.pricingtype || '') + '</td>' +
                   '</tr>';
             }).join('');
         }
@@ -5103,6 +5107,7 @@ window.addEventListener('DOMContentLoaded', function(){
             setInput('inv-stock-ctrl', getVal(21));
             setInput('inv-def-warehouse', getVal(22));
             setInput('inv-remark', getVal(23));
+            setInput('inv-pricing-type', getVal(24));
 
             const today = new Date();
             setInput('inv-date', `${today.getFullYear() - 1911}年${(today.getMonth()+1).toString().padStart(2, '0')}月${today.getDate().toString().padStart(2, '0')}日`);
@@ -6774,7 +6779,8 @@ window.addEventListener('DOMContentLoaded', function(){
         '強度':         cellText(tr.cells[15]),
         '包裝方式':     cellText(tr.cells[16]),
         '單位':         cellText(tr.cells[17]),
-        '備註':         cellText(tr.cells[23])
+        '備註':         cellText(tr.cells[23]),
+        '定價形式':     cellText(tr.cells[24])
         // 數量/總數 由後端依倉庫存量加總重算，這裡不送
       });
     });
