@@ -2928,7 +2928,7 @@ function switchTopMode(mode) {
             var _ex = await _get('order_items',{'id':'eq.'+_di.id,'limit':'1'});
             if (_ex && _ex.length) continue;
             await _upsert('order_items', Object.assign({
-              itemNo:'10', machine:'255', model:'ZBE0.500*0255R001',
+              itemNo:'0010', machine:'255', model:'ZBE0.500*0255R001',
               spec:'255K企口板*鍍鋅 0.5*燁輝-米黃', method:'3. 上板->底板',
               baseMaterialModel:'ZBE0.500*0255R001', materialNo:'鍍鋅', factory:'燁輝',
               coating:'AZ100', strength:'G550', size:'0.50x 255.0x 0.0',
@@ -7812,13 +7812,19 @@ window.addEventListener('DOMContentLoaded', function(){
   }
 
   // 依 ord-detail-body 表頭順序產生一列 <tr>
+  function _fmtItemNo(v, index){
+    var s = String(v == null ? '' : v).trim();
+    if (/^\d{1,4}$/.test(s)) return s.padStart(4, '0');
+    if (!s) return String((index + 1) * 10).padStart(4, '0');
+    return s;
+  }
   function buildOrderItemRow(it, index){
     var tr = document.createElement('tr');
     if (index === 0) tr.className = 'selected-row';
     tr.setAttribute('onclick', 'selectOrderRow && selectOrderRow(this)');
     function td(html){ var c = document.createElement('td'); c.innerHTML = html; return c; }
     tr.appendChild(td('▶'));
-    tr.appendChild(td('<input type="text" value="'+(it.itemNo||'')+'" readonly>'));
+    tr.appendChild(td('<input type="text" value="'+_fmtItemNo(it.itemNo, index)+'" readonly>'));
     tr.appendChild(td('<input type="text" class="ord-machine" value="'+(it.machine||'')+'" title="按 F2 開啟機台速查" onkeydown="handleGridKeydown(event, this, \'machine\')" onchange="window.applyStdPriceToRow && window.applyStdPriceToRow(this.closest(\'tr\'))">'));
     // 底板機台：僅製作方式=2 (上版→下版) 必填，UI 上一律顯示，存檔時靠 collectOrderItems 帶回
     tr.appendChild(td('<input type="text" class="ord-bottom-machine" value="'+(it.bottomMachine||'')+'" placeholder="(僅 method=2 必填)">'));
