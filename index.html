@@ -488,7 +488,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
                             <tr><th style="width:50px">項次</th><th style="width:40px">區</th><th style="width:80px; color:blue">長度mm</th><th style="width:80px; color:blue">單片台尺</th><th style="width:60px; color:blue">數量</th><th style="width:80px">總尺</th><th style="width:140px">備註</th><th style="width:100px">上板未完工數量</th><th style="width:80px" title="勾選後此裁件視為完成、不再出現於下一次派工">上板完結</th><th style="width:100px">底板未完工數量</th><th style="width:80px" title="部分完工，下次派工仍會顯示">底板完結</th></tr>
                         </thead>
                         <tbody id="cutting-body">
-                            <tr class="selected-row" onclick="selectCuttingRow(this)">
+                            <tr class="selected-row" data-order-item-no="0010" onclick="selectCuttingRow(this)">
                                 <td><input type="text" value="0010" readonly onkeydown="handleCuttingKeydown(event, this)"></td>
                                 <td><input type="text" value="A" onkeydown="handleCuttingKeydown(event, this)"></td>
                                 <td><input type="number" class="text-right calc-len" value="606.0" oninput="calcOrderLen(this)" onkeydown="handleCuttingKeydown(event, this)"></td>
@@ -6570,6 +6570,11 @@ window.addEventListener('DOMContentLoaded', function(){
 
                 const tr = document.createElement('tr');
                 tr.onclick = function() { selectCuttingRow(this); };
+                // 歸屬訂單項次＝目前選取的訂單細項列（無則 0010）
+                var _selOrd = document.querySelector('#ord-detail-body tr.selected-row') ||
+                              document.querySelector('#ord-detail-body tr');
+                tr.dataset.orderItemNo = (_selOrd && _selOrd.cells[1] && _selOrd.cells[1].querySelector('input'))
+                    ? (_selOrd.cells[1].querySelector('input').value || '0010') : '0010';
                 tr.innerHTML = `
                     <td><input type="text" value="${newItemNo}" readonly onkeydown="handleCuttingKeydown(event, this)"></td>
                     <td><input type="text" value="A" onkeydown="handleCuttingKeydown(event, this)"></td>
@@ -7886,7 +7891,8 @@ window.addEventListener('DOMContentLoaded', function(){
     if (index === 0) tr.className = 'selected-row';
     tr.setAttribute('onclick', 'selectCuttingRow && selectCuttingRow(this)');
     function td(html){ var x = document.createElement('td'); x.innerHTML = html; return x; }
-    tr.appendChild(td('<input type="text" value="'+(c.orderItemNo || '0010')+'" readonly>'));
+    tr.dataset.orderItemNo = c.orderItemNo || '0010';   // 歸屬的訂單項次（儲存用，不顯示）
+    tr.appendChild(td('<input type="text" value="'+String((index+1)*10).padStart(4,'0')+'" readonly>'));
     tr.appendChild(td('<input type="text" value="'+(c.zone || '')+'">'));
     tr.appendChild(td('<input type="number" class="text-right calc-len" value="'+(c.lengthMm||0)+'">'));
     tr.appendChild(td('<input type="number" class="text-right calc-feet" value="'+(c.feet||0)+'">'));
@@ -7928,6 +7934,11 @@ window.addEventListener('DOMContentLoaded', function(){
     if (!tb) return;
     tb.innerHTML = '';
     (cuttings || []).forEach(function(c, i){ tb.appendChild(buildCuttingRow(c, i)); });
+    // 項次順排保險：0010、0020… 不重複
+    Array.prototype.forEach.call(tb.rows, function(tr, i){
+      var inp = tr.cells[0] && tr.cells[0].querySelector('input');
+      if (inp) inp.value = String((i + 1) * 10).padStart(4, '0');
+    });
     // 同步上方 split-left 表格只顯示一個型號 (我們的範例都是單型號)
     var leftTb = document.querySelector('#grid-cutting .split-left tbody');
     if (leftTb && cuttings && cuttings.length){
@@ -8147,8 +8158,9 @@ window.addEventListener('DOMContentLoaded', function(){
       }
       // 欄序（對齊法琪）：0項次 1區 2長度mm 3單片台尺 4數量 5總尺 6備註
       //                  7上板未完工數量 8上板完結 9底板未完工數量 10底板完結
+      var ordItemNo = tr.dataset.orderItemNo || tr.getAttribute('data-order-item-no') || v(0) || '0010';
       out.push({
-        orderId: id, orderItemNo: v(0), zone: v(1), lengthMm: v(2), feet: v(3),
+        orderId: id, orderItemNo: ordItemNo, zone: v(1), lengthMm: v(2), feet: v(3),
         qty: v(4), totalFeet: v(5), remark: v(6),
         topUnfinish: v(7),    topDone:    chk(8),
         bottomUnfinish: v(9), bottomDone: chk(10)
