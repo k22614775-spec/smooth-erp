@@ -6577,6 +6577,7 @@ window.addEventListener('DOMContentLoaded', function(){
                 currentOrderInput = input;
                 currentLookupType = type;
                 if (type === 'machine') {
+                    if (typeof populateMachineLookup === 'function') populateMachineLookup();
                     openInvModal('machineLookupModal');
                 } else {
                     openOrderModal(type);
@@ -6691,9 +6692,11 @@ window.addEventListener('DOMContentLoaded', function(){
                 };
 
                 if (currentLookupType === 'main') {
-                    setVal(4, data.spec); setVal(7, data.material); setVal(8, data.factory);
-                    setVal(11, data.size); setVal(12, data.color); setVal(27, data.category);
+                    // 欄位：4型號 5品名 8材質 9廠別 12尺寸 13顏色 29類別
+                    setVal(5, data.spec); setVal(8, data.material); setVal(9, data.factory);
+                    setVal(12, data.size); setVal(13, data.color); setVal(29, data.category);
                     syncCuttingInfo(tr);
+                    if (window.applyStdPriceToRow) window.applyStdPriceToRow(tr);
                 } else if (currentLookupType === 'purchase') {
                     setVal(3, data.spec);
                 }
@@ -6711,9 +6714,34 @@ window.addEventListener('DOMContentLoaded', function(){
                     //   底板用料型號 (input) 從 cells[6] → cells[7]
                     if(tr.cells[6] && tr.cells[6].querySelector('select')) tr.cells[6].querySelector('select').selectedIndex = methodIdx;
                     if(tr.cells[7] && tr.cells[7].querySelector('input')) tr.cells[7].querySelector('input').value = bottom;
+                    if (window.applyStdPriceToRow) window.applyStdPriceToRow(tr);
                 }
             }
             closeModal('machineLookupModal');
+        }
+
+        // 機台速查：開啟時改由 machines 資料表動態渲染（含定價機臺形式）
+        function populateMachineLookup(){
+            var tb = document.querySelector('#machineLookupTable tbody');
+            if (!tb) return;
+            if (!window.API || !window.API.getMachinesFull) return;   // 保留靜態列
+            window.API.getMachinesFull(function(d){
+                var ms = d.machines || [];
+                if (!ms.length) return;   // DB 無資料 → 保留靜態列
+                tb.innerHTML = ms.map(function(m){
+                    var esc = function(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); };
+                    var methodIdx = 0;   // 製作方式 select 目前僅單一選項
+                    return '<tr style="cursor:pointer;" onclick="selectInvMachine(\'' + esc(m.id) + '\', ' + methodIdx + ', \'' + esc(m.material||'') + '\')">' +
+                        '<td>' + esc(m.id) + '</td>' +
+                        '<td>' + esc(m.name||'') + '</td>' +
+                        '<td>' + esc(m.method||'') + '</td>' +
+                        '<td class="text-right">' + esc(m.widthStart||m.widthstart||'') + '</td>' +
+                        '<td class="text-right">' + esc(m.widthEnd||m.widthend||'') + '</td>' +
+                        '<td>' + esc(m.material||'') + '</td>' +
+                        '<td>' + esc(m.remark||'') + '</td>' +
+                    '</tr>';
+                }).join('');
+            }, function(){ /* 失敗保留靜態列 */ });
         }
 
         // ==========================================
@@ -7581,10 +7609,10 @@ window.addEventListener('DOMContentLoaded', function(){
     function td(html){ var c = document.createElement('td'); c.innerHTML = html; return c; }
     tr.appendChild(td('▶'));
     tr.appendChild(td('<input type="text" value="'+(it.itemNo||'')+'" readonly>'));
-    tr.appendChild(td('<input type="text" class="ord-machine" value="'+(it.machine||'')+'" onchange="window.applyStdPriceToRow && window.applyStdPriceToRow(this.closest(\'tr\'))">'));
+    tr.appendChild(td('<input type="text" class="ord-machine" value="'+(it.machine||'')+'" title="按 F2 開啟機台速查" onkeydown="handleGridKeydown(event, this, \'machine\')" onchange="window.applyStdPriceToRow && window.applyStdPriceToRow(this.closest(\'tr\'))">'));
     // 底板機台：僅製作方式=2 (上版→下版) 必填，UI 上一律顯示，存檔時靠 collectOrderItems 帶回
     tr.appendChild(td('<input type="text" class="ord-bottom-machine" value="'+(it.bottomMachine||'')+'" placeholder="(僅 method=2 必填)">'));
-    tr.appendChild(td('<input type="text" value="'+(it.model||'')+'" onchange="window.applyStdPriceToRow && window.applyStdPriceToRow(this.closest(\'tr\'))">'));
+    tr.appendChild(td('<input type="text" value="'+(it.model||'')+'" title="按 F2 開啟庫存速查" onkeydown="handleGridKeydown(event, this, \'main\')" onchange="window.applyStdPriceToRow && window.applyStdPriceToRow(this.closest(\'tr\'))">'));
     tr.appendChild(td('<input type="text" value="'+(it.spec||'')+'">'));
     tr.appendChild(td('<select><option value="3" selected>'+(it.method || '3. 上板->底板')+'</option></select>'));
     tr.appendChild(td('<input type="text" value="'+(it.baseMaterialModel||'')+'">'));
