@@ -420,7 +420,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
                         <th style="width: 60px;">漆種</th><th style="width: 70px;">數量</th><th style="width: 80px;">總台尺</th><th style="width: 80px;">總數</th>
                         <th style="width: 80px;">總長度</th><th style="width: 50px;">單位</th><th style="width: 80px;">單價</th><th style="width: 100px;">金額</th>
                         <th style="width: 80px;">標準單價</th><th style="width: 90px;">單價審核</th><th style="width: 100px;">單價異動人員</th><th style="width: 130px;">單價異動時間</th>
-                        <th style="width: 80px;">計價基準</th><th style="width: 80px;">公式</th><th style="width: 100px;">交貨日期</th><th style="width: 90px;">類別</th>
+                        <th style="width: 80px;">計價基準</th><th style="width: 80px;">公式</th><th style="width: 100px;">交貨日期</th><th style="width: 90px;">類別</th><th style="width: 90px;">報價單號</th><th style="width: 140px;">銷貨品名</th><th style="width: 80px;">樣式編號</th><th style="width: 120px;">備註</th><th style="width: 80px;">成本基準</th><th style="width: 80px;">倉庫編號</th><th style="width: 70px;">是否派工</th><th style="width: 90px;">加工途程</th><th style="width: 80px;">未派數量</th><th style="width: 80px;">未派總數</th><th style="width: 60px;">派結</th><th style="width: 80px;">未交數量</th><th style="width: 80px;">未交總數</th><th style="width: 60px;">結案</th><th style="width: 70px;">單重</th><th style="width: 70px;">是否貼膜</th><th style="width: 80px;">是否流發泡</th><th style="width: 70px;">是否彎弓</th>
                     </tr>
                 </thead>
                 <tbody id="ord-detail-body">
@@ -442,7 +442,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
                         <td><input type="text" class="text-right calc-ord-amount" value="0" readonly></td>
                         <td><input type="number" class="text-right" value="10.00" readonly></td><td><button type="button" class="ord-price-audit" data-time="" onclick="toggleOrderPriceAudit(this)" style="width:100%; cursor:pointer; padding:2px;">未審核</button></td><td><input type="text" value="" readonly></td>
                         <td><input type="text" value="" readonly></td><td><input type="text" value="1.總數"></td>
-                        <td><input type="text" value=""></td><td><input type="text" value="115年02月11日"></td><td><input type="text" value="255企口板"></td>
+                        <td><input type="text" value=""></td><td><input type="text" value="115年02月11日"></td><td><input type="text" value="255企口板"></td><td><input type="text" value=""></td><td><input type="text" value=""></td><td><input type="text" value=""></td><td><input type="text" value=""></td><td><input type="text" value=""></td><td><input type="text" value=""></td><td><select><option selected>否</option><option>是</option></select></td><td><input type="text" value=""></td><td><input type="number" class="text-right" value="0"></td><td><input type="number" class="text-right" value="0"></td><td><select><option selected>否</option><option>是</option></select></td><td><input type="number" class="text-right" value="0"></td><td><input type="number" class="text-right" value="0"></td><td><select><option selected>否</option><option>是</option></select></td><td><input type="number" class="text-right" value="0"></td><td><select><option selected>否</option><option>是</option></select></td><td><select><option selected>否</option><option>是</option></select></td><td><select><option selected>否</option><option>是</option></select></td>
                     </tr>
                 </tbody>
             </table>
@@ -1615,6 +1615,11 @@ function switchTopMode(mode) {
     pricingtype:'pricingType', pricingmachinetype:'pricingMachineType',
     pricingno:'pricingNo', startdate:'startDate', enddate:'endDate',
     priceauditor:'priceAuditor', priceaudittime:'priceAuditTime',
+    quoteno:'quoteNo', styleno:'styleNo', costbase:'costBase',
+    isdispatched:'isDispatched', processroute:'processRoute',
+    undispatchedqty:'undispatchedQty', undispatchedtotal:'undispatchedTotal',
+    dispatchclosed:'dispatchClosed', undeliveredqty:'undeliveredQty',
+    undeliveredtotal:'undeliveredTotal', filmyn:'filmYN', foamyn:'foamYN', arcyn:'arcYN',
     widthstart:'widthStart', widthend:'widthEnd',
   };
   function _normRow(row){
@@ -7683,6 +7688,29 @@ window.addEventListener('DOMContentLoaded', function(){
     tr.appendChild(td('<input type="text" value="'+(it.formula||'')+'">'));
     tr.appendChild(td('<input type="text" value="'+(it.deliveryDate||'')+'">'));
     tr.appendChild(td('<input type="text" value="'+(it.category||'')+'">'));
+    // ── 法琪補齊欄位（30..47，附加於右側）──
+    function ynTd(v){
+      var y = (String(v||'否').indexOf('是') >= 0);
+      return td('<select><option'+(y?'':' selected')+'>否</option><option'+(y?' selected':'')+'>是</option></select>');
+    }
+    tr.appendChild(td('<input type="text" value="'+(it.quoteNo||'')+'">'));
+    tr.appendChild(td('<input type="text" value="'+(it.salesName||'')+'">'));
+    tr.appendChild(td('<input type="text" value="'+(it.styleNo||'')+'">'));
+    tr.appendChild(td('<input type="text" value="'+(it.remark||'')+'">'));
+    tr.appendChild(td('<input type="text" value="'+(it.costBase||'')+'">'));
+    tr.appendChild(td('<input type="text" value="'+(it.warehouseNo||'')+'">'));
+    tr.appendChild(ynTd(it.isDispatched));
+    tr.appendChild(td('<input type="text" value="'+(it.processRoute||'')+'">'));
+    tr.appendChild(td('<input type="number" class="text-right" value="'+(it.undispatchedQty||0)+'">'));
+    tr.appendChild(td('<input type="number" class="text-right" value="'+(it.undispatchedTotal||0)+'">'));
+    tr.appendChild(ynTd(it.dispatchClosed));
+    tr.appendChild(td('<input type="number" class="text-right" value="'+(it.undeliveredQty||0)+'">'));
+    tr.appendChild(td('<input type="number" class="text-right" value="'+(it.undeliveredTotal||0)+'">'));
+    tr.appendChild(ynTd(it.closed));
+    tr.appendChild(td('<input type="number" class="text-right" value="'+(it.unitWeight||0)+'">'));
+    tr.appendChild(ynTd(it.filmYN));
+    tr.appendChild(ynTd(it.foamYN));
+    tr.appendChild(ynTd(it.arcYN));
     return tr;
   }
 
@@ -7922,7 +7950,13 @@ window.addEventListener('DOMContentLoaded', function(){
         priceAuditTime: audBtn ? (audBtn.dataset.time || '') : '',
         priceModifier: v(24),
         priceModifyTime: v(25), costBasis: v(26), formula: v(27), deliveryDate: v(28),
-        category: v(29)
+        category: v(29),
+        // 法琪補齊欄位 30..47
+        quoteNo: v(30), salesName: v(31), styleNo: v(32), remark: v(33),
+        costBase: v(34), warehouseNo: v(35), isDispatched: v(36), processRoute: v(37),
+        undispatchedQty: v(38), undispatchedTotal: v(39), dispatchClosed: v(40),
+        undeliveredQty: v(41), undeliveredTotal: v(42), closed: v(43),
+        unitWeight: v(44), filmYN: v(45), foamYN: v(46), arcYN: v(47)
       });
     });
     return out;
