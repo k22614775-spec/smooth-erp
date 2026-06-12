@@ -15,7 +15,36 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # ── 自動套用新的 Supabase migration（已套用過的會跳過）──
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply new migrations
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$DB_URL" ]; then
+            echo "::warning::未設定 SUPABASE_DB_URL secret，跳過自動 migration（請手動執行 SQL）"
+            exit 0
+          fi
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS _applied_migrations (name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ DEFAULT now());"
+          for f in $(ls supabase/migrations/*.sql | sort); do
+            n=$(basename "$f")
+            if psql "$DB_URL" -tAc "SELECT 1 FROM _applied_migrations WHERE name='$n'" | grep -q 1; then
+              echo "skip  $n"
+            else
+              echo "apply $n"
+              psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$f"
+              psql "$DB_URL" -v ON_ERROR_STOP=1 -c "INSERT INTO _applied_migrations(name) VALUES ('$n') ON CONFLICT DO NOTHING;"
+            fi
+          done
+          echo "✅ migrations 完成"
+
   deploy:
+    needs: migrate
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -23,17 +52,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Debug secrets
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-        run: |
-          echo "=== Secret 診斷 ==="
-          echo "SUPABASE_URL 長度: ${#SUPABASE_URL}"
-          echo "SUPABASE_URL 前30字: ${SUPABASE_URL:0:30}"
-          echo "SUPABASE_ANON_KEY 長度: ${#SUPABASE_ANON_KEY}"
-          echo "SUPABASE_ANON_KEY 前10字: ${SUPABASE_ANON_KEY:0:10}"
 
       - name: Inject secrets and version
         env:
