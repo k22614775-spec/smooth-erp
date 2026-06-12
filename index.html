@@ -3969,6 +3969,9 @@ function switchTopMode(mode) {
     updateMachineMethod: function(machineId, val, cb, errCb){
       _cb(_patch('machines',{'id':'eq.'+machineId},{method:val}), cb, errCb);
     },
+    updateMachineMaterial: function(machineId, val, cb, errCb){
+      _cb(_patch('machines',{'id':'eq.'+machineId},{material:val}), cb, errCb);
+    },
     saveInventory: function(payload, cb, errCb){
       const ops=[];
       if(Array.isArray(payload.inventory)){
@@ -4900,13 +4903,22 @@ window.addEventListener('DOMContentLoaded', function(){
                         '<td>' + methodSel + '</td>' +
                         '<td>' + _esc(m.widthStart || m.widthstart || '') + '</td>' +
                         '<td>' + _esc(m.widthEnd || m.widthend || '') + '</td>' +
-                        '<td>' + _esc(m.material || '') + '</td>' +
+                        '<td><input type="text" readonly value="' + _esc(m.material || '') + '"' +
+                            ' style="width:100%; cursor:pointer; background:#fffbe6;"' +
+                            ' title="點擊開啟庫存速查，勾選型號後自動存檔"' +
+                            ' onclick="openMachineMaterialLookup(\'' + _esc(m.id) + '\', this)"></td>' +
                         '<td>' + _esc(m.remark || '') + '</td>' +
                         '<td><select style="min-width:140px;" onchange="updateMachinePricingTypeUI(\'' + _esc(m.id) + '\', this.value)">' +
                             opts.join('') + '</select></td>' +
                     '</tr>';
                 }).join('');
             }, function(e){ console.error('載入機台失敗', e); });
+        }
+        function openMachineMaterialLookup(machineId, inputEl){
+            window.__machineMaterialTarget = machineId;
+            currentOrderInput = inputEl;
+            currentLookupType = 'machineMaterial';
+            openOrderModal('machineMaterial');
         }
         function updateMachineMethodUI(id, val){
             if (!window.API || !window.API.updateMachineMethod) return;
@@ -6943,6 +6955,15 @@ window.addEventListener('DOMContentLoaded', function(){
                     if (window.applyStdPriceToRow) window.applyStdPriceToRow(tr);
                 } else if (currentLookupType === 'purchase') {
                     setVal(3, data.spec);
+                } else if (currentLookupType === 'machineMaterial') {
+                    var _mid = window.__machineMaterialTarget;
+                    if (_mid && window.API && window.API.updateMachineMaterial){
+                        window.API.updateMachineMaterial(_mid, data.model, function(){
+                            console.log('[機台設定] 底板用料已存檔', _mid, '→', data.model);
+                            if (typeof OrderPricing !== 'undefined') OrderPricing.loaded = false;
+                        }, function(e){ alert('底板用料寫入失敗：' + (e && e.message || e)); });
+                    }
+                    window.__machineMaterialTarget = null;
                 }
             }
             closeOrderModal();
