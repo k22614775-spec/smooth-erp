@@ -1873,8 +1873,17 @@ function switchTopMode(mode) {
         _get('orders','select=*'),
         _get('order_items','select=*'),
         _get('dispatch_orders','select=id,orderId,status'),
+        _get('cutting_details','select=*'),
       ]).then(function(r){
-        const orders=r[0], items=r[1], dispatches=r[2];
+        const orders=r[0], items=r[1], dispatches=r[2], cuttings=r[3]||[];
+        // 依 訂單+項次 彙總未完工量（與訂單裁切明細同步）
+        const unfMap={};
+        cuttings.forEach(function(c){
+          const k=String(c.orderId||c.orderid||'')+'|'+String(c.orderItemNo||c.orderitemno||'0010');
+          if(!unfMap[k]) unfMap[k]={top:0,bottom:0};
+          unfMap[k].top    += parseInt(c.topUnfinish!=null?c.topUnfinish:(c.topunfinish||0),10)||0;
+          unfMap[k].bottom += parseInt(c.bottomUnfinish!=null?c.bottomUnfinish:(c.bottomunfinish||0),10)||0;
+        });
         const oMap={};
         orders.forEach(function(o){
           // 欄位大小寫兼容（未執行 003_fix 時欄位是小寫）
@@ -1910,6 +1919,8 @@ function switchTopMode(mode) {
             manufacturingMethod:it.method,materialNo:it.materialNo,factory:it.factory,
             status:dispatched?'已派工':(o.status||'待派工'),
             hasDispatch:dispatched,dispatchId:ds.length?ds[0].id:'',
+            topUnfinish:(unfMap[String(it.orderId)+'|'+String(it.itemNo||'0010')]||{}).top||0,
+            bottomUnfinish:(unfMap[String(it.orderId)+'|'+String(it.itemNo||'0010')]||{}).bottom||0,
           };
         });
       }), cb, errCb);
@@ -14214,6 +14225,8 @@ window.addEventListener('DOMContentLoaded', function(){
                   <th className="border-b border-r border-gray-300 p-1 font-normal text-right whitespace-nowrap">數量 <span className="text-[10px] text-gray-500">▼</span></th>
                   <th className="border-b border-r border-gray-300 p-1 font-normal text-right whitespace-nowrap">總尺</th>
                   <th className="border-b border-r border-gray-300 p-1 font-normal text-right whitespace-nowrap">總重</th>
+                  <th className="border-b border-r border-gray-300 p-1 font-normal text-right whitespace-nowrap">上板未完工</th>
+                  <th className="border-b border-r border-gray-300 p-1 font-normal text-right whitespace-nowrap">底板未完工</th>
                   <th className="border-b border-r border-gray-300 p-1 font-normal text-center whitespace-nowrap">交貨日期</th>
                   <th className="border-b border-r border-gray-300 p-1 font-normal text-left whitespace-nowrap">備註</th>
                   <th className="border-b border-r border-gray-300 p-1 font-normal text-center whitespace-nowrap">項次</th>
@@ -14242,6 +14255,8 @@ window.addEventListener('DOMContentLoaded', function(){
                       <td className="border-r border-gray-200 p-0.5 text-right"><EditableInput value={order.qty} onChange={(v) => updateLocalOrder(order.id, 'qty', v)} onBlur={(v) => handleBlurUpdate(order.id, 'qty', v)} className={`text-right ${isSelected ? 'text-white focus:text-black' : ''}`} /></td>
                       <td className={`border-r border-gray-200 p-0.5 text-right ${isSelected ? '' : 'bg-[#f8fafc]'}`}><EditableInput value={order.totalLen} onChange={(v) => updateLocalOrder(order.id, 'totalLen', v)} onBlur={(v) => handleBlurUpdate(order.id, 'totalLen', v)} className={`text-right bg-transparent ${isSelected ? 'text-white focus:text-black' : ''}`} /></td>
                       <td className={`border-r border-gray-200 p-0.5 text-right ${isSelected ? '' : 'bg-[#f1f5f9]'}`}><EditableInput value={order.totalWeight} onChange={(v) => updateLocalOrder(order.id, 'totalWeight', v)} onBlur={(v) => handleBlurUpdate(order.id, 'totalWeight', v)} className={`text-right bg-transparent ${isSelected ? 'text-white focus:text-black' : ''}`} /></td>
+                      <td className={`border-r border-gray-200 p-0.5 text-right pr-2 ${isSelected ? 'text-white' : 'text-blue-900'}`}>{order.topUnfinish != null ? order.topUnfinish : ''}</td>
+                      <td className={`border-r border-gray-200 p-0.5 text-right pr-2 ${isSelected ? 'text-white' : 'text-blue-900'}`}>{order.bottomUnfinish != null ? order.bottomUnfinish : ''}</td>
                       <td className={`border-r border-gray-200 p-0.5 text-center ${isSelected ? '' : 'bg-white'}`}><EditableInput value={order.date} onChange={(v) => updateLocalOrder(order.id, 'date', v)} onBlur={(v) => handleBlurUpdate(order.id, 'date', v)} className={`text-center bg-transparent ${isSelected ? 'text-white focus:text-black' : ''}`} /></td>
                       <td className="border-r border-gray-200 p-0.5"><EditableInput value={order.remark} onChange={(v) => updateLocalOrder(order.id, 'remark', v)} onBlur={(v) => handleBlurUpdate(order.id, 'remark', v)} className={isSelected ? 'text-white focus:text-black' : ''} /></td>
                       <td className="border-r border-gray-200 p-0.5 text-center"><EditableInput value={order.itemNo} onChange={(v) => updateLocalOrder(order.id, 'itemNo', v)} onBlur={(v) => handleBlurUpdate(order.id, 'itemNo', v)} className={`text-center ${isSelected ? 'text-white focus:text-black' : ''}`} /></td>
