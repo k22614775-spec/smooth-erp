@@ -289,7 +289,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
             <div class="form-label">建檔日期</div><input type="text" id="inv-create-date" class="form-input" placeholder="YYY/MM/DD">
             <div class="form-label">庫存管控YN</div><select id="inv-stock-ctrl" class="form-input"><option value="Y">Y.是</option><option value="N">N.否</option></select>
             <div class="form-label">預設倉號</div><input type="text" id="inv-def-warehouse" class="form-input" value="A鋼捲倉">
-            <div class="form-label">定價形式</div><select id="inv-pricing-type" class="form-input"><option value=""></option></select>
+            <div class="form-label">定價形式</div><select id="inv-pricing-type" class="form-input" onchange="updateInvPricingType(this.value)" title="改選即寫入資料庫"><option value=""></option></select>
         </div>
         <div class="tabs">
             <button class="tab-btn active" onclick="switchInvTab('master', this)">庫存主檔</button>
@@ -3834,6 +3834,9 @@ function switchTopMode(mode) {
       });
       _cb(p, cb, errCb);
     },
+    updateInventoryPricingType: function(model, val, cb, errCb){
+      _cb(_patch('inventory',{'model':'eq.'+model},{pricingType:val}), cb, errCb);
+    },
     getOrderPricingData: function(cb, errCb){
       _cb(Promise.all([
         _get('inventory',{'select':'model,pricingType'}),
@@ -4823,8 +4826,25 @@ window.addEventListener('DOMContentLoaded', function(){
         }
 
         // ==========================================
-        // 庫存「定價形式」下拉選項
+        // 庫存「定價形式」下拉選項（改選即寫入 DB）
         // ==========================================
+        function updateInvPricingType(val){
+            var model = (document.getElementById('inv-model') || {}).value || '';
+            model = model.trim();
+            if (!model) return alert('請先在下方表格點選一筆型號');
+            if (!window.API || !window.API.updateInventoryPricingType) return;
+            window.API.updateInventoryPricingType(model, val, function(){
+                console.log('[庫存] 定價形式已寫入', model, '→', val);
+                // 同步更新 grid 該列的定價形式欄（最後一欄）
+                document.querySelectorAll('#inv-master-body tr').forEach(function(tr){
+                    if (tr.cells.length >= 25 && (tr.cells[1].textContent || '').trim() === model){
+                        tr.cells[24].textContent = val;
+                    }
+                });
+                // 訂單查價快取失效，下次重新載入
+                if (typeof OrderPricing !== 'undefined') OrderPricing.loaded = false;
+            }, function(e){ alert('定價形式寫入失敗：' + (e && e.message || e)); });
+        }
         function loadInvPricingTypes(){
             if (!window.API || !window.API.getPricingData) return;
             window.API.getPricingData(function(d){
