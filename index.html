@@ -740,6 +740,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
         <div class="tabs">
             <button class="tab-btn active" onclick="switchDispatchTab('coil', this)">鋼捲扣庫明細</button>
             <button class="tab-btn" onclick="switchDispatchTab('prod', this)">入庫明細（裁切明細）</button>
+            <button class="tab-btn" onclick="switchDispatchTab('reporters', this)">回報人員明細</button>
         </div>
 
         <!-- 鋼捲扣庫明細 -->
@@ -837,6 +838,26 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
                 </thead>
                 <tbody id="dsp-prod-body">
                     <tr><td colspan="35" style="text-align:center; color:#999; padding:20px;">（尚未載入派工單）</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 回報人員明細：與派工回單共用 dispatch_return_reporters，MES 報工即時同步 -->
+        <div id="grid-dsp-reporters" class="grid-container hidden">
+            <table style="min-width: 1100px;" id="dsp-reporters-table">
+                <thead>
+                    <tr>
+                        <th style="width:60px;">項次</th>
+                        <th style="width:280px;">回報人員 <span style="color:#666; font-weight:normal;">(多人以分號分隔)</span></th>
+                        <th style="width:160px;">開工時間</th>
+                        <th style="width:160px;">完工時間</th>
+                        <th style="width:100px;">使用工時</th>
+                        <th style="width:80px;">狀態</th>
+                        <th>備註</th>
+                    </tr>
+                </thead>
+                <tbody id="dsp-reporters-body">
+                    <tr><td colspan="7" style="text-align:center; color:#999; padding:20px;">（尚未載入派工單）</td></tr>
                 </tbody>
             </table>
         </div>
@@ -2136,7 +2157,8 @@ function switchTopMode(mode) {
         _get('dispatch_orders',{'id':'eq.'+dispatchId,'limit':'1'}),
         _get('dispatch_coil_moves',{'dispatchId':'eq.'+dispatchId,'order':'itemNo'}),
         _get('dispatch_production',{'dispatchId':'eq.'+dispatchId}),
-      ]).then(function(r){ return {header:r[0][0]||null,coilMoves:r[1],production:r[2]}; }), cb, errCb);
+        _get('dispatch_return_reporters',{'dispatchId':'eq.'+dispatchId,'order':'startTime'}),
+      ]).then(function(r){ return {header:r[0][0]||null,coilMoves:r[1],production:r[2],reporters:r[3]||[]}; }), cb, errCb);
     },
     listDispatchIds: function(cb, errCb){
       _cb(_get('dispatch_orders',{'select':'id,date,orderId,machine,phase,status','order':'id.desc'}), cb, errCb);
@@ -5040,7 +5062,7 @@ window.addEventListener('DOMContentLoaded', function(){
         function switchDispatchTab(tab, btn) {
             document.querySelectorAll('#dispatch-app .tab-btn').forEach(t => t.classList.remove('active'));
             if (btn) btn.classList.add('active');
-            ['coil', 'prod'].forEach(t => {
+            ['coil', 'prod', 'reporters'].forEach(t => {
                 const el = document.getElementById('grid-dsp-' + t);
                 if (el) el.classList.add('hidden');
             });
@@ -5282,6 +5304,50 @@ window.addEventListener('DOMContentLoaded', function(){
             DispatchState.selectedCoilRow = tr;
         }
 
+        function renderDispatchReporters(reporters) {
+            var rb = document.getElementById('dsp-reporters-body');
+            if (!rb) return;
+            reporters = reporters || [];
+            if (!reporters.length){
+                rb.innerHTML = '<tr><td colspan="7" style="text-align:center; color:#999; padding:20px;">（此派工尚無回報人員紀錄；MES 開工後即時寫入）</td></tr>';
+                return;
+            }
+            function esc(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+            function toSec(hh){
+                if (!hh) return 0;
+                var p = String(hh).split(':');
+                if (p.length < 3) return 0;
+                return (parseInt(p[0],10)||0)*3600 + (parseInt(p[1],10)||0)*60 + (parseInt(p[2],10)||0);
+            }
+            function toHH(sec){
+                sec = Math.max(0, sec|0);
+                var h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
+                return ('00'+h).slice(-2)+':'+('00'+m).slice(-2)+':'+('00'+s).slice(-2);
+            }
+            var total = 0;
+            var html = reporters.map(function(r, i){
+                var st = r.status === 'active' ? '<span style="color:#1b5e20; font-weight:bold;">作業中</span>'
+                       : r.status === 'paused' ? '<span style="color:#e65100; font-weight:bold;">暫停</span>'
+                       : '<span style="color:#555;">完成</span>';
+                var wh = r.workHours || r.workhours || '';
+                total += toSec(wh);
+                return '<tr' + (i === 0 ? ' class="selected-row"' : '') + '>' +
+                    '<td>' + esc(r.itemNo || r.itemno || ('00'+(i+1)*10).slice(-4)) + '</td>' +
+                    '<td>' + esc(r.reporters).replace(/;/g, '<span style="color:#aaa;">；</span>') + '</td>' +
+                    '<td>' + esc(r.startTime || r.starttime || '') + '</td>' +
+                    '<td>' + esc(r.endTime || r.endtime || '') + '</td>' +
+                    '<td class="text-right" style="font-family:monospace;">' + esc(wh) + '</td>' +
+                    '<td>' + st + '</td>' +
+                    '<td>' + esc(r.remark || '') + '</td>' +
+                '</tr>';
+            });
+            html.push('<tr style="background:#fffde7; font-weight:bold;">' +
+                '<td colspan="4" style="text-align:right;">合計</td>' +
+                '<td class="text-right" style="font-family:monospace; color:#1b5e20;">' + toHH(total) + '</td>' +
+                '<td colspan="2"></td></tr>');
+            rb.innerHTML = html.join('');
+        }
+
         function renderDispatchProduction(rows) {
             DispatchState.production = rows || [];
             var body = document.getElementById('dsp-prod-body');
@@ -5361,6 +5427,7 @@ window.addEventListener('DOMContentLoaded', function(){
                 renderCoilMoves(data.coilMoves || []);
                 renderDispatchHeader(data.header || {});
                 renderDispatchProduction(data.production || []);
+                if (typeof renderDispatchReporters === 'function') renderDispatchReporters(data.reporters || []);
                 DispatchState.reporters = data.reporters || [];
                 // 注意：暫停/恢復/換人按鈕已移到 MES 清單頁，派工系統頁不再操作 reporter 狀態
                 var idx = DispatchState.ids.findIndex(function(x){
