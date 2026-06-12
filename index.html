@@ -411,14 +411,14 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
             <table style="min-width: 2500px;">
                 <thead>
                     <tr>
-                        <th style="width: 30px;">▶</th><th style="width: 50px;">項次</th><th style="width: 80px;">機台 (按F2)</th>
+                        <th style="width: 30px;">▶</th><th style="width: 50px;">項次</th><th style="width: 80px;">機台編號 (按F2)</th>
                         <th style="width: 80px;" title="僅製作方式=2 (上版→下版) 必填">底板機台</th>
                         <th style="width: 140px;">型號 (按F2)</th>
                         <th style="width: 300px; color:red">品名規格</th><th style="width: 120px; color:blue">製作方式</th>
-                        <th style="width: 120px;">底板用料型號</th><th style="width: 80px;">材質編號</th><th style="width: 80px;">廠別編號</th>
+                        <th style="width: 120px;">底板用料</th><th style="width: 80px;">材質編號</th><th style="width: 80px;">廠別編號</th>
                         <th style="width: 60px;">鍍層</th><th style="width: 80px;">抗拉強度</th><th style="width: 120px;">尺寸</th><th style="width: 80px;">顏色</th>
                         <th style="width: 60px;">漆種</th><th style="width: 70px;">數量</th><th style="width: 80px;">總台尺</th><th style="width: 80px;">總數</th>
-                        <th style="width: 80px;">長度</th><th style="width: 50px;">單位</th><th style="width: 80px;">單價</th><th style="width: 100px;">金額</th>
+                        <th style="width: 80px;">總長度</th><th style="width: 50px;">單位</th><th style="width: 80px;">單價</th><th style="width: 100px;">金額</th>
                         <th style="width: 80px;">標準單價</th><th style="width: 90px;">單價審核</th><th style="width: 100px;">單價異動人員</th><th style="width: 130px;">單價異動時間</th>
                         <th style="width: 80px;">計價基準</th><th style="width: 80px;">公式</th><th style="width: 100px;">交貨日期</th><th style="width: 90px;">類別</th>
                     </tr>
@@ -6755,7 +6755,7 @@ window.addEventListener('DOMContentLoaded', function(){
                 if (tr) {
                     // 加入 底板機台 欄位後 cell index 整體 +1：
                     //   製作方式 (select) 從 cells[5] → cells[6]
-                    //   底板用料型號 (input) 從 cells[6] → cells[7]
+                    //   底板用料 (input) 從 cells[6] → cells[7]
                     if(tr.cells[6] && tr.cells[6].querySelector('select')) tr.cells[6].querySelector('select').selectedIndex = methodIdx;
                     if(tr.cells[7] && tr.cells[7].querySelector('input')) tr.cells[7].querySelector('input').value = bottom;
                     if (window.applyStdPriceToRow) window.applyStdPriceToRow(tr);
@@ -13842,10 +13842,10 @@ window.addEventListener('DOMContentLoaded', function(){
                   <th className="border-b border-r border-gray-300 p-1 font-normal text-left whitespace-nowrap">客戶簡稱</th>
                   <th className="border-b border-r border-gray-300 p-1 font-normal text-left whitespace-nowrap">工地</th>
                   <th className="border-b border-r border-gray-300 p-1 font-normal text-left whitespace-nowrap">過磅單號</th>
-                  <th className="border-b border-r border-gray-300 p-1 font-normal text-left whitespace-nowrap">機台</th>
+                  <th className="border-b border-r border-gray-300 p-1 font-normal text-left whitespace-nowrap">機台編號</th>
                   <th className="border-b border-r border-gray-300 p-1 font-normal text-left whitespace-nowrap">型號</th>
                   <th className="border-b border-r border-gray-300 p-1 font-normal text-left whitespace-nowrap">品名規格</th>
-                  <th className="border-b border-r border-gray-300 p-1 font-normal text-left whitespace-nowrap">底板用料型號</th>
+                  <th className="border-b border-r border-gray-300 p-1 font-normal text-left whitespace-nowrap">底板用料</th>
                   <th className="border-b border-r border-gray-300 p-1 font-normal text-left whitespace-nowrap">製作方式</th>
                   <th className="border-b border-r border-gray-300 p-1 font-normal text-left whitespace-nowrap">材質編號</th>
                   <th className="border-b border-r border-gray-300 p-1 font-normal text-left whitespace-nowrap">廠別</th>
@@ -14112,7 +14112,7 @@ window.addEventListener('DOMContentLoaded', function(){
 
           <div className="bg-[#8b9dc3] text-white p-1 text-xs z-10">
             <div className="grid grid-cols-12 border-b border-gray-400 bg-[#7a8eb8] pb-1">
-               <div className="col-span-1 px-1">訂單單號</div><div className="col-span-1 px-1">機台</div><div className="col-span-1 px-1">客戶簡稱</div><div className="col-span-1 px-1">型號</div>
+               <div className="col-span-1 px-1">訂單單號</div><div className="col-span-1 px-1">機台編號</div><div className="col-span-1 px-1">客戶簡稱</div><div className="col-span-1 px-1">型號</div>
                <div className="col-span-2 px-1">品名規格</div><div className="col-span-1 px-1">數量</div><div className="col-span-1 px-1">總尺</div><div className="col-span-1 px-1">單位重</div>
                <div className="col-span-1 px-1">總重</div><div className="col-span-1 px-1">備註</div><div className="col-span-1 px-1">交貨日期</div>
             </div>
