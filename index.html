@@ -419,7 +419,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
                         <th style="width: 60px;">鍍層</th><th style="width: 80px;">抗拉強度</th><th style="width: 120px;">尺寸</th><th style="width: 80px;">顏色</th>
                         <th style="width: 60px;">漆種</th><th style="width: 70px;">數量</th><th style="width: 80px;">總台尺</th><th style="width: 80px;">總數</th>
                         <th style="width: 80px;">長度</th><th style="width: 50px;">單位</th><th style="width: 80px;">單價</th><th style="width: 100px;">金額</th>
-                        <th style="width: 80px;">標準單價</th><th style="width: 100px;">單價異動人員</th><th style="width: 130px;">單價異動時間</th>
+                        <th style="width: 80px;">標準單價</th><th style="width: 90px;">單價審核</th><th style="width: 100px;">單價異動人員</th><th style="width: 130px;">單價異動時間</th>
                         <th style="width: 80px;">計價基準</th><th style="width: 80px;">公式</th><th style="width: 100px;">交貨日期</th><th style="width: 90px;">類別</th>
                     </tr>
                 </thead>
@@ -440,7 +440,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
                         <td><input type="number" class="text-right" value="606.0"></td><td><input type="text" value="台尺"></td>
                         <td><input type="number" class="text-right calc-ord-price" value="0.00" oninput="calculateOrderRowAmount(this)"></td>
                         <td><input type="text" class="text-right calc-ord-amount" value="0" readonly></td>
-                        <td><input type="number" class="text-right" value="10.00"></td><td><input type="text" value="" readonly></td>
+                        <td><input type="number" class="text-right" value="10.00" readonly></td><td><button type="button" class="ord-price-audit" data-time="" onclick="toggleOrderPriceAudit(this)" style="width:100%; cursor:pointer; padding:2px;">未審核</button></td><td><input type="text" value="" readonly></td>
                         <td><input type="text" value="" readonly></td><td><input type="text" value="1.總數"></td>
                         <td><input type="text" value=""></td><td><input type="text" value="115年02月11日"></td><td><input type="text" value="255企口板"></td>
                     </tr>
@@ -1614,6 +1614,7 @@ function switchTopMode(mode) {
     // inventory.定價形式 / machines.定價機臺形式
     pricingtype:'pricingType', pricingmachinetype:'pricingMachineType',
     pricingno:'pricingNo', startdate:'startDate', enddate:'endDate',
+    priceauditor:'priceAuditor', priceaudittime:'priceAuditTime',
     widthstart:'widthStart', widthend:'widthEnd',
   };
   function _normRow(row){
@@ -3830,6 +3831,14 @@ function switchTopMode(mode) {
         });
       });
       _cb(p, cb, errCb);
+    },
+    getOrderPricingData: function(cb, errCb){
+      _cb(Promise.all([
+        _get('inventory',{'select':'model,pricingType'}),
+        _get('machines',{'select':'id,pricingMachineType'}),
+        _get('pricing_headers',{'pricingNo':'eq.STD','order':'startDate'}),
+        _get('pricing_table',{'pricingNo':'eq.STD'}),
+      ]).then(function(r){ return {inv:r[0],machines:r[1],headers:r[2],rows:r[3]}; }), cb, errCb);
     },
     adjustPricingRows: function(rows, cb, errCb){
       // rows 含 id（PK），POST merge-duplicates＝批次更新一次完成
@@ -7570,10 +7579,10 @@ window.addEventListener('DOMContentLoaded', function(){
     function td(html){ var c = document.createElement('td'); c.innerHTML = html; return c; }
     tr.appendChild(td('▶'));
     tr.appendChild(td('<input type="text" value="'+(it.itemNo||'')+'" readonly>'));
-    tr.appendChild(td('<input type="text" class="ord-machine" value="'+(it.machine||'')+'">'));
+    tr.appendChild(td('<input type="text" class="ord-machine" value="'+(it.machine||'')+'" onchange="window.applyStdPriceToRow && window.applyStdPriceToRow(this.closest(\'tr\'))">'));
     // 底板機台：僅製作方式=2 (上版→下版) 必填，UI 上一律顯示，存檔時靠 collectOrderItems 帶回
     tr.appendChild(td('<input type="text" class="ord-bottom-machine" value="'+(it.bottomMachine||'')+'" placeholder="(僅 method=2 必填)">'));
-    tr.appendChild(td('<input type="text" value="'+(it.model||'')+'">'));
+    tr.appendChild(td('<input type="text" value="'+(it.model||'')+'" onchange="window.applyStdPriceToRow && window.applyStdPriceToRow(this.closest(\'tr\'))">'));
     tr.appendChild(td('<input type="text" value="'+(it.spec||'')+'">'));
     tr.appendChild(td('<select><option value="3" selected>'+(it.method || '3. 上板->底板')+'</option></select>'));
     tr.appendChild(td('<input type="text" value="'+(it.baseMaterialModel||'')+'">'));
@@ -7589,9 +7598,11 @@ window.addEventListener('DOMContentLoaded', function(){
     tr.appendChild(td('<input type="number" class="text-right calc-ord-total" value="'+(it.totalQty||0)+'">'));
     tr.appendChild(td('<input type="number" class="text-right" value="'+(it.length||0)+'">'));
     tr.appendChild(td('<input type="text" value="'+(it.unit||'')+'">'));
-    tr.appendChild(td('<input type="number" class="text-right calc-ord-price" value="'+(it.price||0)+'">'));
+    tr.appendChild(td('<input type="number" class="text-right calc-ord-price" value="'+(it.price||0)+'" oninput="calculateOrderRowAmount && calculateOrderRowAmount(this); window.updateOrderPriceFlags && window.updateOrderPriceFlags(this.closest(\'tr\'))">'));
     tr.appendChild(td('<input type="text" class="text-right calc-ord-amount" value="'+(it.amount||0)+'" readonly>'));
-    tr.appendChild(td('<input type="number" class="text-right" value="'+(it.standardPrice||it.price||0)+'">'));
+    tr.appendChild(td('<input type="number" class="text-right ord-std-price" value="'+(it.standardPrice||0)+'" readonly title="依 定價形式×機台定價形式 自動帶入">'));
+    var _aud = it.priceAuditor || '';
+    tr.appendChild(td('<button type="button" class="ord-price-audit" data-time="'+(it.priceAuditTime||'')+'" onclick="toggleOrderPriceAudit(this)" style="width:100%; cursor:pointer; padding:2px;'+(_aud?' background:#e8f5e9; color:#1B5E20; font-weight:bold;':'')+'">'+(_aud||'未審核')+'</button>'));
     tr.appendChild(td('<input type="text" value="'+(it.priceModifier||'')+'" readonly>'));
     tr.appendChild(td('<input type="text" value="'+(it.priceModifyTime||'')+'" readonly>'));
     tr.appendChild(td('<input type="text" value="'+(it.costBasis||'1.總數')+'">'));
@@ -7629,6 +7640,7 @@ window.addEventListener('DOMContentLoaded', function(){
     if (!tb) return;
     tb.innerHTML = '';
     (items || []).forEach(function(it, i){ tb.appendChild(buildOrderItemRow(it, i)); });
+    if (window.refreshOrderStdPrices) window.refreshOrderStdPrices();
     setText('ord-count', (items||[]).length);
     var qtySum = 0, totalSum = 0, amtSum = 0;
     (items||[]).forEach(function(it){
@@ -7655,7 +7667,7 @@ window.addEventListener('DOMContentLoaded', function(){
       var detailRow = document.querySelector('#ord-detail-body tr');
       var spec = detailRow ? (detailRow.cells[4].querySelector('input').value) : '';
       var model = detailRow ? (detailRow.cells[3].querySelector('input').value) : '';
-      var category = detailRow ? (detailRow.cells[27].querySelector('input').value) : '';
+      var category = detailRow ? (detailRow.cells[28].querySelector('input').value) : '';
       leftTb.innerHTML = '<tr class="selected-row"><td>▶</td><td>'+firstItemNo+'</td><td>'+category+'</td><td><input type="text" value="'+model+'" readonly></td><td>'+spec+'</td></tr>';
     }
   }
@@ -7719,6 +7731,98 @@ window.addEventListener('DOMContentLoaded', function(){
       dispatchRemark: valOf('ord-dispatch-remark')
     };
   }
+  // ════ 訂單細項：標準報價自動帶入 + 單價審核 ════
+  var OrderPricing = { loaded:false, loading:false, modelMap:{}, machineMap:{}, headers:[], rows:[] };
+  function loadOrderPricing(cb){
+    if (OrderPricing.loaded){ if (cb) cb(); return; }
+    if (!window.API || !window.API.getOrderPricingData){ if (cb) cb(); return; }
+    if (OrderPricing.loading){ setTimeout(function(){ loadOrderPricing(cb); }, 300); return; }
+    OrderPricing.loading = true;
+    window.API.getOrderPricingData(function(d){
+      (d.inv || []).forEach(function(r){
+        var m = String(r.model || '').trim();
+        var p = r.pricingType || r.pricingtype || '';
+        if (m && p) OrderPricing.modelMap[m] = p;
+      });
+      (d.machines || []).forEach(function(r){
+        var p = r.pricingMachineType || r.pricingmachinetype || '';
+        if (r.id && p) OrderPricing.machineMap[String(r.id).trim()] = p;
+      });
+      OrderPricing.headers = d.headers || [];
+      OrderPricing.rows = d.rows || [];
+      OrderPricing.loaded = true; OrderPricing.loading = false;
+      if (cb) cb();
+    }, function(){ OrderPricing.loading = false; if (cb) cb(); });
+  }
+  function _ordRocDate(s){
+    var m = String(s || '').match(/(\d{3,4})\D+(\d{1,2})\D+(\d{1,2})/);
+    if (!m) return '';
+    var y = parseInt(m[1], 10); if (y > 1911) y -= 1911;
+    return ('00' + y).slice(-3) + '/' + ('0' + m[2]).slice(-2) + '/' + ('0' + m[3]).slice(-2);
+  }
+  function lookupStdPrice(machine, model){
+    var pt = OrderPricing.modelMap[String(model || '').trim()];
+    var mt = OrderPricing.machineMap[String(machine || '').trim()];
+    if (!pt || !mt) return null;
+    var od = _ordRocDate(valOf('ord-date')) || '999/99/99';
+    var starts = OrderPricing.headers.map(function(h){ return h.startDate || h.startdate || ''; }).sort();
+    var pick = '';
+    starts.forEach(function(s2){ if (s2 <= od) pick = s2; });
+    if (!pick && starts.length) pick = starts[0];
+    var hit = OrderPricing.rows.find(function(r){
+      return (r.startDate || r.startdate || '') === pick &&
+             (r.pricingType || r.pricingtype) === pt &&
+             (r.pricingMachineType || r.pricingmachinetype) === mt;
+    });
+    return hit ? (parseFloat(hit.price) || 0) : null;
+  }
+  window.updateOrderPriceFlags = function(tr){
+    if (!tr || !tr.cells || tr.cells.length < 23) return;
+    var pi = tr.cells[20] && tr.cells[20].querySelector('input');
+    var si = tr.cells[22] && tr.cells[22].querySelector('input');
+    if (!pi || !si) return;
+    var p = parseFloat(pi.value), s2 = parseFloat(si.value);
+    if (!isNaN(p) && !isNaN(s2) && s2 > 0 && p < s2){
+      pi.style.color = '#c00000'; pi.style.fontWeight = 'bold';
+      pi.title = '⚠ 單價 ' + p + ' 低於標準單價 ' + s2 + '，需單價審核';
+    } else {
+      pi.style.color = ''; pi.style.fontWeight = ''; pi.title = '';
+    }
+  };
+  window.applyStdPriceToRow = function(tr){
+    if (!tr || !tr.cells || tr.cells.length < 23) return;
+    var machine = (tr.cells[2].querySelector('input') || {}).value || '';
+    var model   = (tr.cells[4].querySelector('input') || {}).value || '';
+    loadOrderPricing(function(){
+      var p = lookupStdPrice(machine, model);
+      var si = tr.cells[22] && tr.cells[22].querySelector('input');
+      if (si && p != null) si.value = p;
+      window.updateOrderPriceFlags(tr);
+    });
+  };
+  window.refreshOrderStdPrices = function(){
+    var rows = document.querySelectorAll('#ord-detail-body tr');
+    rows.forEach(function(tr){ window.applyStdPriceToRow(tr); });
+  };
+  window.toggleOrderPriceAudit = function(btn){
+    var cur = (btn.textContent || '').trim();
+    if (cur && cur !== '未審核'){
+      if (!confirm('取消「' + cur + '」的單價審核？')) return;
+      btn.textContent = '未審核'; btn.dataset.time = '';
+      btn.style.background = ''; btn.style.color = ''; btn.style.fontWeight = '';
+      return;
+    }
+    var name = prompt('請輸入審核人名稱：', window._lastPriceAuditor || '');
+    if (!name) return;
+    name = name.trim(); if (!name) return;
+    window._lastPriceAuditor = name;
+    var d = new Date(), pd = function(n){ return ('0' + n).slice(-2); };
+    btn.dataset.time = d.getFullYear() + '/' + pd(d.getMonth() + 1) + '/' + pd(d.getDate()) +
+                       ' ' + pd(d.getHours()) + ':' + pd(d.getMinutes());
+    btn.textContent = name;
+    btn.style.background = '#e8f5e9'; btn.style.color = '#1B5E20'; btn.style.fontWeight = 'bold';
+  };
+
   function collectOrderItems(id){
     var rows = document.querySelectorAll('#ord-detail-body tr');
     var out = [];
@@ -7728,17 +7832,23 @@ window.addEventListener('DOMContentLoaded', function(){
       // 0:▶  1:項次  2:機台  3:底板機台  4:型號  5:品名規格  6:製作方式
       // 7:底板用料  8:材質  9:廠別  10:鍍層  11:強度  12:尺寸  13:顏色  14:漆種
       // 15:數量  16:總台尺  17:總數  18:長度  19:單位  20:單價  21:金額
-      // 22:標準單價  23:單價異動人員  24:單價異動時間  25:計價基準  26:公式
-      // 27:交貨日期  28:類別
+      // 22:標準單價  23:單價審核  24:單價異動人員  25:單價異動時間  26:計價基準
+      // 27:公式  28:交貨日期  29:類別
+      var audBtn = tr.cells[23] && tr.cells[23].querySelector('button');
+      var audName = audBtn ? audBtn.textContent.trim() : '';
+      if (audName === '未審核') audName = '';
       out.push({
         orderId: id, itemNo: v(1), machine: v(2), bottomMachine: v(3),
         model: v(4), spec: v(5), method: v(6),
         baseMaterialModel: v(7), materialNo: v(8), factory: v(9),
         coating: v(10), strength: v(11), size: v(12), color: v(13), paint: v(14),
         qty: v(15), totalFeet: v(16), totalQty: v(17), length: v(18), unit: v(19),
-        price: v(20), amount: v(21), standardPrice: v(22), priceModifier: v(23),
-        priceModifyTime: v(24), costBasis: v(25), formula: v(26), deliveryDate: v(27),
-        category: v(28)
+        price: v(20), amount: v(21), standardPrice: v(22),
+        priceAuditor: audName,
+        priceAuditTime: audBtn ? (audBtn.dataset.time || '') : '',
+        priceModifier: v(24),
+        priceModifyTime: v(25), costBasis: v(26), formula: v(27), deliveryDate: v(28),
+        category: v(29)
       });
     });
     return out;
