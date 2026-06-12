@@ -14163,7 +14163,6 @@ window.addEventListener('DOMContentLoaded', function(){
                   <th className="border-b border-r border-gray-300 p-1 font-normal text-left whitespace-nowrap">訂單單號</th>
                   <th className="border-b border-r border-gray-300 p-1 font-normal text-left whitespace-nowrap">客戶簡稱</th>
                   <th className="border-b border-r border-gray-300 p-1 font-normal text-left whitespace-nowrap">工地</th>
-                  <th className="border-b border-r border-gray-300 p-1 font-normal text-left whitespace-nowrap">過磅單號</th>
                   <th className="border-b border-r border-gray-300 p-1 font-normal text-left whitespace-nowrap">機台編號</th>
                   <th className="border-b border-r border-gray-300 p-1 font-normal text-left whitespace-nowrap">型號</th>
                   <th className="border-b border-r border-gray-300 p-1 font-normal text-left whitespace-nowrap">品名規格</th>
@@ -14191,7 +14190,6 @@ window.addEventListener('DOMContentLoaded', function(){
                       <td className="border-r border-gray-200 p-0.5"><EditableInput value={order.id} onChange={(v) => updateLocalOrder(order.id, 'id', v)} onBlur={(v) => handleBlurUpdate(order.id, 'id', v)} className={isSelected ? 'text-white hover:border-white focus:text-black' : ''} /></td>
                       <td className="border-r border-gray-200 p-0.5"><EditableInput value={order.customerShort} onChange={(v) => updateLocalOrder(order.id, 'customerShort', v)} onBlur={(v) => handleBlurUpdate(order.id, 'customerShort', v)} className={isSelected ? 'text-white focus:text-black' : ''} /></td>
                       <td className="border-r border-gray-200 p-0.5"><EditableInput value={order.site} onChange={(v) => updateLocalOrder(order.id, 'site', v)} onBlur={(v) => handleBlurUpdate(order.id, 'site', v)} className={isSelected ? 'text-white focus:text-black' : ''} /></td>
-                      <td className="border-r border-gray-200 p-0.5"><EditableInput value={order.weighNo} onChange={(v) => updateLocalOrder(order.id, 'weighNo', v)} onBlur={(v) => handleBlurUpdate(order.id, 'weighNo', v)} className={isSelected ? 'text-white focus:text-black' : ''} /></td>
                       <td className="border-r border-gray-200 p-0.5"><EditableInput value={order.machine} onChange={(v) => updateLocalOrder(order.id, 'machine', v)} onBlur={(v) => handleBlurUpdate(order.id, 'machine', v)} className={isSelected ? 'text-white focus:text-black' : ''} /></td>
                       <td className="border-r border-gray-200 p-0.5"><EditableInput value={order.model} onChange={(v) => updateLocalOrder(order.id, 'model', v)} onBlur={(v) => handleBlurUpdate(order.id, 'model', v)} className={isSelected ? 'text-white focus:text-black' : ''} /></td>
                       <td className="border-r border-gray-200 p-0.5 max-w-[200px] truncate"><EditableInput value={order.spec} onChange={(v) => updateLocalOrder(order.id, 'spec', v)} onBlur={(v) => handleBlurUpdate(order.id, 'spec', v)} className={isSelected ? 'text-white focus:text-black' : ''} /></td>
