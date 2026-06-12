@@ -430,7 +430,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
                         <td><input type="text" class="ord-bottom-machine" value="" placeholder="(僅 method=2 必填)"></td>
                         <td><input type="text" value="ZBE0.500*0255R001" onkeydown="handleGridKeydown(event, this, 'main')"></td>
                         <td><input type="text" value="255K企口板*鍍鋅0.5*燁輝-米黃"></td>
-                        <td><select><option value="3" selected>3. 上板->底板</option></select></td>
+                        <td><select><option>1.上板+底板</option><option>2.上板→底板</option><option selected>3.清板</option><option>4.清板+彎工</option></select></td>
                         <td><input type="text" value=""></td><td><input type="text" value="鍍鋅"></td><td><input type="text" value="燁輝"></td>
                         <td><input type="text" value="AZ100"></td><td><input type="text" value="G550"></td><td><input type="text" value="0.50x 255.0x 0.0"></td>
                         <td><input type="text" value="燁輝米黃"></td><td><input type="text" value="PE"></td>
@@ -1412,7 +1412,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
     <div id="coatingLookupModal" class="modal"><div class="modal-content"><div class="modal-header"><span>鍍層速查</span><button class="modal-close-btn" onclick="closeModal('coatingLookupModal')">×</button></div><div class="modal-body"><table class="search-table" id="coatingLookupTable"><thead><tr><th>欄位編號</th><th>欄位名稱</th></tr></thead><tbody></tbody></table></div></div></div>
     <div id="strengthLookupModal" class="modal"><div class="modal-content"><div class="modal-header"><span>強度速查</span><button class="modal-close-btn" onclick="closeModal('strengthLookupModal')">×</button></div><div class="modal-body"><table class="search-table" id="strengthLookupTable"><thead><tr><th>欄位編號</th><th>欄位名稱</th></tr></thead><tbody></tbody></table></div></div></div>
 
-    <div id="machineLookupModal" class="modal"><div class="modal-content" style="width: 800px;"><div class="modal-header"><span>機台速查</span><button class="modal-close-btn" onclick="closeModal('machineLookupModal')">×</button></div><div class="modal-body"><table class="search-table" id="machineLookupTable"><thead><tr><th>機台編號</th><th>機台名稱</th><th>製作方式</th><th>適用寬度(起)</th><th>適用寬度(訖)</th><th>底板用料</th><th>備註</th></tr></thead><tbody><tr onclick="selectInvMachine('255', 3, '')"><td>255</td><td>255成型機</td><td>3. 清版</td><td class="text-right">255</td><td class="text-right">400</td><td></td><td>預設</td></tr></tbody></table></div></div></div>
+    <div id="machineLookupModal" class="modal"><div class="modal-content" style="width: 800px;"><div class="modal-header"><span>機台速查</span><button class="modal-close-btn" onclick="closeModal('machineLookupModal')">×</button></div><div class="modal-body"><table class="search-table" id="machineLookupTable"><thead><tr><th>機台編號</th><th>機台名稱</th><th>製作方式</th><th>適用寬度(起)</th><th>適用寬度(訖)</th><th>底板用料</th><th>備註</th></tr></thead><tbody><tr onclick="selectInvMachine('255', 2, '')"><td>255</td><td>255成型機</td><td>3.清板</td><td class="text-right">255</td><td class="text-right">400</td><td></td><td>預設</td></tr></tbody></table></div></div></div>
 
     <div id="stockModal" class="modal">
         <div class="modal-content">
@@ -2094,6 +2094,19 @@ function switchTopMode(mode) {
         } catch(e){ console.warn('[createDispatchFromOrder] 同日續編查詢失敗:', e&&e.message||e); }
         const newId=idPrefix+String(maxSeq+1).padStart(3,'0');
         const now=_nowIso();
+        // 依訂單細項「製作方式」推導派工類型與鋼捲規則
+        //   1.上板+底板 → BOTH（需上架上板＋底板兩捲）
+        //   2.上板→底板 → TOP（先做上板；底板後續另行派工）
+        //   3.清板      → TOP（單純上板）
+        //   4.清板+彎工 → TOP（上板鋼捲；下工序由折工報工）
+        let methodDigit='3';
+        try {
+          const _its=await _get('order_items',{'orderId':'eq.'+orderId,'limit':'1'});
+          const _m=String((_its[0]&&_its[0].method)||'').match(/^([1-4])/);
+          if(_m) methodDigit=_m[1];
+        } catch(e){ /* 取不到時用預設 */ }
+        const derivedPhase = methodDigit==='1' ? 'BOTH' : 'TOP';
+        if(!opts.phase) opts.phase = derivedPhase;
         const disp={id:newId,date:new Date().toLocaleDateString('zh-TW'),
           docCategory:'派工',docType:opts.docType||'',source:opts.source||'',
           orderId,partnerCode:oh.customerCode||'',partnerName:oh.customerName||'',
@@ -2150,7 +2163,8 @@ function switchTopMode(mode) {
         } catch(syncErr){ console.warn('[createDispatch] dispatch_production sync failed:', syncErr); }
         // 回傳 id（前端讀 res.id）+ dispatchId + phase + machine
         return {ok:true, id:newId, dispatchId:newId,
-                phase: opts.phase||'BOTH', machine: opts.machine||''};
+                phase: opts.phase||'BOTH', machine: opts.machine||'',
+                methodDigit: methodDigit};
       })(), cb, errCb);
     },
     getDispatchHeader: function(dispatchId, cb, errCb){
@@ -2929,7 +2943,7 @@ function switchTopMode(mode) {
             if (_ex && _ex.length) continue;
             await _upsert('order_items', Object.assign({
               itemNo:'0010', machine:'255', model:'ZBE0.500*0255R001',
-              spec:'255K企口板*鍍鋅 0.5*燁輝-米黃', method:'3. 上板->底板',
+              spec:'255K企口板*鍍鋅 0.5*燁輝-米黃', method:'3.清板',
               baseMaterialModel:'ZBE0.500*0255R001', materialNo:'鍍鋅', factory:'燁輝',
               coating:'AZ100', strength:'G550', size:'0.50x 255.0x 0.0',
               color:'燁輝米黃', paint:'PE', unit:'台尺', price:10,
@@ -6945,7 +6959,7 @@ window.addEventListener('DOMContentLoaded', function(){
                 if (!ms.length) return;   // DB 無資料 → 保留靜態列
                 tb.innerHTML = ms.map(function(m){
                     var esc = function(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); };
-                    var methodIdx = 0;   // 製作方式 select 目前僅單一選項
+                    var methodIdx = ((parseInt(m.method, 10) || 3) - 1);   // 對應四選項製作方式
                     return '<tr style="cursor:pointer;" onclick="selectInvMachine(\'' + esc(m.id) + '\', ' + methodIdx + ', \'' + esc(m.material||'') + '\')">' +
                         '<td>' + esc(m.id) + '</td>' +
                         '<td>' + esc(m.name||'') + '</td>' +
@@ -7278,7 +7292,7 @@ window.addEventListener('DOMContentLoaded', function(){
   // ============================================================
   var SHARED_ITEM = {
     machine:'255', model:'ZBE0.500*0255R001',
-    spec:'255K企口板*鍍鋅 0.5*燁輝-米黃', method:'3. 上板->底板',
+    spec:'255K企口板*鍍鋅 0.5*燁輝-米黃', method:'3.清板',
     baseMaterialModel:'ZBE0.500*0255R001',
     materialNo:'鍍鋅', factory:'燁輝', coating:'AZ100', strength:'G550',
     size:'0.50x 255.0x 0.0', color:'燁輝米黃', paint:'PE',
@@ -7817,6 +7831,13 @@ window.addEventListener('DOMContentLoaded', function(){
   }
 
   // 依 ord-detail-body 表頭順序產生一列 <tr>
+  var ORDER_METHODS = ['1.上板+底板','2.上板→底板','3.清板','4.清板+彎工'];
+  function _methodSelectHtml(cur){
+    var d = (String(cur||'').match(/^([1-4])/) || [,'3'])[1];
+    return '<select>' + ORDER_METHODS.map(function(m){
+      return '<option' + (m.charAt(0) === d ? ' selected' : '') + '>' + m + '</option>';
+    }).join('') + '</select>';
+  }
   function _fmtItemNo(v, index){
     var s = String(v == null ? '' : v).trim();
     if (/^\d{1,4}$/.test(s)) return s.padStart(4, '0');
@@ -7835,7 +7856,7 @@ window.addEventListener('DOMContentLoaded', function(){
     tr.appendChild(td('<input type="text" class="ord-bottom-machine" value="'+(it.bottomMachine||'')+'" placeholder="(僅 method=2 必填)">'));
     tr.appendChild(td('<input type="text" value="'+(it.model||'')+'" title="按 F2 開啟庫存速查" onkeydown="handleGridKeydown(event, this, \'main\')" onchange="window.applyStdPriceToRow && window.applyStdPriceToRow(this.closest(\'tr\'))">'));
     tr.appendChild(td('<input type="text" value="'+(it.spec||'')+'">'));
-    tr.appendChild(td('<select><option value="3" selected>'+(it.method || '3. 上板->底板')+'</option></select>'));
+    tr.appendChild(td(_methodSelectHtml(it.method)));
     tr.appendChild(td('<input type="text" value="'+(it.baseMaterialModel||'')+'">'));
     tr.appendChild(td('<input type="text" value="'+(it.materialNo||'')+'">'));
     tr.appendChild(td('<input type="text" value="'+(it.factory||'')+'">'));
@@ -10530,14 +10551,20 @@ window.addEventListener('DOMContentLoaded', function(){
           if (!res || !res.id) return alert('建立派工單失敗');
           window.__currentDispatchId = res.id;
           window.__currentDispatchPhase = res.phase || 'BOTH';
+          window.__currentDispatchMethod = res.methodDigit || '3';
           var phaseLabel = ({TOP:'上板單',BOTTOM:'底板單',BOTH:'上板+底板單',FOLD:'折工單'})[res.phase] || res.phase || '';
+          var coilHint = ({
+            '1':'製作方式 1.上板+底板：請上架「上板＋底板」兩捲鋼捲',
+            '2':'製作方式 2.上板→底板：請上架「上板」鋼捲（底板後續另行派工）',
+            '3':'製作方式 3.清板：請上架「上板」鋼捲',
+            '4':'製作方式 4.清板+彎工：請上架「上板」鋼捲（下工序由折工報工處理）'
+          })[res.methodDigit] || '現在可進行鋼捲上架';
           setActiveDispatch({ id: res.id, orderId: pureOrderId, phase: phaseLabel, machine: res.machine || '' });
           // 派工開始 = 自動建立第一段 reporter session（後端 createDispatchFromOrder 已處理）
-          // 立即抓最新 reporter 狀態以更新 UI
           setTimeout(function(){ refreshReporterStatus(res.id); }, 100);
           alert('派工單已建立：' + res.id + '\n類型：' + phaseLabel +
                 '\n上機人員：' + initOperator +
-                '\n狀態：開工中\n現在可進行鋼捲上架');
+                '\n狀態：開工中\n' + coilHint);
         }, function(err){ alert('建立派工單失敗：' + (err && err.message || err)); });
       };
 
@@ -10552,6 +10579,7 @@ window.addEventListener('DOMContentLoaded', function(){
             _wh = (eff && (eff.hhmmss || eff.workHours)) || '00:00:00';
           });
         }
+        var _doEndDispatch = function(){
         var unloadKg = parseFloat(
           window.prompt('派工結束確認\n目前有效工時：' + _wh + '\n\n請輸入下架磅重（剩料 kg，無剩料輸入 0）', '0') || '0') || 0;
         if (!window.confirm('確定結束派工單 ' + dispatchId + '？\n有效工時：' + _wh + '\n下架磅重：' + unloadKg + ' kg\n\n系統將扣產線倉庫存並產出派工回單。')) return;
@@ -10570,6 +10598,19 @@ window.addEventListener('DOMContentLoaded', function(){
                 '\n入庫明細：' + res.itemCount + ' 筆' +
                 '\n扣庫：' + res.deductCount + ' 筆');
         }, function(err){ alert('派工結束失敗：' + (err && err.message || err)); });
+        };   // _doEndDispatch
+
+        // 製作方式 1.上板+底板：結束前檢查是否已上架兩捲（上板＋底板）
+        if (window.__currentDispatchMethod === '1' && window.API.getDispatchCoilMoves){
+          window.API.getDispatchCoilMoves(dispatchId, function(mv){
+            var n = (mv || []).length;
+            if (n < 2 && !window.confirm('⚠ 製作方式為「1.上板+底板」，目前僅上架 ' + n +
+                ' 捲鋼捲（應為上板＋底板 2 捲）。\n仍要結束派工？')) return;
+            _doEndDispatch();
+          }, function(){ _doEndDispatch(); });
+          return;
+        }
+        _doEndDispatch();
       };
 
       // ── 回報人員 (Reporter Sessions) ────────────────────────────────
