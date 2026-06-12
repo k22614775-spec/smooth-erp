@@ -1998,14 +1998,17 @@ function switchTopMode(mode) {
       if(!payload.order.createdAt) payload.order.createdAt=now;
       if(!payload.order.status) payload.order.status='待派工';
       const ops=[_upsert('orders',payload.order)];
-      if(Array.isArray(payload.items)){
+      if(Array.isArray(payload.items) && payload.items.length){
         const rows=payload.items.map(function(it){
           return Object.assign({},it,{orderId:payload.order.id,
             id:it.id||(payload.order.id+'-'+(it.itemNo||''))});
         });
         ops.push(_del('order_items',{'orderId':'eq.'+payload.order.id}).then(function(){
-          return rows.length?_upsert('order_items',rows):true;
+          return _upsert('order_items',rows);
         }));
+      } else if(Array.isArray(payload.items)){
+        // 防呆：畫面收集到 0 筆細項時不執行「先刪後寫」，避免誤刪既有資料
+        console.warn('[saveOrder] items 為空，略過 order_items 覆寫（保護既有細項）');
       }
       if(Array.isArray(payload.cuttings)){
         const rows=payload.cuttings.map(function(c){
@@ -2869,6 +2872,27 @@ function switchTopMode(mode) {
         await _patch('orders',{'status':'eq.已派工'},{status:'待派工',dispatchId:''}).catch(function(e){ console.warn('非致命寫入失敗:', e); });
         // 訂單預設型號統一為 ZBE0.500*0255R001（與庫存/定價形式對應，標準報價才查得到）
         await _patch('order_items',{'model':'eq.255A05AE100'},{model:'ZBE0.500*0255R001'}).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+        // 示範訂單細項缺漏時自動補回（曾發生空白儲存誤刪）
+        try {
+          var _demoItems = [
+            {id:'1150501001-0010',orderId:'1150501001',qty:84, totalFeet:1421.78,totalQty:431.23,length:5500,deliveryDate:'2026-05-01 00:00:00'},
+            {id:'1150501002-0010',orderId:'1150501002',qty:100,totalFeet:1947.19,totalQty:590.59,length:6000,deliveryDate:'2026-05-03 00:00:00'},
+            {id:'1150501003-0010',orderId:'1150501003',qty:138,totalFeet:2138.61,totalQty:648.65,length:4500,deliveryDate:'2026-05-05 00:00:00'},
+            {id:'1150501004-0010',orderId:'1150501004',qty:114,totalFeet:1692.41,totalQty:513.31,length:5200,deliveryDate:'2026-05-07 00:00:00'},
+          ];
+          for (var _di of _demoItems){
+            var _ex = await _get('order_items',{'id':'eq.'+_di.id,'limit':'1'});
+            if (_ex && _ex.length) continue;
+            await _upsert('order_items', Object.assign({
+              itemNo:'10', machine:'255', model:'ZBE0.500*0255R001',
+              spec:'255K企口板*鍍鋅 0.5*燁輝-米黃', method:'3. 上板->底板',
+              baseMaterialModel:'ZBE0.500*0255R001', materialNo:'鍍鋅', factory:'燁輝',
+              coating:'AZ100', strength:'G550', size:'0.50x 255.0x 0.0',
+              color:'燁輝米黃', paint:'PE', unit:'台尺', price:10,
+              costBasis:'1.總數', category:'255企口板'
+            }, _di));
+          }
+        } catch(e){ console.warn('示範訂單細項補回失敗(非致命):', e); }
         await _patch('cutting_details',{'id':'neq.__none__'},{
           dispatchId:'',dispatchSeq:'',topDone:0,bottomDone:0,
           closed:0,startTime:'',finishTime:'',reporter:'',reportedAt:'',
