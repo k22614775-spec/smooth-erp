@@ -2015,13 +2015,15 @@ function switchTopMode(mode) {
         // 防呆：畫面收集到 0 筆細項時不執行「先刪後寫」，避免誤刪既有資料
         console.warn('[saveOrder] items 為空，略過 order_items 覆寫（保護既有細項）');
       }
-      if(Array.isArray(payload.cuttings)){
+      if(Array.isArray(payload.cuttings) && payload.cuttings.length){
         const rows=payload.cuttings.map(function(c){
           return Object.assign({},c,{orderId:payload.order.id,id:c.id||_uid('c')});
         });
         ops.push(_del('cutting_details',{'orderId':'eq.'+payload.order.id}).then(function(){
-          return rows.length?_upsert('cutting_details',rows):true;
+          return _upsert('cutting_details',rows);
         }));
+      } else if(Array.isArray(payload.cuttings)){
+        console.warn('[saveOrder] cuttings 為空，略過 cutting_details 覆寫（保護既有細項）');
       }
       _cb(Promise.all(ops).then(function(){ return {ok:true,id:payload.order.id}; }), cb, errCb);
     },
@@ -7767,9 +7769,9 @@ window.addEventListener('DOMContentLoaded', function(){
       var firstItemNo = cuttings[0].orderItemNo || '0010';
       // 由 ord-detail-body 取對應品名
       var detailRow = document.querySelector('#ord-detail-body tr');
-      var spec = detailRow ? (detailRow.cells[4].querySelector('input').value) : '';
-      var model = detailRow ? (detailRow.cells[3].querySelector('input').value) : '';
-      var category = detailRow ? (detailRow.cells[28].querySelector('input').value) : '';
+      var spec = detailRow ? (detailRow.cells[5].querySelector('input').value) : '';
+      var model = detailRow ? (detailRow.cells[4].querySelector('input').value) : '';
+      var category = detailRow ? (detailRow.cells[29].querySelector('input').value) : '';
       leftTb.innerHTML = '<tr class="selected-row"><td>▶</td><td>'+firstItemNo+'</td><td>'+category+'</td><td><input type="text" value="'+model+'" readonly></td><td>'+spec+'</td></tr>';
     }
   }
