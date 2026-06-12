@@ -1813,7 +1813,7 @@ function switchTopMode(mode) {
       m.topDone+=(parseInt(String(c.topDone||0),10)||0);
       m.bottomUnfinish+=(parseInt(String(c.bottomUnfinish||0),10)||0);
       m.bottomDone+=(parseInt(String(c.bottomDone||0),10)||0);
-      m.mesUnfinish+=(parseInt(String(c.mesUnfinish||c.qty||0),10)||0);
+      m.mesUnfinish+=(parseInt(String((c.mesUnfinish!=null&&c.mesUnfinish!=='')?c.mesUnfinish:(c.qty||0)),10)||0);
       if(c.startTime&&(!m.startTime||String(c.startTime)<String(m.startTime))) m.startTime=c.startTime;
       if(c.finishTime&&(!m.finishTime||String(c.finishTime)>String(m.finishTime))) m.finishTime=c.finishTime;
       if(c.reporter&&!m.reporter) m.reporter=c.reporter;
@@ -2567,6 +2567,8 @@ function switchTopMode(mode) {
           patch.bottomUnfinish=Math.max(0,(parseFloat(c.bottomUnfinish!=null?c.bottomUnfinish:c.bottomunfinish)||0)-qty);
           patch.bottomDone=1;
         }
+        // MES 未完數量同步扣除（=0 時清單不再顯示）
+        patch.mesUnfinish=Math.max(0,(parseFloat(c.mesUnfinish!=null?c.mesUnfinish:c.mesunfinish)||0)-qty);
         if(Object.keys(patch).length){
           await _patch('cutting_details',{'id':'eq.'+c.id},patch);
           n++;
@@ -7469,7 +7471,7 @@ window.addEventListener('DOMContentLoaded', function(){
       m.topDone        += parseInt(c.topDone || 0, 10) || 0;
       m.bottomUnfinish += parseInt(c.bottomUnfinish || 0, 10) || 0;
       m.bottomDone     += parseInt(c.bottomDone || 0, 10) || 0;
-      m.mesUnfinish    += parseInt(c.mesUnfinish || c.qty || 0, 10) || 0;
+      m.mesUnfinish    += parseInt((c.mesUnfinish != null && c.mesUnfinish !== '') ? c.mesUnfinish : (c.qty || 0), 10) || 0;
     });
     return order.map(function(k){
       var m = map[k];
@@ -8539,7 +8541,7 @@ window.addEventListener('DOMContentLoaded', function(){
         qty: c.qty,
         totalLen: c.totalFeet,
         kg: c.kg,
-        unfinish: c.mesUnfinish || c.qty
+        unfinish: (c.mesUnfinish != null && c.mesUnfinish !== '') ? c.mesUnfinish : c.qty
       };
     });
   };
@@ -14320,7 +14322,7 @@ window.addEventListener('DOMContentLoaded', function(){
               qty: parseInt(c.qty || 0, 10) || 0,
               totalFeet: parseFloat(c.totalFeet || c.totalLen || 0) || 0,
               kg: parseFloat(c.kg || 0) || 0,
-              mesUnfinish: parseInt(c.unfinish || c.qty || 0, 10) || 0,
+              mesUnfinish: parseInt((c.unfinish != null && c.unfinish !== '') ? c.unfinish : (c.qty || 0), 10) || 0,
               remark: c.remark || ''
             };
           })) : rows);
@@ -14337,9 +14339,10 @@ window.addEventListener('DOMContentLoaded', function(){
               qty: qty,
               totalLen: totalFeet.toFixed(2),
               kg: kg.toFixed(2),
-              unfinish: c.mesUnfinish || qty
+              unfinish: (c.mesUnfinish != null && c.mesUnfinish !== '') ? c.mesUnfinish : qty
             };
-          }).sort(function(a, b){ return String(a.zone).localeCompare(String(b.zone)); });
+          }).filter(function(r){ return (parseInt(r.unfinish, 10) || 0) > 0; })   // 未完工=0 不顯示
+            .sort(function(a, b){ return String(a.zone).localeCompare(String(b.zone)); });
         };
 
         var applyRows = function(rows) {
