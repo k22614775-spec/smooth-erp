@@ -8541,7 +8541,9 @@ window.addEventListener('DOMContentLoaded', function(){
         qty: c.qty,
         totalLen: c.totalFeet,
         kg: c.kg,
-        unfinish: (c.mesUnfinish != null && c.mesUnfinish !== '') ? c.mesUnfinish : c.qty
+        unfinish: (c.mesUnfinish != null && c.mesUnfinish !== '') ? c.mesUnfinish : c.qty,
+        topUnfinish: parseInt(c.topUnfinish || 0, 10) || 0,
+        bottomUnfinish: parseInt(c.bottomUnfinish || 0, 10) || 0
       };
     });
   };
@@ -14323,6 +14325,8 @@ window.addEventListener('DOMContentLoaded', function(){
               totalFeet: parseFloat(c.totalFeet || c.totalLen || 0) || 0,
               kg: parseFloat(c.kg || 0) || 0,
               mesUnfinish: parseInt((c.unfinish != null && c.unfinish !== '') ? c.unfinish : (c.qty || 0), 10) || 0,
+              topUnfinish: parseInt(c.topUnfinish || 0, 10) || 0,
+              bottomUnfinish: parseInt(c.bottomUnfinish || 0, 10) || 0,
               remark: c.remark || ''
             };
           })) : rows);
@@ -14339,7 +14343,9 @@ window.addEventListener('DOMContentLoaded', function(){
               qty: qty,
               totalLen: totalFeet.toFixed(2),
               kg: kg.toFixed(2),
-              unfinish: (c.mesUnfinish != null && c.mesUnfinish !== '') ? c.mesUnfinish : qty
+              unfinish: (c.mesUnfinish != null && c.mesUnfinish !== '') ? c.mesUnfinish : qty,
+              topUnfinish: parseInt(c.topUnfinish || 0, 10) || 0,
+              bottomUnfinish: parseInt(c.bottomUnfinish || 0, 10) || 0
             };
           }).filter(function(r){ return (parseInt(r.unfinish, 10) || 0) > 0; })   // 未完工=0 不顯示
             .sort(function(a, b){ return String(a.zone).localeCompare(String(b.zone)); });
@@ -14543,7 +14549,9 @@ window.addEventListener('DOMContentLoaded', function(){
                  <div className="w-32 bg-gray-100 border border-gray-200 px-1 flex justify-between"><span>區</span> <span className="text-[10px] text-gray-500">▲</span></div>
                  <div className="flex flex-1 pl-2 pr-1">
                     <span className="w-8 text-center">束</span><span className="w-12 text-right">單片尺</span><span className="w-10 text-right">數量</span>
-                    <span className="w-12 text-right">總尺</span><span className="w-10 text-right">Kg</span><span className="flex-1 text-right">未完數量</span>
+                    <span className="w-12 text-right">總尺</span><span className="w-10 text-right">Kg</span>
+                    <span className="w-14 text-right">上板未完工</span><span className="w-14 text-right">底板未完工</span>
+                    <span className="flex-1 text-right">未完數量</span>
                  </div>
               </div>
               <div className="flex-1 overflow-auto p-1 bg-white relative">
@@ -14558,6 +14566,8 @@ window.addEventListener('DOMContentLoaded', function(){
                     const groupTotalLen = items.reduce((sum, item) => sum + parseFloat(item.totalLen || 0), 0);
                     const groupKg = items.reduce((sum, item) => sum + parseFloat(item.kg || 0), 0);
                     const groupUnfinish = items.reduce((sum, item) => sum + parseFloat(item.unfinish || 0), 0);
+                    const groupTopUnf = items.reduce((sum, item) => sum + parseFloat(item.topUnfinish || 0), 0);
+                    const groupBotUnf = items.reduce((sum, item) => sum + parseFloat(item.bottomUnfinish || 0), 0);
 
                     return (
                       <React.Fragment key={zoneName}>
@@ -14575,7 +14585,9 @@ window.addEventListener('DOMContentLoaded', function(){
                                 <div className={`w-32 pl-1 truncate border-r border-white ${isSelected ? 'bg-blue-400 text-white' : 'bg-[#8b9dc3] text-white'}`}>{item.zone}</div>
                                 <div className="flex-1 flex pl-2 pr-1">
                                   <span className="w-8 text-center">{item.bundle}</span><span className="w-12 text-right">{item.length}</span><span className="w-10 text-right">{item.qty}</span>
-                                  <span className="w-12 text-right">{item.totalLen}</span><span className="w-10 text-right">{item.kg}</span><span className="flex-1 text-right pr-2">{item.unfinish}</span>
+                                  <span className="w-12 text-right">{item.totalLen}</span><span className="w-10 text-right">{item.kg}</span>
+                                  <span className="w-14 text-right">{item.topUnfinish}</span><span className="w-14 text-right">{item.bottomUnfinish}</span>
+                                  <span className="flex-1 text-right pr-2">{item.unfinish}</span>
                                 </div>
                               </div>
                             );
@@ -14590,6 +14602,8 @@ window.addEventListener('DOMContentLoaded', function(){
                               <div className="w-10 text-right font-bold text-blue-800 pr-1">{groupQty}</div>
                               <div className="w-12 flex justify-end"><span className="bg-white border border-blue-200 px-1 text-right min-w-[2.5rem] font-bold text-blue-800">{groupTotalLen.toFixed(2)}</span></div>
                               <div className="w-10 text-right font-bold text-blue-800 pr-1">{groupKg.toFixed(2)}</div>
+                              <div className="w-14 text-right font-bold text-blue-800 pr-1">{groupTopUnf}</div>
+                              <div className="w-14 text-right font-bold text-blue-800 pr-1">{groupBotUnf}</div>
                               <div className="flex-1 flex justify-end pr-2"><span className="bg-white border border-blue-200 px-1 text-right min-w-[2rem] font-bold text-blue-800">{groupUnfinish}</span></div>
                            </div>
                          </div>
