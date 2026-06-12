@@ -2152,6 +2152,11 @@ function switchTopMode(mode) {
     getDispatchProduction: function(dispatchId, cb, errCb){
       _cb(_get('dispatch_production',{'dispatchId':'eq.'+dispatchId}), cb, errCb);
     },
+    getDispatchInboundLabels: function(dispatchId, orderId, cb, errCb){
+      // 與 end_dispatch RPC 相同分支：訂單派工抓 orderId、跨訂單(條碼標籤報工)抓 dispatchId
+      var q = orderId ? {'orderId':'eq.'+orderId} : {'dispatchId':'eq.'+dispatchId};
+      _cb(_get('labels', q), cb, errCb);
+    },
     getDispatchFull: function(dispatchId, cb, errCb){
       _cb(Promise.all([
         _get('dispatch_orders',{'id':'eq.'+dispatchId,'limit':'1'}),
@@ -5348,6 +5353,22 @@ window.addEventListener('DOMContentLoaded', function(){
             rb.innerHTML = html.join('');
         }
 
+        function _labelToProdRow(l){
+            // 與 end_dispatch 寫入 dispatch_return_items 同欄位對應：qty / totalLen / totalWeight
+            return {
+                orderId:   l.orderId || l.orderid || '',
+                inboundNo: l.labelNo || l.labelno || l.id || '',
+                model:     l.model || '',
+                spec:      l.spec || '',
+                qty:       parseFloat(l.qty != null && l.qty !== '' ? l.qty : (l.totalQty || 0)) || 0,
+                totalFeet: parseFloat(l.totalLen || l.totallen || 0) || 0,
+                unit:      l.unit || '台尺',
+                remark:    l.remark || '',
+                deliveryDate: '',
+                closed: '否'
+            };
+        }
+
         function renderDispatchProduction(rows) {
             DispatchState.production = rows || [];
             var body = document.getElementById('dsp-prod-body');
@@ -5426,7 +5447,15 @@ window.addEventListener('DOMContentLoaded', function(){
                 DispatchState.currentId = (data.header && (data.header.id || data.header.dispatchId)) || dispatchId;
                 renderCoilMoves(data.coilMoves || []);
                 renderDispatchHeader(data.header || {});
-                renderDispatchProduction(data.production || []);
+                // 入庫明細比照派工回單：以標籤(labels)為準（同 end_dispatch 產生回單入庫明細的來源）
+                var _hdrOrderId = data.header ? (data.header.orderId || data.header.orderid || '') : '';
+                window.API.getDispatchInboundLabels(dispatchId, _hdrOrderId, function(lbls){
+                    if (lbls && lbls.length){
+                        renderDispatchProduction(lbls.map(_labelToProdRow));
+                    } else {
+                        renderDispatchProduction(data.production || []);   // 尚無標籤 → 回退裁切明細
+                    }
+                }, function(){ renderDispatchProduction(data.production || []); });
                 if (typeof renderDispatchReporters === 'function') renderDispatchReporters(data.reporters || []);
                 DispatchState.reporters = data.reporters || [];
                 // 注意：暫停/恢復/換人按鈕已移到 MES 清單頁，派工系統頁不再操作 reporter 狀態
