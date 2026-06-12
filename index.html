@@ -2543,6 +2543,39 @@ function switchTopMode(mode) {
       _cb(_patch('dispatch_orders',{'id':'eq.'+dispatchId},
         {status:'closed',workHours:workHours||'00:00:00',finishTime:_nowLocal(),updatedAt:_nowIso()}).then(function(){ return {ok:true}; }), cb, errCb);
     },
+    // ── 派工完成後扣未完工量 ──
+    //   依 dispatch_orders.phase（由訂單「製作方式」推導）：
+    //     BOTH（1.上板+底板）→ 扣 上板未完工 + 底板未完工
+    //     TOP （2.上板→底板／3.清板／4.清板+彎工）→ 只扣 上板未完工
+    //     BOTTOM（底板段派工）→ 只扣 底板未完工
+    //   僅針對「已完工（有完工時間）」的裁切列，扣除其數量，並回寫完結旗標
+    _deductUnfinished: async function(dispatchId){
+      const dh=(await _get('dispatch_orders',{'id':'eq.'+dispatchId,'limit':'1'}))[0];
+      const phase=(dh && (dh.phase||dh.PHASE))||'BOTH';
+      const cuts=await _get('cutting_details',{'dispatchId':'eq.'+dispatchId});
+      let n=0;
+      for(const c of (cuts||[])){
+        const fin=c.finishTime||c.finishtime||'';
+        if(!fin) continue;   // 未完工列不扣
+        const qty=parseFloat(c.qty)||0;
+        const patch={};
+        if(phase==='BOTH'||phase==='TOP'){
+          patch.topUnfinish=Math.max(0,(parseFloat(c.topUnfinish!=null?c.topUnfinish:c.topunfinish)||0)-qty);
+          patch.topDone=1;
+        }
+        if(phase==='BOTH'||phase==='BOTTOM'){
+          patch.bottomUnfinish=Math.max(0,(parseFloat(c.bottomUnfinish!=null?c.bottomUnfinish:c.bottomunfinish)||0)-qty);
+          patch.bottomDone=1;
+        }
+        if(Object.keys(patch).length){
+          await _patch('cutting_details',{'id':'eq.'+c.id},patch);
+          n++;
+        }
+      }
+      console.log('[deductUnfinished]',dispatchId,'phase='+phase,'已扣',n,'列');
+      return n;
+    },
+
             endDispatch: function(dispatchId, opts, cb, errCb){
       opts = opts || {};
       const coilUnloadWeights = opts.coilUnloadWeights || {};
@@ -2571,7 +2604,7 @@ function switchTopMode(mode) {
           // RPC 不存在（尚未執行 004_rpc_end_dispatch.sql）→ Fallback 到前端版
           if (res.status === 404 || errText.includes('does not exist')) {
             console.warn('[endDispatch] RPC 未部署，使用前端版 fallback');
-            return await _endDispatchFallback(dispatchId, opts, coilUnloadWeights);
+            return await window.API._endDispatchFallback(dispatchId, opts, coilUnloadWeights);
           }
           throw new Error('[RPC end_dispatch] ' + errText);
         }
@@ -2580,6 +2613,9 @@ function switchTopMode(mode) {
         if (result && result.ok === false) {
           throw new Error(result.error || '派工結束失敗（RPC）');
         }
+        // 派工完成 → 依製作方式/派工類型扣除 上板/底板 未完工量
+        try { await window.API._deductUnfinished(dispatchId); }
+        catch(e){ console.warn('[endDispatch] 未完工量扣除警告:', e && e.message || e); }
         return result;
       })(), cb, errCb);
     },
@@ -2783,6 +2819,7 @@ function switchTopMode(mode) {
           }
         }
 
+        try { await window.API._deductUnfinished(dispatchId); } catch(e){ console.warn('未完工量扣除警告:', e); }
         return {ok:true,returnId,itemCount,deductCount};
       } catch(err){ await _rollback(err); throw err; }
     },
