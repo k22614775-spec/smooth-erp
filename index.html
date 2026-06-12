@@ -428,7 +428,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
                         <td>▶</td><td><input type="text" value="0010" readonly></td>
                         <td><input type="text" class="ord-machine" value="255" onkeydown="handleGridKeydown(event, this, 'machine')"></td>
                         <td><input type="text" class="ord-bottom-machine" value="" placeholder="(僅 method=2 必填)"></td>
-                        <td><input type="text" value="255A05AE100" onkeydown="handleGridKeydown(event, this, 'main')"></td>
+                        <td><input type="text" value="ZBE0.500*0255R001" onkeydown="handleGridKeydown(event, this, 'main')"></td>
                         <td><input type="text" value="255K企口板*鍍鋅0.5*燁輝-米黃"></td>
                         <td><select><option value="3" selected>3. 上板->底板</option></select></td>
                         <td><input type="text" value=""></td><td><input type="text" value="鍍鋅"></td><td><input type="text" value="燁輝"></td>
@@ -454,7 +454,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
                 <div class="split-left">
                     <table>
                         <thead><tr><th>▶</th><th>項次</th><th>類別</th><th>型號 (按F2)</th><th style="color:red">品名規格</th></tr></thead>
-                        <tbody><tr class="selected-row"><td>▶</td><td>0010</td><td>255企口板</td><td><input type="text" value="255A05AE100" readonly></td><td>255K企口板*鍍鋅0.5*燁輝-米黃</td></tr></tbody>
+                        <tbody><tr class="selected-row"><td>▶</td><td>0010</td><td>255企口板</td><td><input type="text" value="ZBE0.500*0255R001" readonly></td><td>255K企口板*鍍鋅0.5*燁輝-米黃</td></tr></tbody>
                     </table>
                 </div>
                 <div class="split-right">
@@ -2867,6 +2867,8 @@ function switchTopMode(mode) {
 
         // 3. 還原訂單/裁切細項狀態
         await _patch('orders',{'status':'eq.已派工'},{status:'待派工',dispatchId:''}).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+        // 訂單預設型號統一為 ZBE0.500*0255R001（與庫存/定價形式對應，標準報價才查得到）
+        await _patch('order_items',{'model':'eq.255A05AE100'},{model:'ZBE0.500*0255R001'}).catch(function(e){ console.warn('非致命寫入失敗:', e); });
         await _patch('cutting_details',{'id':'neq.__none__'},{
           dispatchId:'',dispatchSeq:'',topDone:0,bottomDone:0,
           closed:0,startTime:'',finishTime:'',reporter:'',reportedAt:'',
@@ -7029,10 +7031,10 @@ window.addEventListener('DOMContentLoaded', function(){
 
   // ============================================================
   //  範例資料 (與後端 setupSampleOrders 對齊；當無後端可用時 fallback)
-  //  4 張單據都是同一型號 255A05AE100，僅裁切細項型態不同
+  //  4 張單據都是同一型號 ZBE0.500*0255R001（訂單預設型號），僅裁切細項型態不同
   // ============================================================
   var SHARED_ITEM = {
-    machine:'255', model:'255A05AE100',
+    machine:'255', model:'ZBE0.500*0255R001',
     spec:'255K企口板*鍍鋅 0.5*燁輝-米黃', method:'3. 上板->底板',
     baseMaterialModel:'ZBE0.500*0255R001',
     materialNo:'鍍鋅', factory:'燁輝', coating:'AZ100', strength:'G550',
