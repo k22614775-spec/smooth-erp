@@ -453,8 +453,8 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
             <div class="split-view">
                 <div class="split-left">
                     <table>
-                        <thead><tr><th>▶</th><th>項次</th><th>類別</th><th>型號 (按F2)</th><th style="color:red">品名規格</th></tr></thead>
-                        <tbody><tr class="selected-row"><td>▶</td><td>0010</td><td>255企口板</td><td><input type="text" value="ZBE0.500*0255R001" readonly></td><td>255K企口板*鍍鋅0.5*燁輝-米黃</td></tr></tbody>
+                        <thead><tr><th>▶</th><th>項次</th><th>報價單號</th><th>類別</th><th>型號 (按F2)</th><th style="color:red">品名規格</th></tr></thead>
+                        <tbody><tr class="selected-row"><td>▶</td><td>0010</td><td></td><td>255企口板</td><td><input type="text" value="ZBE0.500*0255R001" readonly></td><td>255K企口板*鍍鋅0.5*燁輝-米黃</td></tr></tbody>
                     </table>
                 </div>
                 <div class="split-right">
@@ -471,25 +471,35 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
                         <span class="label">邊數</span> <input type="text" id="header-sides" class="input-field" value="">
                         <span class="label">板寬</span> <input type="text" id="header-width" class="input-field" value="">
                         <span class="label">片數</span> <input type="text" id="header-pieces" class="input-field" value="1">
-                        <button class="btn-group" onclick="startOrderSplitting()" style="width: 100%; border: 1px solid #000080; color: #000080; grid-column: span 2; font-weight: bold;">開始拆段</button>
+                        <button class="btn-group" onclick="calcCuttingPieces()" style="border: 1px solid #555; cursor:pointer;">計算片數</button>
+                        <button class="btn-group" onclick="calcCuttingGap()" style="border: 1px solid #555; cursor:pointer;">計算差距</button>
+                        <button class="btn-group" onclick="startOrderSplitting()" style="border: 1px solid #000080; color: #000080; font-weight: bold; cursor:pointer;">開始拆段</button>
+                        <div style="grid-column: 1 / -1; display:flex; align-items:center; gap:8px; margin-top:4px; padding-top:4px; border-top:1px dashed #aab; flex-wrap:wrap;">
+                            <span class="label" style="font-weight:bold;">排序</span>
+                            <span>起始項次</span><input type="text" id="sort-from" style="width:70px; padding:2px 4px;">
+                            <span>終止項次</span><input type="text" id="sort-to" style="width:70px; padding:2px 4px;">
+                            <label style="cursor:pointer;"><input type="radio" name="cutSortDir" value="asc" checked> 小到大</label>
+                            <label style="cursor:pointer;"><input type="radio" name="cutSortDir" value="desc"> 大到小</label>
+                            <button class="btn-group" onclick="sortCuttingRows()" style="border:1px solid #000080; color:#000080; font-weight:bold; cursor:pointer; padding:2px 14px;">開始排序</button>
+                        </div>
                     </div>
                     <table style="border-left: 2px solid blue;">
                         <thead>
-                            <tr><th style="width:50px">項次</th><th style="width:40px">區</th><th style="width:80px; color:blue">單片台尺</th><th style="width:80px; color:blue">長度(mm)</th><th style="width:60px; color:blue">數量</th><th style="width:80px">總尺</th><th style="width:80px">上板未完工</th><th style="width:80px" title="勾選後此裁件視為完成、不再出現於下一次派工">上版完工</th><th style="width:80px">底板未完工</th><th style="width:80px" title="部分完工，下次派工仍會顯示">下版完工</th><th>備註</th></tr>
+                            <tr><th style="width:50px">項次</th><th style="width:40px">區</th><th style="width:80px; color:blue">長度mm</th><th style="width:80px; color:blue">單片台尺</th><th style="width:60px; color:blue">數量</th><th style="width:80px">總尺</th><th style="width:140px">備註</th><th style="width:100px">上板未完工數量</th><th style="width:80px" title="勾選後此裁件視為完成、不再出現於下一次派工">上板完結</th><th style="width:100px">底板未完工數量</th><th style="width:80px" title="部分完工，下次派工仍會顯示">底板完結</th></tr>
                         </thead>
                         <tbody id="cutting-body">
                             <tr class="selected-row" onclick="selectCuttingRow(this)">
                                 <td><input type="text" value="0010" readonly onkeydown="handleCuttingKeydown(event, this)"></td>
                                 <td><input type="text" value="A" onkeydown="handleCuttingKeydown(event, this)"></td>
-                                <td><input type="number" class="text-right calc-feet" value="2.00" oninput="calcOrderFeet(this)" onkeydown="handleCuttingKeydown(event, this)"></td>
                                 <td><input type="number" class="text-right calc-len" value="606.0" oninput="calcOrderLen(this)" onkeydown="handleCuttingKeydown(event, this)"></td>
+                                <td><input type="number" class="text-right calc-feet" value="2.00" oninput="calcOrderFeet(this)" onkeydown="handleCuttingKeydown(event, this)"></td>
                                 <td><input type="number" class="text-right calc-qty" value="2" oninput="calcOrderTotal(this)" onkeydown="handleCuttingKeydown(event, this)"></td>
                                 <td><input type="text" class="text-right calc-total" value="4.00" readonly></td>
-                                <td><input type="number" class="text-right" value="2" onkeydown="handleCuttingKeydown(event, this)"></td>
-                                <td><label style="display:flex;justify-content:center;align-items:center;height:100%;cursor:pointer;"><input type="checkbox" class="cut-top-done" title="勾選=上版完工(完成、不再出現於派工)"></label></td>
-                                <td><input type="number" class="text-right" value="0" onkeydown="handleCuttingKeydown(event, this)"></td>
-                                <td><label style="display:flex;justify-content:center;align-items:center;height:100%;cursor:pointer;"><input type="checkbox" class="cut-bottom-done" title="勾選=下版完工(部分完工，下次派工仍會顯示)"></label></td>
                                 <td><input type="text" value="" onkeydown="handleCuttingKeydown(event, this)"></td>
+                                <td><input type="number" class="text-right" value="2" onkeydown="handleCuttingKeydown(event, this)"></td>
+                                <td><label style="display:flex;justify-content:center;align-items:center;height:100%;cursor:pointer;"><input type="checkbox" class="cut-top-done" title="勾選=上板完結(完成、不再出現於派工)"></label></td>
+                                <td><input type="number" class="text-right" value="0" onkeydown="handleCuttingKeydown(event, this)"></td>
+                                <td><label style="display:flex;justify-content:center;align-items:center;height:100%;cursor:pointer;"><input type="checkbox" class="cut-bottom-done" title="勾選=底板完結(部分完工，下次派工仍會顯示)"></label></td>
                             </tr>
                         </tbody>
                     </table>
@@ -6365,7 +6375,9 @@ window.addEventListener('DOMContentLoaded', function(){
                 let input = cell.querySelector('input');
                 if (input) input.value = val; else cell.innerText = val;
             };
-            setVal(1, getVal(1)); setVal(2, getVal(27)); setVal(3, getVal(3)); setVal(4, getVal(4));
+            // 左側：1項次 2報價單號 3類別 4型號 5品名｜來源訂單列：1項次 30報價單號 29類別 4型號 5品名
+            setVal(1, getVal(1)); setVal(2, getVal(30)); setVal(3, getVal(29));
+            setVal(4, getVal(4)); setVal(5, getVal(5));
         }
 
         function calculateOrderRowAmount(input) {
@@ -6440,6 +6452,57 @@ window.addEventListener('DOMContentLoaded', function(){
             tr.querySelector('.calc-total').value = (feet * qty).toFixed(2);
         }
 
+        // ── 計算片數：(最高-最低)/差距 + 1 ──
+        function calcCuttingPieces(){
+            var hi = parseFloat(document.getElementById('header-highest').value) || 0;
+            var lo = parseFloat(document.getElementById('header-lowest').value) || 0;
+            var gap = parseFloat(document.getElementById('header-gap').value) || 0;
+            if (gap <= 0) return alert('請先輸入「差距」');
+            if (hi <= lo) return alert('「最高」需大於「最低」');
+            document.getElementById('header-pieces').value = Math.floor((hi - lo) / gap) + 1;
+        }
+        // ── 計算差距：(最高-最低)/(片數-1) ──
+        function calcCuttingGap(){
+            var hi = parseFloat(document.getElementById('header-highest').value) || 0;
+            var lo = parseFloat(document.getElementById('header-lowest').value) || 0;
+            var pcs = parseInt(document.getElementById('header-pieces').value) || 0;
+            if (pcs <= 1) return alert('「片數」需大於 1');
+            if (hi <= lo) return alert('「最高」需大於「最低」');
+            document.getElementById('header-gap').value = ((hi - lo) / (pcs - 1)).toFixed(1);
+        }
+        // ── 排序：依長度mm 對指定項次範圍排序並重編項次 ──
+        function sortCuttingRows(){
+            var tbody = document.getElementById('cutting-body');
+            if (!tbody || !tbody.rows.length) return;
+            var from = parseInt(document.getElementById('sort-from').value, 10) || 0;
+            var to   = parseInt(document.getElementById('sort-to').value, 10) || 999999;
+            var dir  = (document.querySelector('input[name="cutSortDir"]:checked') || {}).value || 'asc';
+            var all = Array.prototype.slice.call(tbody.rows);
+            var inRange = [], anchors = [];
+            all.forEach(function(tr, i){
+                var no = parseInt((tr.cells[0].querySelector('input') || {}).value, 10) || 0;
+                if (no >= from && no <= to) inRange.push({ tr: tr, idx: i });
+                else anchors.push({ tr: tr, idx: i });
+            });
+            if (inRange.length < 2) return alert('範圍內少於 2 筆，無需排序');
+            var sorted = inRange.slice().sort(function(a, b){
+                var la = parseFloat((a.tr.querySelector('.calc-len') || {}).value) || 0;
+                var lb = parseFloat((b.tr.querySelector('.calc-len') || {}).value) || 0;
+                return dir === 'asc' ? la - lb : lb - la;
+            });
+            // 重組：範圍內位置依排序結果填回，其餘列原位
+            var slots = inRange.map(function(x){ return x.idx; });
+            var newOrder = all.slice();
+            sorted.forEach(function(x, k){ newOrder[slots[k]] = x.tr; });
+            tbody.innerHTML = '';
+            newOrder.forEach(function(tr){ tbody.appendChild(tr); });
+            // 重編全部項次 0010、0020…
+            Array.prototype.forEach.call(tbody.rows, function(tr, i){
+                var inp = tr.cells[0].querySelector('input');
+                if (inp) inp.value = String((i + 1) * 10).padStart(4, '0');
+            });
+        }
+
         // ==========================================
         // ★ 核心重構：自動計算拆段長度功能
         // ==========================================
@@ -6510,15 +6573,15 @@ window.addEventListener('DOMContentLoaded', function(){
                 tr.innerHTML = `
                     <td><input type="text" value="${newItemNo}" readonly onkeydown="handleCuttingKeydown(event, this)"></td>
                     <td><input type="text" value="A" onkeydown="handleCuttingKeydown(event, this)"></td>
-                    <td><input type="number" class="text-right calc-feet" value="${feet}" oninput="calcOrderFeet(this)" onkeydown="handleCuttingKeydown(event, this)"></td>
                     <td><input type="number" class="text-right calc-len" value="${len.toFixed(1)}" oninput="calcOrderLen(this)" onkeydown="handleCuttingKeydown(event, this)"></td>
+                    <td><input type="number" class="text-right calc-feet" value="${feet}" oninput="calcOrderFeet(this)" onkeydown="handleCuttingKeydown(event, this)"></td>
                     <td><input type="number" class="text-right calc-qty" value="${qty}" oninput="calcOrderTotal(this)" onkeydown="handleCuttingKeydown(event, this)"></td>
                     <td><input type="text" class="text-right calc-total" value="${totalFeet}" readonly></td>
-                    <td><input type="number" class="text-right" value="${qty}" onkeydown="handleCuttingKeydown(event, this)"></td>
-                    <td><input type="text" value="0.否" onkeydown="handleCuttingKeydown(event, this)"></td>
-                    <td><input type="number" class="text-right" value="0" onkeydown="handleCuttingKeydown(event, this)"></td>
-                    <td><input type="text" value="0.否" onkeydown="handleCuttingKeydown(event, this)"></td>
                     <td><input type="text" value="" onkeydown="handleCuttingKeydown(event, this)"></td>
+                    <td><input type="number" class="text-right" value="${qty}" onkeydown="handleCuttingKeydown(event, this)"></td>
+                    <td><label style="display:flex;justify-content:center;align-items:center;height:100%;cursor:pointer;"><input type="checkbox" class="cut-top-done" title="勾選=上板完結(完成、不再出現於派工)"></label></td>
+                    <td><input type="number" class="text-right" value="0" onkeydown="handleCuttingKeydown(event, this)"></td>
+                    <td><label style="display:flex;justify-content:center;align-items:center;height:100%;cursor:pointer;"><input type="checkbox" class="cut-bottom-done" title="勾選=底板完結(部分完工，下次派工仍會顯示)"></label></td>
                 `;
                 tbody.appendChild(tr);
             });
@@ -6983,7 +7046,7 @@ window.addEventListener('DOMContentLoaded', function(){
                 '並把：\n' +
                 '  • 庫存還原到「只有進貨」的狀態 (產線倉清空、原倉恢復)\n' +
                 '  • 訂單派工狀態回到「待派工」、清掉 dispatchId\n' +
-                '  • 裁切細項的 派工/上下版完工/開完工時間 全部清掉\n\n' +
+                '  • 裁切細項的 派工/上板底板完結/開完工時間 全部清掉\n\n' +
                 '進貨資料 (進貨單 / 細項 / 批號) 不會被動到。'
             )) return;
             if (!window.confirm('再次確認：此動作不可復原，是否真的要還原？')) return;
@@ -7366,7 +7429,7 @@ window.addEventListener('DOMContentLoaded', function(){
         totalQty: Math.floor(totalPieces / 2) || totalPieces,
         totalLen: +(totalFeet / 2).toFixed(2),
         createTime: o.header.date + ' 09:30:00',
-        remark: '上版完工'
+        remark: '上板完結'
       },
       {
         id: 'L-' + orderId + '-002',
@@ -7375,7 +7438,7 @@ window.addEventListener('DOMContentLoaded', function(){
         totalQty: totalPieces - Math.floor(totalPieces / 2),
         totalLen: +(totalFeet / 2).toFixed(2),
         createTime: o.header.date + ' 14:45:00',
-        remark: '下版完工'
+        remark: '底板完結'
       }
     ];
     return { header: o.header, items: [item], cuttings: cuttings, labels: sampleLabels };
@@ -7819,19 +7882,19 @@ window.addEventListener('DOMContentLoaded', function(){
     function td(html){ var x = document.createElement('td'); x.innerHTML = html; return x; }
     tr.appendChild(td('<input type="text" value="'+(c.orderItemNo || '0010')+'" readonly>'));
     tr.appendChild(td('<input type="text" value="'+(c.zone || '')+'">'));
-    tr.appendChild(td('<input type="number" class="text-right calc-feet" value="'+(c.feet||0)+'">'));
     tr.appendChild(td('<input type="number" class="text-right calc-len" value="'+(c.lengthMm||0)+'">'));
+    tr.appendChild(td('<input type="number" class="text-right calc-feet" value="'+(c.feet||0)+'">'));
     tr.appendChild(td('<input type="number" class="text-right calc-qty" value="'+(c.qty||1)+'">'));
     tr.appendChild(td('<input type="text" class="text-right calc-total" value="'+(c.totalFeet||0)+'" readonly>'));
-    tr.appendChild(td('<input type="number" class="text-right" value="'+(c.topUnfinish||0)+'">'));
-    // 上版完工：勾選後此裁件已完成，不再出現於下一次派工候選
-    var topChecked    = (parseInt(c.topDone    || 0, 10) > 0) ? 'checked' : '';
-    tr.appendChild(td('<label style="display:flex;justify-content:center;align-items:center;height:100%;cursor:pointer;"><input type="checkbox" class="cut-top-done" '+topChecked+' title="勾選=上版完工(完成、不再出現於派工)"></label>'));
-    tr.appendChild(td('<input type="number" class="text-right" value="'+(c.bottomUnfinish||0)+'">'));
-    // 下版完工：部分完工，下次派工仍會顯示
-    var bottomChecked = (parseInt(c.bottomDone || 0, 10) > 0) ? 'checked' : '';
-    tr.appendChild(td('<label style="display:flex;justify-content:center;align-items:center;height:100%;cursor:pointer;"><input type="checkbox" class="cut-bottom-done" '+bottomChecked+' title="勾選=下版完工(部分完工，下次派工仍會顯示)"></label>'));
     tr.appendChild(td('<input type="text" value="'+(c.remark||'')+'">'));
+    tr.appendChild(td('<input type="number" class="text-right" value="'+(c.topUnfinish||0)+'">'));
+    // 上板完結：勾選後此裁件已完成，不再出現於下一次派工候選
+    var topChecked    = (parseInt(c.topDone    || 0, 10) > 0) ? 'checked' : '';
+    tr.appendChild(td('<label style="display:flex;justify-content:center;align-items:center;height:100%;cursor:pointer;"><input type="checkbox" class="cut-top-done" '+topChecked+' title="勾選=上板完結(完成、不再出現於派工)"></label>'));
+    tr.appendChild(td('<input type="number" class="text-right" value="'+(c.bottomUnfinish||0)+'">'));
+    // 底板完結：部分完工，下次派工仍會顯示
+    var bottomChecked = (parseInt(c.bottomDone || 0, 10) > 0) ? 'checked' : '';
+    tr.appendChild(td('<label style="display:flex;justify-content:center;align-items:center;height:100%;cursor:pointer;"><input type="checkbox" class="cut-bottom-done" '+bottomChecked+' title="勾選=底板完結(部分完工，下次派工仍會顯示)"></label>'));
     return tr;
   }
 
@@ -7863,12 +7926,13 @@ window.addEventListener('DOMContentLoaded', function(){
     var leftTb = document.querySelector('#grid-cutting .split-left tbody');
     if (leftTb && cuttings && cuttings.length){
       var firstItemNo = cuttings[0].orderItemNo || '0010';
-      // 由 ord-detail-body 取對應品名
+      // 由 ord-detail-body 取對應品名（4型號 5品名 29類別 30報價單號）
       var detailRow = document.querySelector('#ord-detail-body tr');
       var spec = detailRow ? (detailRow.cells[5].querySelector('input').value) : '';
       var model = detailRow ? (detailRow.cells[4].querySelector('input').value) : '';
       var category = detailRow ? (detailRow.cells[29].querySelector('input').value) : '';
-      leftTb.innerHTML = '<tr class="selected-row"><td>▶</td><td>'+firstItemNo+'</td><td>'+category+'</td><td><input type="text" value="'+model+'" readonly></td><td>'+spec+'</td></tr>';
+      var quoteNo = (detailRow && detailRow.cells[30]) ? (detailRow.cells[30].querySelector('input').value) : '';
+      leftTb.innerHTML = '<tr class="selected-row"><td>▶</td><td>'+firstItemNo+'</td><td>'+quoteNo+'</td><td>'+category+'</td><td><input type="text" value="'+model+'" readonly></td><td>'+spec+'</td></tr>';
     }
   }
 
@@ -8064,7 +8128,7 @@ window.addEventListener('DOMContentLoaded', function(){
     var out = [];
     rows.forEach(function(tr){
       function v(i){ var inp = tr.cells[i] && tr.cells[i].querySelector('input,select'); return inp ? inp.value : ''; }
-      // 上版完工 / 下版完工：cell[7] / cell[9] 改為 checkbox 後讀 .checked
+      // 上板完結 / 底板完結：cell[8] / cell[10] 為 checkbox 讀 .checked
       // (相容舊的 '1.是' / '0.否' 文字輸入：若沒抓到 checkbox，再 fallback 讀 value)
       function chk(i){
         var c = tr.cells[i];
@@ -8075,12 +8139,13 @@ window.addEventListener('DOMContentLoaded', function(){
         var s = inp ? String(inp.value || '') : '';
         return (s === '1.是' || s === '1' || s === 'true') ? 1 : 0;
       }
+      // 欄序（對齊法琪）：0項次 1區 2長度mm 3單片台尺 4數量 5總尺 6備註
+      //                  7上板未完工數量 8上板完結 9底板未完工數量 10底板完結
       out.push({
-        orderId: id, orderItemNo: v(0), zone: v(1), feet: v(2), lengthMm: v(3),
-        qty: v(4), totalFeet: v(5),
-        topUnfinish: v(6),    topDone:    chk(7),
-        bottomUnfinish: v(8), bottomDone: chk(9),
-        remark: v(10)
+        orderId: id, orderItemNo: v(0), zone: v(1), lengthMm: v(2), feet: v(3),
+        qty: v(4), totalFeet: v(5), remark: v(6),
+        topUnfinish: v(7),    topDone:    chk(8),
+        bottomUnfinish: v(9), bottomDone: chk(10)
       });
     });
     return out;
@@ -10447,7 +10512,7 @@ window.addEventListener('DOMContentLoaded', function(){
           if (!res || !res.id) return alert('建立派工單失敗');
           window.__currentDispatchId = res.id;
           window.__currentDispatchPhase = res.phase || 'BOTH';
-          var phaseLabel = ({TOP:'上版單',BOTTOM:'下版單',BOTH:'上版+底版單',FOLD:'折工單'})[res.phase] || res.phase || '';
+          var phaseLabel = ({TOP:'上板單',BOTTOM:'底板單',BOTH:'上板+底板單',FOLD:'折工單'})[res.phase] || res.phase || '';
           setActiveDispatch({ id: res.id, orderId: pureOrderId, phase: phaseLabel, machine: res.machine || '' });
           // 派工開始 = 自動建立第一段 reporter session（後端 createDispatchFromOrder 已處理）
           // 立即抓最新 reporter 狀態以更新 UI
@@ -14701,7 +14766,7 @@ window.addEventListener('DOMContentLoaded', function(){
                           window.__currentDispatchPhase = res.phase || 'BOTH';
                           try { setHeaderData(h => Object.assign({}, h, { dispatchId: res.id })); } catch(e){}
                           try { window.dispatchEvent(new CustomEvent('dispatch-created', { detail: res })); } catch(e){}
-                          var phaseLabel = ({TOP:'上版單',BOTTOM:'下版單',BOTH:'上版+底版單',FOLD:'折工單'})[res.phase] || res.phase || '';
+                          var phaseLabel = ({TOP:'上板單',BOTTOM:'底板單',BOTH:'上板+底板單',FOLD:'折工單'})[res.phase] || res.phase || '';
                           setDispatchInfo({ id: res.id, machine: res.machine || headerData.machine || '', phase: phaseLabel });
                           var isFold = (res.phase === 'FOLD');
                           if (isFold) setCoilLoaded(true);
