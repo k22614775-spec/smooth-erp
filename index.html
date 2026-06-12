@@ -430,7 +430,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
                         <td><input type="text" class="ord-bottom-machine" value="" placeholder="(僅 method=2 必填)"></td>
                         <td><input type="text" value="ZBE0.500*0255R001" onkeydown="handleGridKeydown(event, this, 'main')"></td>
                         <td><input type="text" value="255K企口板*鍍鋅0.5*燁輝-米黃"></td>
-                        <td><select><option>1.上板+底板</option><option>2.上板→底板</option><option selected>3.清板</option><option>4.清板+彎工</option></select></td>
+                        <td><select disabled style="background:#f3f3f3;" title="製作方式由機台設定帶入，不可手動更改"><option>1.上板+底板</option><option>2.上板→底板</option><option selected>3.清板</option><option>4.清板+彎工</option></select></td>
                         <td><input type="text" value=""></td><td><input type="text" value="鍍鋅"></td><td><input type="text" value="燁輝"></td>
                         <td><input type="text" value="AZ100"></td><td><input type="text" value="G550"></td><td><input type="text" value="0.50x 255.0x 0.0"></td>
                         <td><input type="text" value="燁輝米黃"></td><td><input type="text" value="PE"></td>
@@ -3922,7 +3922,7 @@ function switchTopMode(mode) {
     getOrderPricingData: function(cb, errCb){
       _cb(Promise.all([
         _get('inventory',{'select':'model,pricingType'}),
-        _get('machines',{'select':'id,pricingMachineType'}),
+        _get('machines',{'select':'id,pricingMachineType,method'}),
         _get('pricing_headers',{'pricingNo':'eq.STD','order':'startDate'}),
         _get('pricing_table',{'pricingNo':'eq.STD'}),
       ]).then(function(r){ return {inv:r[0],machines:r[1],headers:r[2],rows:r[3]}; }), cb, errCb);
@@ -3965,6 +3965,9 @@ function switchTopMode(mode) {
     },
     updateMachinePricingType: function(machineId, val, cb, errCb){
       _cb(_patch('machines',{'id':'eq.'+machineId},{pricingMachineType:val}), cb, errCb);
+    },
+    updateMachineMethod: function(machineId, val, cb, errCb){
+      _cb(_patch('machines',{'id':'eq.'+machineId},{method:val}), cb, errCb);
     },
     saveInventory: function(payload, cb, errCb){
       const ops=[];
@@ -4886,10 +4889,15 @@ window.addEventListener('DOMContentLoaded', function(){
                         opts.push('<option' + (v === cur ? ' selected' : '') + '>' + _esc(v) + '</option>');
                     });
                     if (cur && !found) opts.push('<option selected>' + _esc(cur) + '</option>');
+                    var METH = ['1.上板+底板','2.上板→底板','3.清板','4.清板+彎工'];
+                    var md = (String(m.method || '').match(/^([1-4])/) || [,'3'])[1];
+                    var methodSel = '<select onchange="updateMachineMethodUI(\'' + _esc(m.id) + '\', this.value)">' +
+                        METH.map(function(x){ return '<option' + (x.charAt(0) === md ? ' selected' : '') + '>' + x + '</option>'; }).join('') +
+                        '</select>';
                     return '<tr>' +
                         '<td>' + _esc(m.id) + '</td>' +
                         '<td>' + _esc(m.name || '') + '</td>' +
-                        '<td>' + _esc(m.method || '') + '</td>' +
+                        '<td>' + methodSel + '</td>' +
                         '<td>' + _esc(m.widthStart || m.widthstart || '') + '</td>' +
                         '<td>' + _esc(m.widthEnd || m.widthend || '') + '</td>' +
                         '<td>' + _esc(m.material || '') + '</td>' +
@@ -4899,6 +4907,13 @@ window.addEventListener('DOMContentLoaded', function(){
                     '</tr>';
                 }).join('');
             }, function(e){ console.error('載入機台失敗', e); });
+        }
+        function updateMachineMethodUI(id, val){
+            if (!window.API || !window.API.updateMachineMethod) return;
+            window.API.updateMachineMethod(id, val, function(){
+                console.log('[機台設定] 製作方式已更新', id, '→', val);
+                if (typeof OrderPricing !== 'undefined') OrderPricing.loaded = false;   // 訂單端快取失效
+            }, function(e){ alert('更新失敗：' + (e && e.message || e)); });
         }
         function updateMachinePricingTypeUI(id, val){
             if (!window.API || !window.API.updateMachinePricingType) return;
@@ -7834,7 +7849,7 @@ window.addEventListener('DOMContentLoaded', function(){
   var ORDER_METHODS = ['1.上板+底板','2.上板→底板','3.清板','4.清板+彎工'];
   function _methodSelectHtml(cur){
     var d = (String(cur||'').match(/^([1-4])/) || [,'3'])[1];
-    return '<select>' + ORDER_METHODS.map(function(m){
+    return '<select disabled style="background:#f3f3f3;" title="製作方式由機台設定帶入，不可手動更改">' + ORDER_METHODS.map(function(m){
       return '<option' + (m.charAt(0) === d ? ' selected' : '') + '>' + m + '</option>';
     }).join('') + '</select>';
   }
@@ -7851,7 +7866,7 @@ window.addEventListener('DOMContentLoaded', function(){
     function td(html){ var c = document.createElement('td'); c.innerHTML = html; return c; }
     tr.appendChild(td('▶'));
     tr.appendChild(td('<input type="text" value="'+_fmtItemNo(it.itemNo, index)+'" readonly>'));
-    tr.appendChild(td('<input type="text" class="ord-machine" value="'+(it.machine||'')+'" title="按 F2 開啟機台速查" onkeydown="handleGridKeydown(event, this, \'machine\')" onchange="window.applyStdPriceToRow && window.applyStdPriceToRow(this.closest(\'tr\'))">'));
+    tr.appendChild(td('<input type="text" class="ord-machine" value="'+(it.machine||'')+'" title="按 F2 開啟機台速查" onkeydown="handleGridKeydown(event, this, \'machine\')" onchange="window.applyMachineMethodToRow && window.applyMachineMethodToRow(this.closest(\'tr\')); window.applyStdPriceToRow && window.applyStdPriceToRow(this.closest(\'tr\'))">'));
     // 底板機台：僅製作方式=2 (上版→下版) 必填，UI 上一律顯示，存檔時靠 collectOrderItems 帶回
     tr.appendChild(td('<input type="text" class="ord-bottom-machine" value="'+(it.bottomMachine||'')+'" placeholder="(僅 method=2 必填)">'));
     tr.appendChild(td('<input type="text" value="'+(it.model||'')+'" title="按 F2 開啟庫存速查" onkeydown="handleGridKeydown(event, this, \'main\')" onchange="window.applyStdPriceToRow && window.applyStdPriceToRow(this.closest(\'tr\'))">'));
@@ -8034,7 +8049,7 @@ window.addEventListener('DOMContentLoaded', function(){
     };
   }
   // ════ 訂單細項：標準報價自動帶入 + 單價審核 ════
-  var OrderPricing = { loaded:false, loading:false, modelMap:{}, machineMap:{}, headers:[], rows:[] };
+  var OrderPricing = { loaded:false, loading:false, modelMap:{}, machineMap:{}, machineMethodMap:{}, headers:[], rows:[] };
   function loadOrderPricing(cb){
     if (OrderPricing.loaded){ if (cb) cb(); return; }
     if (!window.API || !window.API.getOrderPricingData){ if (cb) cb(); return; }
@@ -8047,8 +8062,11 @@ window.addEventListener('DOMContentLoaded', function(){
         if (m && p) OrderPricing.modelMap[m] = p;
       });
       (d.machines || []).forEach(function(r){
+        var k = String(r.id || '').trim();
+        if (!k) return;
         var p = r.pricingMachineType || r.pricingmachinetype || '';
-        if (r.id && p) OrderPricing.machineMap[String(r.id).trim()] = p;
+        if (p) OrderPricing.machineMap[k] = p;
+        if (r.method) OrderPricing.machineMethodMap[k] = String(r.method);
       });
       OrderPricing.headers = d.headers || [];
       OrderPricing.rows = d.rows || [];
@@ -8090,6 +8108,21 @@ window.addEventListener('DOMContentLoaded', function(){
     } else {
       pi.style.color = ''; pi.style.fontWeight = ''; pi.title = '';
     }
+  };
+  // 機台 → 製作方式帶入（select 為 disabled，僅程式可改）
+  window.applyMachineMethodToRow = function(tr){
+    if (!tr || !tr.cells || tr.cells.length < 7) return;
+    var machine = (tr.cells[2].querySelector('input') || {}).value || '';
+    machine = machine.trim();
+    if (!machine) return;
+    loadOrderPricing(function(){
+      var m = OrderPricing.machineMethodMap[machine];
+      if (!m) return;
+      var d = (String(m).match(/^([1-4])/) || [])[1];
+      if (!d) return;
+      var sel = tr.cells[6] && tr.cells[6].querySelector('select');
+      if (sel) sel.selectedIndex = parseInt(d, 10) - 1;
+    });
   };
   window.applyStdPriceToRow = function(tr){
     if (!tr || !tr.cells || tr.cells.length < 23) return;
