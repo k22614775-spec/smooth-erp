@@ -2932,6 +2932,9 @@ function switchTopMode(mode) {
         await _patch('order_items',{'model':'eq.255A05AE100'},{model:'ZBE0.500*0255R001'}).catch(function(e){ console.warn('非致命寫入失敗:', e); });
         // 示範訂單細項缺漏時自動補回（曾發生空白儲存誤刪）
         try {
+          // 底板用料依機台 255 的設定帶入（遵循「機台→底板用料」邏輯）
+          var _m255 = await _get('machines',{'id':'eq.255','limit':'1'});
+          var _bm255 = (_m255 && _m255[0] && (_m255[0].material || '')) || 'ZBE0.500*0255R001';
           var _demoItems = [
             {id:'1150501001-0010',orderId:'1150501001',qty:84, totalFeet:1421.78,totalQty:431.23,length:5500,deliveryDate:'2026-05-01 00:00:00'},
             {id:'1150501002-0010',orderId:'1150501002',qty:100,totalFeet:1947.19,totalQty:590.59,length:6000,deliveryDate:'2026-05-03 00:00:00'},
@@ -2944,7 +2947,7 @@ function switchTopMode(mode) {
             await _upsert('order_items', Object.assign({
               itemNo:'0010', machine:'255', model:'ZBE0.500*0255R001',
               spec:'255K企口板*鍍鋅 0.5*燁輝-米黃', method:'3.清板',
-              baseMaterialModel:'ZBE0.500*0255R001', materialNo:'鍍鋅', factory:'燁輝',
+              baseMaterialModel:_bm255, materialNo:'鍍鋅', factory:'燁輝',
               coating:'AZ100', strength:'G550', size:'0.50x 255.0x 0.0',
               color:'燁輝米黃', paint:'PE', unit:'台尺', price:10,
               costBasis:'1.總數', category:'255企口板'
@@ -3922,7 +3925,7 @@ function switchTopMode(mode) {
     getOrderPricingData: function(cb, errCb){
       _cb(Promise.all([
         _get('inventory',{'select':'model,pricingType'}),
-        _get('machines',{'select':'id,pricingMachineType,method'}),
+        _get('machines',{'select':'id,pricingMachineType,method,material'}),
         _get('pricing_headers',{'pricingNo':'eq.STD','order':'startDate'}),
         _get('pricing_table',{'pricingNo':'eq.STD'}),
       ]).then(function(r){ return {inv:r[0],machines:r[1],headers:r[2],rows:r[3]}; }), cb, errCb);
@@ -8070,7 +8073,7 @@ window.addEventListener('DOMContentLoaded', function(){
     };
   }
   // ════ 訂單細項：標準報價自動帶入 + 單價審核 ════
-  var OrderPricing = { loaded:false, loading:false, modelMap:{}, machineMap:{}, machineMethodMap:{}, headers:[], rows:[] };
+  var OrderPricing = { loaded:false, loading:false, modelMap:{}, machineMap:{}, machineMethodMap:{}, machineMaterialMap:{}, headers:[], rows:[] };
   function loadOrderPricing(cb){
     if (OrderPricing.loaded){ if (cb) cb(); return; }
     if (!window.API || !window.API.getOrderPricingData){ if (cb) cb(); return; }
@@ -8088,6 +8091,7 @@ window.addEventListener('DOMContentLoaded', function(){
         var p = r.pricingMachineType || r.pricingmachinetype || '';
         if (p) OrderPricing.machineMap[k] = p;
         if (r.method) OrderPricing.machineMethodMap[k] = String(r.method);
+        if (r.material) OrderPricing.machineMaterialMap[k] = String(r.material);
       });
       OrderPricing.headers = d.headers || [];
       OrderPricing.rows = d.rows || [];
@@ -8138,11 +8142,19 @@ window.addEventListener('DOMContentLoaded', function(){
     if (!machine) return;
     loadOrderPricing(function(){
       var m = OrderPricing.machineMethodMap[machine];
-      if (!m) return;
-      var d = (String(m).match(/^([1-4])/) || [])[1];
-      if (!d) return;
-      var sel = tr.cells[6] && tr.cells[6].querySelector('select');
-      if (sel) sel.selectedIndex = parseInt(d, 10) - 1;
+      if (m){
+        var d = (String(m).match(/^([1-4])/) || [])[1];
+        if (d){
+          var sel = tr.cells[6] && tr.cells[6].querySelector('select');
+          if (sel) sel.selectedIndex = parseInt(d, 10) - 1;
+        }
+      }
+      // 底板用料跟著機台帶入（cells[7]）
+      var bm = OrderPricing.machineMaterialMap[machine];
+      if (bm){
+        var bi = tr.cells[7] && tr.cells[7].querySelector('input');
+        if (bi) bi.value = bm;
+      }
     });
   };
   window.applyStdPriceToRow = function(tr){
