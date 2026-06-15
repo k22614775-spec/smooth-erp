@@ -1,12 +1,12 @@
-﻿@echo off
+@echo off
 chcp 65001 >nul
 cd /d "C:\Users\andy\Desktop\誼冠\CLAUDE4.6\smooth-erp"
-echo ════════════════════════════════════════
+echo ========================================
 echo   smooth-erp 一鍵發布
-echo   推送後 GitHub Actions 會自動：
-echo   1) 套用新的 Supabase migration
-echo   2) 部署到 GitHub Pages
-echo ════════════════════════════════════════
+echo ========================================
+del /f /s /q ".git\*.lock" >nul 2>&1
+git add -A
+git commit -m "chore: 一鍵發布"
 git push origin main
 echo.
 echo 完成。約 1-3 分鐘後檢查：
