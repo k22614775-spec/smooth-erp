@@ -8509,7 +8509,16 @@ window.addEventListener('DOMContentLoaded', function(){
       var full = expandSample(oid);
       if (!full) return;
       var h = full.header;
+      // 依項次彙總 上板/底板未完工量（與 getOrders 一致，缺值時以 qty 帶入）
+      var unf = {};
+      (full.cuttings || []).forEach(function(c){
+        var k = String(c.orderItemNo || '0010');
+        if (!unf[k]) unf[k] = { top: 0, bottom: 0 };
+        unf[k].top    += parseInt(c.topUnfinish    != null ? c.topUnfinish    : (c.qty || 0), 10) || 0;
+        unf[k].bottom += parseInt(c.bottomUnfinish != null ? c.bottomUnfinish : (c.qty || 0), 10) || 0;
+      });
       full.items.forEach(function(it){
+        var uk = String(it.itemNo || '0010');
         rows.push({
           id: oid + '-' + (it.itemNo || '0010'),
           orderId: oid,
@@ -8530,6 +8539,8 @@ window.addEventListener('DOMContentLoaded', function(){
           date: it.deliveryDate || h.date || '',
           remark: h.remark || '',
           unit: it.unit || '',
+          topUnfinish: (unf[uk] || {}).top || 0,
+          bottomUnfinish: (unf[uk] || {}).bottom || 0,
           status: '待派工'
         });
       });
