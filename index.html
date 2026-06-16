@@ -14552,15 +14552,6 @@ window.addEventListener('DOMContentLoaded', function(){
                   <span className="text-blue-300">{dispatchInfo.phase}</span>
                 </span>
               )}
-              {/* 開工閘門：按下後才能把左側明細移到右側 */}
-              {!workStarted ? (
-                <button onClick={() => {
-                  if (!coilLoaded) return setMesNotice({ type:'warn', title:'⚠️ 尚未上架鋼捲', body:'請先回清單頁按「🔩 鋼捲上架」完成上架，才能開工。' });
-                  setWorkStarted(true);
-                }} className="ml-2 bg-[#00e676] hover:bg-[#00c853] text-black font-bold px-3 py-0.5 rounded shadow-sm">▶ 開工</button>
-              ) : (
-                <span className="ml-2 text-green-300 font-bold">🟢 已開工</span>
-              )}
             </div>
             {/* 鋼捲資訊（上架後顯示） */}
             {loadedCoilInfo && (
@@ -14703,14 +14694,20 @@ window.addEventListener('DOMContentLoaded', function(){
             </div>
 
             <div className="w-32 flex flex-col space-y-1">
-               {/* 派工狀態顯示（派工開始/結束已移至鋼捲 modal） */}
-               <div className="flex-1 flex flex-col items-center justify-center text-xs rounded-sm border"
-                    style={{background: dispatchInfo ? '#e8f5e9' : '#f5f5f5', borderColor: dispatchInfo ? '#4caf50' : '#ccc', minHeight:'48px'}}>
-                 {dispatchInfo
-                   ? <span className="text-green-800 font-bold text-center px-1">派工中<br/><span className="font-mono text-[10px]">{dispatchInfo.id}</span></span>
-                   : <span className="text-gray-400 text-center">點「鋼捲」<br/>開始派工</span>
-                 }
-               </div>
+               {/* 開工閘門：按下後才能把左側明細移到右側（取代原「派工中」狀態框） */}
+               {!workStarted ? (
+                 <button onClick={() => {
+                   if (!coilLoaded) return setMesNotice({ type:'warn', title:'⚠️ 尚未上架鋼捲', body:'請先回清單頁按「🔩 鋼捲上架」完成上架，才能開工。' });
+                   setWorkStarted(true);
+                 }} className="flex-1 bg-[#00e676] hover:bg-[#00c853] text-black flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm" style={{minHeight:'48px'}}>
+                   <span>▶ 開工</span><span className="text-xs font-normal">mulai</span>
+                 </button>
+               ) : (
+                 <div className="flex-1 flex flex-col items-center justify-center text-xs rounded-sm border"
+                      style={{background:'#e8f5e9', borderColor:'#4caf50', minHeight:'48px'}}>
+                   <span className="text-green-800 font-bold text-center px-1">🟢 已開工{dispatchInfo ? <span className="block font-mono text-[10px]">{dispatchInfo.id}</span> : null}</span>
+                 </div>
+               )}
 
 
 
