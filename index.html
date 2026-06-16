@@ -14572,23 +14572,20 @@ window.addEventListener('DOMContentLoaded', function(){
               <span className="text-yellow-300 font-mono font-bold">
                 {dispatchInfo ? dispatchInfo.id : '─ 尚未開始 ─'}
               </span>
-              {dispatchInfo && (
-                <span className="flex items-center space-x-2">
-                  <span className="text-gray-400">│</span>
-                  <span className="text-blue-300">機台</span>
-                  <span className="text-white font-bold">{dispatchInfo.machine}</span>
-                  <span className="text-gray-400">│</span>
-                  <span className="text-blue-300">{dispatchInfo.phase}</span>
-                </span>
-              )}
+              <span className="text-gray-400">│</span>
+              <span className="text-blue-300">機台</span>
+              <span className="text-white font-bold">{headerData.machine || '—'}</span>
+              <span className="text-gray-400">│</span>
+              <span className="text-blue-300">製作方式</span>
+              <span className="text-white font-bold">{headerData.manufacturingMethod || '—'}</span>
+              <span className="text-gray-400">│</span>
+              <span className="text-blue-300">鋼捲料號</span>
+              <span className="text-white font-bold">{loadedCoilInfo ? loadedCoilInfo.model : '（尚未上架）'}</span>
             </div>
-            {/* 鋼捲資訊（上架後顯示） */}
+            {/* 鋼捲其餘資訊（上架後顯示） */}
             {loadedCoilInfo && (
               <div className="flex items-center space-x-2 border-l border-blue-600 pl-3">
                 <span className="text-green-300 font-bold">▲ 鋼捲</span>
-                <span className="text-gray-300">料號</span>
-                <span className="text-white">{loadedCoilInfo.model}</span>
-                <span className="text-gray-400">│</span>
                 <span className="text-gray-300">廠別</span>
                 <span className="text-white">{loadedCoilInfo.factory}</span>
                 <span className="text-gray-400">│</span>
@@ -14598,9 +14595,6 @@ window.addEventListener('DOMContentLoaded', function(){
                 <span className="text-orange-300">上架磅重</span>
                 <span className="text-yellow-300 font-bold">{loadedCoilInfo.loadWeight} kg</span>
               </div>
-            )}
-            {!loadedCoilInfo && dispatchInfo && (
-              <span className="text-gray-400 border-l border-blue-600 pl-3">⚪ 等待上架鋼捲...</span>
             )}
           </div>
 
