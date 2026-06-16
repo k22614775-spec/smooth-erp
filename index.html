@@ -14054,13 +14054,15 @@ window.addEventListener('DOMContentLoaded', function(){
       // activeDispatch: { id, orderId } | null — 從 App 傳入的目前派工單狀態
       // reporterStatus: 'active' | 'paused' | null — 回報人員段狀態
       // reporterSession: 目前段的物件 (reporters, startTime 用來顯示)
-      const [filterMachine, setFilterMachine] = useState('');
-      // 進場必填機台：彈窗強制輸入後才進入總覽，並自動篩選成該機台的訂單
-      const [showMachineModal, setShowMachineModal] = useState(true);
-      const [machineInput, setMachineInput] = useState('');
+      // 已輸入過的機台記在 window，切到明細再回清單時不再重複跳彈窗
+      const [filterMachine, setFilterMachine] = useState(window.__mesMachine || '');
+      // 進場必填機台：未輸入過才強制彈窗
+      const [showMachineModal, setShowMachineModal] = useState(!window.__mesMachine);
+      const [machineInput, setMachineInput] = useState(window.__mesMachine || '');
       const confirmMachine = function(){
         var m = String(machineInput || '').trim();
         if (!m) return;            // 必填，空白不可確定
+        window.__mesMachine = m;   // 記住，之後不再要求重輸
         setFilterMachine(m);       // 觸發 filteredOrders 自動篩選
         setShowMachineModal(false);
       };
@@ -14112,7 +14114,7 @@ window.addEventListener('DOMContentLoaded', function(){
               <div className="flex items-center space-x-2 text-sm">
                 <label className="w-20 text-right text-gray-700 shrink-0">機台編號</label>
                 <input type="text" value={filterMachine}
-                  onChange={function(e){ setFilterMachine(e.target.value); }}
+                  onChange={function(e){ setFilterMachine(e.target.value); window.__mesMachine = e.target.value; }}
                   placeholder="輸入機台篩選…"
                   className="flex-1 bg-white border border-blue-300 rounded py-1 px-2 outline-none focus:border-blue-600 focus:border-2" />
               </div>
