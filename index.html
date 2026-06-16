@@ -14055,6 +14055,15 @@ window.addEventListener('DOMContentLoaded', function(){
       // reporterStatus: 'active' | 'paused' | null — 回報人員段狀態
       // reporterSession: 目前段的物件 (reporters, startTime 用來顯示)
       const [filterMachine, setFilterMachine] = useState('');
+      // 進場必填機台：彈窗強制輸入後才進入總覽，並自動篩選成該機台的訂單
+      const [showMachineModal, setShowMachineModal] = useState(true);
+      const [machineInput, setMachineInput] = useState('');
+      const confirmMachine = function(){
+        var m = String(machineInput || '').trim();
+        if (!m) return;            // 必填，空白不可確定
+        setFilterMachine(m);       // 觸發 filteredOrders 自動篩選
+        setShowMachineModal(false);
+      };
       const filteredOrders = filterMachine
         ? orders.filter(function(o){ return String(o.machine || '').toLowerCase().indexOf(filterMachine.toLowerCase()) !== -1; })
         : orders;
@@ -14078,7 +14087,25 @@ window.addEventListener('DOMContentLoaded', function(){
       };
 
       return (
-        <div className="flex flex-col flex-1 overflow-hidden">
+        <div className="flex flex-col flex-1 overflow-hidden relative">
+          {/* 進場必填機台 Modal */}
+          {showMachineModal && (
+            <div className="absolute inset-0 bg-black/50 z-50 flex items-center justify-center">
+              <div className="bg-white rounded-lg shadow-2xl border border-gray-300 w-80 p-5">
+                <h2 className="text-lg font-bold text-blue-800 mb-1">請先輸入機台</h2>
+                <p className="text-xs text-gray-500 mb-3">進入裁切理貨前，請先指定作業機台編號；確定後清單會自動篩選成該機台的訂單。</p>
+                <input autoFocus type="text" value={machineInput}
+                  onChange={function(e){ setMachineInput(e.target.value); }}
+                  onKeyDown={function(e){ if(e.key==='Enter'){ confirmMachine(); } }}
+                  placeholder="輸入機台編號，例如 255"
+                  className="w-full border border-blue-300 rounded py-2 px-3 outline-none focus:border-blue-600 focus:border-2 text-sm" />
+                <div className="flex justify-end mt-4">
+                  <button onClick={confirmMachine}
+                    className="bg-[#1d4ed8] text-white font-bold px-5 py-1.5 rounded shadow-sm hover:bg-blue-800 text-sm">確定</button>
+                </div>
+              </div>
+            </div>
+          )}
           {/* Search Filters */}
           <div className="bg-[#e8f0fe] p-3 flex border-b border-blue-200">
             <div className="grid grid-cols-3 gap-x-6 gap-y-3 flex-1 max-w-6xl">
