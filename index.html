@@ -14293,6 +14293,7 @@ window.addEventListener('DOMContentLoaded', function(){
       const [leftList, setLeftList] = useState([]);
       const [rightList, setRightList] = useState([]);
       const [selectedLeftIds, setSelectedLeftIds] = useState([]);
+      const [workStarted, setWorkStarted] = useState(false);  // 上方「開工」閘門：按下後才能把左側明細移到右側
       const [isLoadingDetail, setIsLoadingDetail] = useState(true);
       const [showLabelModal, setShowLabelModal] = useState(false);
 
@@ -14455,6 +14456,7 @@ window.addEventListener('DOMContentLoaded', function(){
 
       const toggleLeftSelection = (id) => setSelectedLeftIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
       const moveRight = () => {
+        if (!workStarted) return setMesNotice({ type:'warn', title:'⚠️ 尚未開工', body:'請先按上方「開工」按鈕，才能將左側明細移到右側。' });
         const itemsToMove = leftList.filter(item => selectedLeftIds.includes(item.id));
         setRightList(prev => [...prev, ...itemsToMove]);
         setLeftList(prev => prev.filter(item => !selectedLeftIds.includes(item.id)));
@@ -14549,6 +14551,15 @@ window.addEventListener('DOMContentLoaded', function(){
                   <span className="text-gray-400">│</span>
                   <span className="text-blue-300">{dispatchInfo.phase}</span>
                 </span>
+              )}
+              {/* 開工閘門：按下後才能把左側明細移到右側 */}
+              {!workStarted ? (
+                <button onClick={() => {
+                  if (!coilLoaded) return setMesNotice({ type:'warn', title:'⚠️ 尚未上架鋼捲', body:'請先回清單頁按「🔩 鋼捲上架」完成上架，才能開工。' });
+                  setWorkStarted(true);
+                }} className="ml-2 bg-[#00e676] hover:bg-[#00c853] text-black font-bold px-3 py-0.5 rounded shadow-sm">▶ 開工</button>
+              ) : (
+                <span className="ml-2 text-green-300 font-bold">🟢 已開工</span>
               )}
             </div>
             {/* 鋼捲資訊（上架後顯示） */}
@@ -14745,7 +14756,7 @@ window.addEventListener('DOMContentLoaded', function(){
                      try { window.dispatchEvent(new CustomEvent('mes-report-saved', { detail: { type:'start', dispatchId:dispatchId, count:(res&&res.saved)||0 } })); } catch(e){}
                    }, function(err){ alert('開工報工寫入失敗：' + (err && err.message || err)); });
                  }} className="flex-1 bg-[#00e676] hover:bg-[#00c853] text-black flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm">
-                   <span>開工</span><span className="text-xs font-normal">mulai kerja</span>
+                   <span>機臺開工</span><span className="text-xs font-normal">mulai kerja</span>
                  </button>
                )}
 
@@ -14823,7 +14834,7 @@ window.addEventListener('DOMContentLoaded', function(){
                      if (window.confirm('作業已完工！是否列印標籤？')) setShowLabelModal(true);
                    }, 100);
                  }} className="flex-1 bg-[#00e5ff] hover:bg-[#00b8d4] text-black flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm">
-                   <span>完工</span><span className="text-xs font-normal">selesai kerja</span>
+                   <span>機臺完工</span><span className="text-xs font-normal">selesai kerja</span>
                  </button>
                )}
 
