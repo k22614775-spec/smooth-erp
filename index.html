@@ -3011,11 +3011,13 @@ function switchTopMode(mode) {
         // 還原裁切細項「未完工量」= 數量（topUnfinish/bottomUnfinish/mesUnfinish 歸位，讓未完工可再次使用）
         var _unfRestored = 0;
         try {
-          var _allCut = await _get('cutting_details',{'select':'id,qty'});
+          var _allCut = await _get('cutting_details',{'select':'id,qty,orderId,orderItemNo'});
           var _restoreUnf = (_allCut||[]).map(function(c){
             var q = parseInt((c.qty!=null?c.qty:0),10)||0;
-            return { id:c.id, topUnfinish:q, bottomUnfinish:q, mesUnfinish:q };
-          });
+            // 必帶 orderId（NOT NULL）否則 merge-duplicates 會因 NOT NULL 違規整批失敗
+            return { id:c.id, orderId:(c.orderId||c.orderid||''), orderItemNo:(c.orderItemNo||c.orderitemno||''),
+                     topUnfinish:q, bottomUnfinish:q, mesUnfinish:q };
+          }).filter(function(r){ return r.id && r.orderId; });
           if (_restoreUnf.length){
             await _upsert('cutting_details', _restoreUnf);
             _unfRestored = _restoreUnf.length;
