@@ -3008,6 +3008,19 @@ function switchTopMode(mode) {
           dispatchId:'',dispatchSeq:'',topDone:0,bottomDone:0,
           closed:0,startTime:'',finishTime:'',reporter:'',reportedAt:'',
           processNo:'',inboundNo:'',inLocation:'',inBatchNo:''}).catch(function(e){ console.warn('非致命寫入失敗:', e); });
+        // 還原裁切細項「未完工量」= 數量（topUnfinish/bottomUnfinish/mesUnfinish 歸位，讓未完工可再次使用）
+        var _unfRestored = 0;
+        try {
+          var _allCut = await _get('cutting_details',{'select':'id,qty'});
+          var _restoreUnf = (_allCut||[]).map(function(c){
+            var q = parseInt((c.qty!=null?c.qty:0),10)||0;
+            return { id:c.id, topUnfinish:q, bottomUnfinish:q, mesUnfinish:q };
+          });
+          if (_restoreUnf.length){
+            await _upsert('cutting_details', _restoreUnf);
+            _unfRestored = _restoreUnf.length;
+          }
+        } catch(e){ console.warn('未完工量還原失敗(非致命):', e); }
 
         // 4. 清空庫存表，從進貨資料重建
         await _del('warehouse_stock',{'id':'gt.0'}).catch(function(e){ console.warn('非致命寫入失敗:', e); });
@@ -3086,7 +3099,8 @@ function switchTopMode(mode) {
           batchDetail:batchRows.length,
           purchasesReplayed:purchases.length,
           ordersResetToPending: 0,
-          cuttingsReset: 0,
+          cuttingsReset: _unfRestored,
+          unfinishRestored: _unfRestored,
           coilTxSeeded: coilTxOk,
           coilTxSeeded2: coilTxOk2,
           coilTxSeeded3: coilTxOk3,
@@ -7154,7 +7168,8 @@ window.addEventListener('DOMContentLoaded', function(){
                 '並把：\n' +
                 '  • 庫存還原到「只有進貨」的狀態 (產線倉清空、原倉恢復)\n' +
                 '  • 訂單派工狀態回到「待派工」、清掉 dispatchId\n' +
-                '  • 裁切細項的 派工/上板底板完結/開完工時間 全部清掉\n\n' +
+                '  • 裁切細項的 派工/上板底板完結/開完工時間 全部清掉\n' +
+                '  • 裁切細項的 上板/底板/未完工量 還原成數量 (可再次派工)\n\n' +
                 '進貨資料 (進貨單 / 細項 / 批號) 不會被動到。'
             )) return;
             if (!window.confirm('再次確認：此動作不可復原，是否真的要還原？')) return;
@@ -7188,7 +7203,7 @@ window.addEventListener('DOMContentLoaded', function(){
                       '已沖銷 STOCK_MOVES：' + (c.stockMovesRemoved || 0) + ' 列\n' +
                       '進貨重打：' + (r.purchasesReplayed || 0) + ' 張\n' +
                       '訂單回到待派工：' + (r.ordersResetToPending || 0) + ' 張\n' +
-                      '裁切細項重設：' + (r.cuttingsReset || 0) + ' 列\n' +
+                      '未完工量還原：' + (r.unfinishRestored || 0) + ' 列\n' +
                       coilMsg + '\n即將重新載入畫面。');
                 // 重新載入當前 active 的模組
                 try {
