@@ -14345,6 +14345,8 @@ window.addEventListener('DOMContentLoaded', function(){
       const [workStarted, setWorkStarted] = useState(false);  // 上方「開工」閘門：按下後才能把左側明細移到右側
       const [isLoadingDetail, setIsLoadingDetail] = useState(true);
       const [showLabelModal, setShowLabelModal] = useState(false);
+      const [labelDoneList, setLabelDoneList] = useState(null);   // 例外線「標籤完工」清單：null=關閉，陣列=開啟
+      const [labelDoneBusy, setLabelDoneBusy] = useState(false);  // 完成處理中，避免重複點
 
       const [savedLabels, setSavedLabels] = useState([]);
       const [showCoilModal, setShowCoilModal] = useState(false);
@@ -14547,6 +14549,78 @@ window.addEventListener('DOMContentLoaded', function(){
              });
          }
          return labels;
+      };
+
+      // 例外線：解析目前訂單 ID / 項次 / 製作方式
+      const _parseOrderRef = function(){
+        var rawId = String(headerData.id || '');
+        var idParts = rawId.split('-');
+        var orderId = headerData.orderId || (idParts.length > 1 ? idParts.slice(0,-1).join('-') : rawId);
+        var itemNo = headerData.itemNo || (idParts.length > 1 ? idParts[idParts.length-1] : '0010');
+        var digit = (String(headerData.manufacturingMethod || '').match(/^([1-4])/) || [,'3'])[1];
+        return { orderId: orderId, itemNo: itemNo, digit: digit };
+      };
+
+      // 例外線：「標籤完工」鈕 → 叫出此訂單已產生的標籤清單
+      const openLabelDone = function(){
+        if (!window.API || typeof window.API.getLabelsByOrder !== 'function')
+          return setMesNotice({ type:'warn', title:'⚠️ 後端未連線', body:'無法載入標籤清單。' });
+        var ref = _parseOrderRef();
+        window.API.getLabelsByOrder(ref.orderId, function(rows){
+          if (!rows || !rows.length)
+            return setMesNotice({ type:'warn', title:'⚠️ 尚無標籤', body:'此訂單尚未產生標籤，請先按「列印標籤」。' });
+          setLabelDoneList(rows);
+        }, function(err){ alert('載入標籤失敗：' + (err && err.message || err)); });
+      };
+
+      // 例外線：點選一張標籤 → 寫開工＝完工時間，並依製作方式扣該張數量的未完工
+      const completeLabelDone = function(label){
+        if (labelDoneBusy) return;
+        setLabelDoneBusy(true);
+        var ref = _parseOrderRef();
+        var now = new Date().toLocaleTimeString('zh-TW', { hour12: false });
+        var qtyToDeduct = parseInt(label.qty || label.totalQty || 0, 10) || 0;
+        var deductTop = true;                 // 1.上板+底板 與 2/3/4 皆扣上板
+        var deductBottom = (ref.digit === '1'); // 僅 1.上板+底板 扣底板
+        var done = function(){
+          setLabelDoneBusy(false);
+          setLabelDoneList(null);
+          setMesNotice({ type:'success', title:'✅ 標籤完工', body:'已寫入完工時間並扣除未完工量。' });
+          try { window.dispatchEvent(new CustomEvent('mes-report-saved', { detail: { type:'finish', orderId:ref.orderId } })); } catch(e){}
+        };
+        // 1) 標籤寫入開工＝完工時間
+        if (window.API && typeof window.API.saveLabel === 'function'){
+          window.API.saveLabel(Object.assign({}, label, { startTime: now, endTime: now }), function(){}, function(e){ console.warn('標籤時間寫入警告:', e); });
+        }
+        // 2) 依製作方式扣該張數量的未完工（貪婪分攤到各裁切列）
+        if (!window.API || typeof window.API.getCuttingDetails !== 'function' || qtyToDeduct <= 0){ done(); return; }
+        var _applyDeduct = function(rows){
+          var remainTop = qtyToDeduct, remainBot = qtyToDeduct;
+          var records = [];
+          (rows || []).forEach(function(c){
+            var top = parseInt(c.topUnfinish || 0, 10) || 0;
+            var bot = parseInt(c.bottomUnfinish || 0, 10) || 0;
+            var mes = parseInt((c.mesUnfinish != null ? c.mesUnfinish : c.qty) || 0, 10) || 0;
+            var rec = { id:c.id, orderId:ref.orderId, orderItemNo:(c.orderItemNo||ref.itemNo), feet:c.feet, startTime:now, finishTime:now };
+            var dT = 0, dB = 0;
+            if (deductTop && remainTop > 0 && top > 0){ dT=Math.min(top,remainTop); rec.topUnfinish=top-dT; remainTop-=dT; if(rec.topUnfinish<=0) rec.topDone=1; }
+            if (deductBottom && remainBot > 0 && bot > 0){ dB=Math.min(bot,remainBot); rec.bottomUnfinish=bot-dB; remainBot-=dB; if(rec.bottomUnfinish<=0) rec.bottomDone=1; }
+            if (dT > 0 || dB > 0){
+              // MES 未完數量同步扣（取本列實際上/底板扣量較大者）
+              rec.mesUnfinish = Math.max(0, mes - Math.max(dT, dB));
+              if ((!deductTop || (top - dT) <= 0) && (!deductBottom || (bot - dB) <= 0)) rec.closed = 1;
+              records.push(rec);
+            }
+          });
+          if (!records.length){ done(); return; }
+          window.API.saveCuttingReport(records, function(){ done(); }, function(err){ setLabelDoneBusy(false); alert('扣未完工量失敗：' + (err && err.message || err)); });
+        };
+        var _onErr = function(err){ setLabelDoneBusy(false); alert('讀取裁切明細失敗：' + (err && err.message || err)); };
+        // 先用項次查，查不到再不帶項次重查（訂單 id 末段可能與 orderItemNo 不一致）
+        window.API.getCuttingDetails(ref.orderId, ref.itemNo, function(rows){
+          if (rows && rows.length) { _applyDeduct(rows); return; }
+          window.API.getCuttingDetails(ref.orderId, '', function(rows2){ _applyDeduct(rows2 || []); }, _onErr);
+        }, _onErr);
       };
 
       return (
@@ -14768,81 +14842,8 @@ window.addEventListener('DOMContentLoaded', function(){
 
 
                {mode === 'order' && (
-                 <button onClick={() => {
-                   // 例外路線：標籤完工 — 寫入「開工即完工」同一時間、扣未完工量、顯示完成標籤
-                   if (rightList.length === 0) return setMesNotice({ type:'warn', title:'⚠️ 右側無資料', body:'請先將左側裁切細項移到右側，再標籤完工。' });
-                   var dispatchId = (headerData && headerData.dispatchId) || window.__currentDispatchId;
-                   if (!dispatchId) return setMesNotice({ type:'warn', title:'⚠️ 尚未建立派工單', body:'請先回清單頁，按「▶ 派工開始」建立派工單後再操作。' });
-
-                   // 開工即完工：start 與 finish 同一時間
-                   var now = new Date().toLocaleTimeString('zh-TW', { hour12: false });
-                   var stamped = rightList.map(function(item){ return Object.assign({}, item, { startTime: now, finishTime: now }); });
-                   setRightList(stamped);
-
-                   // 解析訂單 ID
-                   var rawId = String(headerData.id || '');
-                   var idParts = rawId.split('-');
-                   var orderId = headerData.orderId || (idParts.length > 1 ? idParts.slice(0,-1).join('-') : rawId);
-                   var itemNo = headerData.itemNo || (idParts.length > 1 ? idParts[idParts.length-1] : '0010');
-
-                   if (!window.API || typeof window.API.saveCuttingReport !== 'function') return;
-                   var records = stamped.map(function(item){
-                     return {
-                       id:          item.id || undefined,
-                       orderId:     orderId,
-                       orderItemNo: itemNo,
-                       dispatchId:  dispatchId,
-                       zone:        item.zone || '',
-                       feet:        parseFloat(item.length || 0) || 0,
-                       qty:         parseInt(item.qty || 0, 10) || 0,
-                       totalFeet:   parseFloat(item.totalLen || 0) || 0,
-                       kg:          parseFloat(item.kg || 0) || 0,
-                       mesUnfinish: 0,
-                       startTime:   now,
-                       finishTime:  now,
-                       closed:      1,
-                       operator:    _operator
-                     };
-                   });
-                   window.API.saveCuttingReport(records, function(res){
-                     // 扣除訂單未完工量（依派工 phase：BOTH 扣上+底、TOP 扣上、BOTTOM 扣底；只扣有完工時間的列）
-                     if (window.API && typeof window.API._deductUnfinished === 'function') {
-                       window.API._deductUnfinished(dispatchId)
-                         .then(function(n){ try { window.dispatchEvent(new CustomEvent('mes-report-saved', { detail: { type:'finish', dispatchId:dispatchId, count:(res&&res.saved)||0, deducted:n } })); } catch(e){} })
-                         .catch(function(e){ console.warn('扣未完工量失敗:', e); });
-                     } else {
-                       try { window.dispatchEvent(new CustomEvent('mes-report-saved', { detail: { type:'finish', dispatchId:dispatchId, count:(res&&res.saved)||0 } })); } catch(e){}
-                     }
-                   }, function(err){ alert('標籤完工寫入失敗：' + (err && err.message || err)); });
-
-                   // 寫入標籤記錄（此訂單完成標籤，供 endDispatch 入庫明細使用）
-                   if (window.API && typeof window.API.saveLabel === 'function') {
-                     var totalQty = stamped.reduce(function(s,it){ return s+parseInt(it.qty||0,10); }, 0);
-                     var totalLen = stamped.reduce(function(s,it){ return s+parseFloat(it.totalLen||0); }, 0);
-                     var totalKg  = stamped.reduce(function(s,it){ return s+parseFloat(it.kg||0); }, 0);
-                     var labelId = 'L-' + dispatchId + '-' + orderId + '-' + Date.now();
-                     window.API.saveLabel({
-                       id:          labelId,
-                       orderId:     orderId,
-                       orderItemNo: itemNo,
-                       machine:     headerData.machine || '',
-                       model:       headerData.model || '',
-                       spec:        headerData.spec || '',
-                       customer:    headerData.customerShort || '',
-                       qty:         totalQty,
-                       totalLen:    +totalLen.toFixed(2),
-                       totalWeight: +totalKg.toFixed(2),
-                       unit:        headerData.unit || 'KG',
-                       startTime:   now,
-                       endTime:     now,
-                       operator:    _operator,
-                       remark:      dispatchId
-                     }, function(){}, function(err){ console.warn('標籤寫入警告:', err); });
-                   }
-
-                   // 顯示此訂單完成標籤
-                   setTimeout(function(){ setShowLabelModal(true); }, 100);
-                 }} className="flex-1 bg-[#00e5ff] hover:bg-[#00b8d4] text-black flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm">
+                 <button onClick={openLabelDone}
+                   className="flex-1 bg-[#00e5ff] hover:bg-[#00b8d4] text-black flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm">
                    <span>標籤完工</span><span className="text-xs font-normal">顯示此訂單完成標籤</span>
                  </button>
                )}
@@ -14860,6 +14861,57 @@ window.addEventListener('DOMContentLoaded', function(){
                <button onClick={onBack} className="flex-1 bg-black hover:bg-gray-800 text-white flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm"><span>返回</span><span className="text-xs font-normal">kembali</span></button>
             </div>
           </div>
+
+          {/* 例外線：標籤完工清單 Modal — 點選一張標籤即完工（寫時間＋扣未完工） */}
+          {labelDoneList && (
+            <div className="absolute inset-0 bg-black/60 z-50 flex items-center justify-center">
+              <div className="bg-white rounded-lg shadow-2xl border border-gray-300 flex flex-col" style={{ width: '560px', maxHeight: '70vh' }}>
+                <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 bg-[#f1f5f9]">
+                  <h2 className="text-base font-bold text-blue-800">標籤完工 — 點選一張標籤即完成</h2>
+                  <button onClick={() => setLabelDoneList(null)} className="text-gray-500 hover:text-gray-800 text-lg leading-none">✕</button>
+                </div>
+                <div className="px-4 py-1 text-xs text-gray-500 border-b border-gray-100">點選後寫入開工＝完工時間，並依製作方式扣除該張數量的未完工。</div>
+                <div className="flex-1 overflow-auto p-2">
+                  <table className="w-full text-xs border-collapse">
+                    <thead className="bg-gray-50 text-gray-600 sticky top-0">
+                      <tr>
+                        <th className="border border-gray-200 p-1 text-left">標籤單號</th>
+                        <th className="border border-gray-200 p-1 text-right">數量</th>
+                        <th className="border border-gray-200 p-1 text-right">總尺</th>
+                        <th className="border border-gray-200 p-1 text-center">開工</th>
+                        <th className="border border-gray-200 p-1 text-center">完工</th>
+                        <th className="border border-gray-200 p-1 text-center">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {labelDoneList.map(function(lb){
+                        var done = !!((lb.startTime||lb.starttime) && (lb.endTime||lb.endtime));
+                        return (
+                          <tr key={lb.id} className="hover:bg-blue-50">
+                            <td className="border border-gray-200 p-1 font-mono">{lb.labelNo || lb.labelno || lb.id}</td>
+                            <td className="border border-gray-200 p-1 text-right">{lb.qty != null ? lb.qty : (lb.totalQty||'')}</td>
+                            <td className="border border-gray-200 p-1 text-right">{lb.totalLen != null ? lb.totalLen : (lb.totallen||'')}</td>
+                            <td className="border border-gray-200 p-1 text-center text-blue-600">{lb.startTime || lb.starttime || '—'}</td>
+                            <td className="border border-gray-200 p-1 text-center text-green-600">{lb.endTime || lb.endtime || '—'}</td>
+                            <td className="border border-gray-200 p-1 text-center">
+                              {done
+                                ? <span className="text-gray-400">已完工</span>
+                                : <button disabled={labelDoneBusy} onClick={() => completeLabelDone(lb)}
+                                    className="bg-[#00b8d4] hover:bg-[#0097a7] text-white font-bold px-3 py-0.5 rounded disabled:opacity-50">完工</button>
+                              }
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="flex justify-end px-4 py-2 border-t border-gray-200">
+                  <button onClick={() => setLabelDoneList(null)} className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-1 rounded text-sm">關閉</button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* 標籤預覽 Modal (共用於完工列印與手動列印) */}
           {showLabelModal && (
