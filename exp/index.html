@@ -11223,6 +11223,14 @@ window.addEventListener('DOMContentLoaded', function(){
 
       // ── 機台 / 人員 ──
       const [machine, setMachine] = useState('');
+      const [machineList, setMachineList] = useState([]);  // 全部機台（由 machines 主檔載入）
+      useEffect(function(){
+        if (!window.API || typeof window.API.getMachinesFull !== 'function') return;
+        window.API.getMachinesFull(function(d){
+          var ms = (d && d.machines) || [];
+          setMachineList(ms);
+        }, function(err){ console.warn('載入機台清單失敗:', err); });
+      }, []);
       const [operators, setOperators] = useState([]);
       const [showOpModal, setShowOpModal] = useState(false);
       const [tempOps, setTempOps] = useState([]);
@@ -11285,22 +11293,26 @@ window.addEventListener('DOMContentLoaded', function(){
         setShowOpModal(false);
       }
 
-      // ── Phase B → C：建立派工容器（dispatch_orders.orderId='' + 第一段 reporter session）──
+      // ── Phase B → C：僅前往鋼捲畫面；派工單改在「第一次鋼捲上架成功」時才建立 ──
       function goPhaseC(){
         if (!machine) return alert('請先選擇機台');
         if (!operators.length) return alert('請先選擇作業人員');
-        if (dispatchId) { setPhase('C'); return; }   // 已建過，直接前往
-        if (!window.API || !window.API.createLabelReportDispatch) return alert('後端未連線');
+        setPhase('C');
+      }
+
+      // ── 確保派工單已建立（無則建立，含第一段工時）；回傳 dispatchId 給 callback ──
+      function ensureDispatch(cb){
+        if (dispatchId) { cb(dispatchId); return; }
+        if (!window.API || !window.API.createLabelReportDispatch) { alert('後端未連線'); return; }
         setCreating(true);
         window.API.createLabelReportDispatch({
           machine: machine,
           operator: operators.join(';')
         }, function(res){
           setCreating(false);
-          if (!res || !res.id) return alert('建立派工失敗');
+          if (!res || !res.id) { alert('建立派工失敗'); return; }
           setDispatchId(res.id);
-          setPhase('C');
-          alert('派工單已建立：' + res.id + '\n機台：' + machine + '\n作業人員：' + operators.join(', ') + '\n\n現在可進行鋼捲上架');
+          cb(res.id);
         }, function(err){
           setCreating(false);
           alert('建立派工失敗：' + (err && err.message || err));
@@ -11331,37 +11343,40 @@ window.addEventListener('DOMContentLoaded', function(){
         });
       }
 
-      // ── Phase C：鋼捲上架（addCoilMove）──
+      // ── Phase C：鋼捲上架（addCoilMove）；第一次上架時才建立派工單 ──
       function uploadCoil(loadKg){
-        if (!dispatchId) return alert('派工尚未建立');
         if (!coilInfo) return;
-        var hit = coilInfo._hit;
-        var availKg = coilInfo.weight;
-        var availPcs = coilInfo.qty;
-        window.API.addCoilMove(dispatchId, {
-          coilNo: hit.coilNo, rollNo: hit.rollNo, batchNo: hit.batchNo,
-          model: hit.model, spec: hit.spec, material: hit.material,
-          size: hit.size, color: hit.color,
-          srcWarehouse: hit.warehouse || '鋼捲倉', srcLocation: hit.location,
-          dstWarehouse: '產線倉', dstLocation: '',
-          outKg: availKg, outPieces: availPcs||1,
-          inKg: availKg, inPieces: availPcs||1,
-          loadWeight: loadKg, moveType: '出+入', operator: operatorString,
-          remark: '條碼標籤報工上架 ' + loadKg + 'kg 來源:' + (hit.warehouse||'') + '/' + (hit.location||'')
-        }, function(moveRes){
-          var moveId = moveRes && moveRes.id ? moveRes.id : '';
-          setLoadedCoils(prev => prev.concat([{
-            moveId: moveId,
-            batchNo: hit.batchNo, model: hit.model, spec: hit.spec,
-            material: hit.material, size: hit.size, color: hit.color,
-            loadWeight: loadKg,
-            srcWarehouse: hit.warehouse || '鋼捲倉',
-            srcLocation: hit.location || ''
-          }]));
-          setShowCoilModal(false); setCoilInfo(null); setCoilBatchNo('');
-          alert('鋼捲 [' + hit.batchNo + '] 已上架\n上架磅重：' + loadKg + ' kg');
-        }, function(err){
-          alert('上架失敗：' + (err && err.message || err));
+        var hadDispatch = !!dispatchId;
+        ensureDispatch(function(did){
+          var hit = coilInfo._hit;
+          var availKg = coilInfo.weight;
+          var availPcs = coilInfo.qty;
+          window.API.addCoilMove(did, {
+            coilNo: hit.coilNo, rollNo: hit.rollNo, batchNo: hit.batchNo,
+            model: hit.model, spec: hit.spec, material: hit.material,
+            size: hit.size, color: hit.color,
+            srcWarehouse: hit.warehouse || '鋼捲倉', srcLocation: hit.location,
+            dstWarehouse: '產線倉', dstLocation: '',
+            outKg: availKg, outPieces: availPcs||1,
+            inKg: availKg, inPieces: availPcs||1,
+            loadWeight: loadKg, moveType: '出+入', operator: operatorString,
+            remark: '條碼標籤報工上架 ' + loadKg + 'kg 來源:' + (hit.warehouse||'') + '/' + (hit.location||'')
+          }, function(moveRes){
+            var moveId = moveRes && moveRes.id ? moveRes.id : '';
+            setLoadedCoils(prev => prev.concat([{
+              moveId: moveId,
+              batchNo: hit.batchNo, model: hit.model, spec: hit.spec,
+              material: hit.material, size: hit.size, color: hit.color,
+              loadWeight: loadKg,
+              srcWarehouse: hit.warehouse || '鋼捲倉',
+              srcLocation: hit.location || ''
+            }]));
+            setShowCoilModal(false); setCoilInfo(null); setCoilBatchNo('');
+            alert('鋼捲 [' + hit.batchNo + '] 已上架\n上架磅重：' + loadKg + ' kg'
+                  + (hadDispatch ? '' : '\n\n✅ 已建立派工單：' + did + '\n機台：' + machine + '\n作業人員：' + operators.join(', ')));
+          }, function(err){
+            alert('上架失敗：' + (err && err.message || err));
+          });
         });
       }
 
@@ -11587,16 +11602,22 @@ window.addEventListener('DOMContentLoaded', function(){
             {phase === 'A' && (
               <div className="p-6">
                 <div className="text-lg font-bold text-gray-800 mb-4">① 選擇機台</div>
-                <div className="space-y-2 mb-6">
-                  {PRESET_LABEL_MACHINES.map(function(m){
+                <div className="space-y-2 mb-6 max-h-[55vh] overflow-auto">
+                  {machineList.length === 0 && (
+                    <div className="text-center text-gray-400 text-sm py-4">載入機台中…（若持續無資料，請確認機台主檔）</div>
+                  )}
+                  {machineList.map(function(mc){
+                    var mName = mc.name || mc.id;
+                    var label = mc.name ? (mc.id + ' ' + mc.name) : String(mc.id);
                     return (
-                      <label key={m} className={'flex items-center p-3 rounded-lg border-2 cursor-pointer ' +
-                        (machine === m ? 'border-purple-600 bg-purple-50' : 'border-gray-200 hover:bg-gray-50')}>
-                        <input type="radio" name="machine" value={m}
-                               checked={machine === m}
-                               onChange={function(){ setMachine(m); }}
+                      <label key={mc.id} className={'flex items-center p-3 rounded-lg border-2 cursor-pointer ' +
+                        (machine === mName ? 'border-purple-600 bg-purple-50' : 'border-gray-200 hover:bg-gray-50')}>
+                        <input type="radio" name="machine" value={mName}
+                               checked={machine === mName}
+                               onChange={function(){ setMachine(mName); }}
                                className="w-5 h-5 accent-purple-600 mr-3" />
-                        <span className="text-base font-bold text-gray-800">{m}</span>
+                        <span className="text-base font-bold text-gray-800">{label}</span>
+                        {mc.method ? <span className="ml-auto text-xs text-gray-500">{mc.method}</span> : null}
                       </label>
                     );
                   })}
