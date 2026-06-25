@@ -1549,6 +1549,7 @@ function switchTopMode(mode) {
     totalamt:'totalAmt',grandtotal:'grandTotal',qtysum:'qtySum',totalsum:'totalSum',
     weighno:'weighNo',dispatchid:'dispatchId',createdat:'createdAt',updatedat:'updatedAt',
     orderitemno:'orderItemNo',lengthmm:'lengthMm',topunfinish:'topUnfinish',
+    dispatchunfinish:'dispatchUnfinish',
     topdone:'topDone',bottomunfinish:'bottomUnfinish',bottomdone:'bottomDone',
     mesunfinish:'mesUnfinish',theoreticallenm:'theoreticalLenM',
     starttime:'startTime',finishtime:'finishTime',reportedat:'reportedAt',
@@ -1977,7 +1978,7 @@ function switchTopMode(mode) {
           // 只更新有意義的報工欄位
           const patch={};
           for(const f of ['startTime','finishTime','reporter','reportedAt','dispatchId',
-                          'topDone','bottomDone','mesUnfinish','topUnfinish','bottomUnfinish',
+                          'topDone','bottomDone','mesUnfinish','topUnfinish','bottomUnfinish','dispatchUnfinish',
                           'closed','processNo','inboundNo','inLocation','inBatchNo']){
             if(r[f]!==undefined&&r[f]!==null&&r[f]!=='') patch[f]=r[f];
           }
@@ -3018,7 +3019,7 @@ function switchTopMode(mode) {
             var q = parseInt(c.qty!=null?c.qty:0,10)||0;
             var oid = c.orderId||c.orderid||'';
             return { id:c.id, orderId:oid, orderItemNo:(c.orderItemNo||c.orderitemno||''),
-                     topUnfinish:q, bottomUnfinish:q, mesUnfinish:q };
+                     topUnfinish:q, bottomUnfinish:q, mesUnfinish:q, dispatchUnfinish:q };
           }).filter(function(r){ return r.id && r.orderId; });
           if (_restoreUnf.length){
             await _upsert('cutting_details', _restoreUnf);   // 失敗會 throw，於下方 catch 記錄
@@ -11223,6 +11224,14 @@ window.addEventListener('DOMContentLoaded', function(){
 
       // ── 機台 / 人員 ──
       const [machine, setMachine] = useState('');
+      const [machineList, setMachineList] = useState([]);  // 全部機台（由 machines 主檔載入）
+      useEffect(function(){
+        if (!window.API || typeof window.API.getMachinesFull !== 'function') return;
+        window.API.getMachinesFull(function(d){
+          var ms = (d && d.machines) || [];
+          setMachineList(ms);
+        }, function(err){ console.warn('載入機台清單失敗:', err); });
+      }, []);
       const [operators, setOperators] = useState([]);
       const [showOpModal, setShowOpModal] = useState(false);
       const [tempOps, setTempOps] = useState([]);
@@ -11268,6 +11277,46 @@ window.addEventListener('DOMContentLoaded', function(){
         return function(){ clearInterval(t); };
       }, [dispatchId]);
 
+      // ── 人員段狀態（active/paused/null）＋暫停/重啟/換人 ──
+      const [lrReporterStatus, setLrReporterStatus] = useState(null);
+      const refreshLrStatus = function(did){
+        did = did || dispatchId;
+        if (!did || !window.API || typeof window.API.getReporterSessionsByDispatch !== 'function'){ setLrReporterStatus(null); return; }
+        window.API.getReporterSessionsByDispatch(did, function(sessions){
+          var arr = sessions || [], active=null, paused=null;
+          for (var i=arr.length-1;i>=0;i--){ if(!active&&arr[i].status==='active')active=arr[i]; if(!paused&&arr[i].status==='paused')paused=arr[i]; if(active)break; }
+          setLrReporterStatus(active ? 'active' : (paused ? 'paused' : null));
+        }, function(){ setLrReporterStatus(null); });
+      };
+      useEffect(function(){ if (dispatchId) refreshLrStatus(dispatchId); }, [dispatchId]);
+      const lrPause = function(){
+        if (!dispatchId) return alert('尚未建立派工單（請先上架鋼捲）');
+        if (!window.confirm('暫停目前作業？\n系統會把當下時間寫入完工時間並計算工時。')) return;
+        window.API.pauseReporterSession(dispatchId, {}, function(res){
+          alert(res ? ('已暫停，本段工時：' + (res.workHours || '—')) : '目前沒有作業中的人員段，無需暫停。');
+          refreshLrStatus(dispatchId);
+        }, function(e){ alert('暫停失敗：' + (e && e.message || e)); });
+      };
+      const lrResume = function(){
+        if (!dispatchId) return alert('尚未建立派工單');
+        var rep = operators.join(';');
+        if (!rep) return alert('沒有作業人員');
+        if (!window.confirm('以人員 ' + rep + ' 重新開工？')) return;
+        window.API.resumeReporterSession(dispatchId, rep, {}, function(){ refreshLrStatus(dispatchId); }, function(e){ alert('開工失敗：' + (e && e.message || e)); });
+      };
+      const lrSwitch = function(){
+        if (!dispatchId) return alert('尚未建立派工單');
+        var rep = window.prompt('輸入接班人員（多人以分號 ; 分隔）\n* 會結算上一段並建立新作業段：', operators.join(';'));
+        if (rep === null) return;
+        rep = String(rep || '').trim();
+        if (!rep) return alert('需至少 1 名人員');
+        window.API.switchReporterSession(dispatchId, rep, {}, function(){
+          var newOps = rep.split(/[;,，]/).map(function(s){ return s.trim(); }).filter(Boolean);
+          if (newOps.length) setOperators(newOps);
+          refreshLrStatus(dispatchId);
+        }, function(e){ alert('換人失敗：' + (e && e.message || e)); });
+      };
+
       // ── Phase A → B：機台選好就進入下一步 ──
       function goPhaseB(){
         if (!machine) return alert('請選擇機台');
@@ -11285,22 +11334,26 @@ window.addEventListener('DOMContentLoaded', function(){
         setShowOpModal(false);
       }
 
-      // ── Phase B → C：建立派工容器（dispatch_orders.orderId='' + 第一段 reporter session）──
+      // ── Phase B → C：僅前往鋼捲畫面；派工單改在「第一次鋼捲上架成功」時才建立 ──
       function goPhaseC(){
         if (!machine) return alert('請先選擇機台');
         if (!operators.length) return alert('請先選擇作業人員');
-        if (dispatchId) { setPhase('C'); return; }   // 已建過，直接前往
-        if (!window.API || !window.API.createLabelReportDispatch) return alert('後端未連線');
+        setPhase('C');
+      }
+
+      // ── 確保派工單已建立（無則建立，含第一段工時）；回傳 dispatchId 給 callback ──
+      function ensureDispatch(cb){
+        if (dispatchId) { cb(dispatchId); return; }
+        if (!window.API || !window.API.createLabelReportDispatch) { alert('後端未連線'); return; }
         setCreating(true);
         window.API.createLabelReportDispatch({
           machine: machine,
           operator: operators.join(';')
         }, function(res){
           setCreating(false);
-          if (!res || !res.id) return alert('建立派工失敗');
+          if (!res || !res.id) { alert('建立派工失敗'); return; }
           setDispatchId(res.id);
-          setPhase('C');
-          alert('派工單已建立：' + res.id + '\n機台：' + machine + '\n作業人員：' + operators.join(', ') + '\n\n現在可進行鋼捲上架');
+          cb(res.id);
         }, function(err){
           setCreating(false);
           alert('建立派工失敗：' + (err && err.message || err));
@@ -11331,37 +11384,40 @@ window.addEventListener('DOMContentLoaded', function(){
         });
       }
 
-      // ── Phase C：鋼捲上架（addCoilMove）──
+      // ── Phase C：鋼捲上架（addCoilMove）；第一次上架時才建立派工單 ──
       function uploadCoil(loadKg){
-        if (!dispatchId) return alert('派工尚未建立');
         if (!coilInfo) return;
-        var hit = coilInfo._hit;
-        var availKg = coilInfo.weight;
-        var availPcs = coilInfo.qty;
-        window.API.addCoilMove(dispatchId, {
-          coilNo: hit.coilNo, rollNo: hit.rollNo, batchNo: hit.batchNo,
-          model: hit.model, spec: hit.spec, material: hit.material,
-          size: hit.size, color: hit.color,
-          srcWarehouse: hit.warehouse || '鋼捲倉', srcLocation: hit.location,
-          dstWarehouse: '產線倉', dstLocation: '',
-          outKg: availKg, outPieces: availPcs||1,
-          inKg: availKg, inPieces: availPcs||1,
-          loadWeight: loadKg, moveType: '出+入', operator: operatorString,
-          remark: '條碼標籤報工上架 ' + loadKg + 'kg 來源:' + (hit.warehouse||'') + '/' + (hit.location||'')
-        }, function(moveRes){
-          var moveId = moveRes && moveRes.id ? moveRes.id : '';
-          setLoadedCoils(prev => prev.concat([{
-            moveId: moveId,
-            batchNo: hit.batchNo, model: hit.model, spec: hit.spec,
-            material: hit.material, size: hit.size, color: hit.color,
-            loadWeight: loadKg,
-            srcWarehouse: hit.warehouse || '鋼捲倉',
-            srcLocation: hit.location || ''
-          }]));
-          setShowCoilModal(false); setCoilInfo(null); setCoilBatchNo('');
-          alert('鋼捲 [' + hit.batchNo + '] 已上架\n上架磅重：' + loadKg + ' kg');
-        }, function(err){
-          alert('上架失敗：' + (err && err.message || err));
+        var hadDispatch = !!dispatchId;
+        ensureDispatch(function(did){
+          var hit = coilInfo._hit;
+          var availKg = coilInfo.weight;
+          var availPcs = coilInfo.qty;
+          window.API.addCoilMove(did, {
+            coilNo: hit.coilNo, rollNo: hit.rollNo, batchNo: hit.batchNo,
+            model: hit.model, spec: hit.spec, material: hit.material,
+            size: hit.size, color: hit.color,
+            srcWarehouse: hit.warehouse || '鋼捲倉', srcLocation: hit.location,
+            dstWarehouse: '產線倉', dstLocation: '',
+            outKg: availKg, outPieces: availPcs||1,
+            inKg: availKg, inPieces: availPcs||1,
+            loadWeight: loadKg, moveType: '出+入', operator: operatorString,
+            remark: '條碼標籤報工上架 ' + loadKg + 'kg 來源:' + (hit.warehouse||'') + '/' + (hit.location||'')
+          }, function(moveRes){
+            var moveId = moveRes && moveRes.id ? moveRes.id : '';
+            setLoadedCoils(prev => prev.concat([{
+              moveId: moveId,
+              batchNo: hit.batchNo, model: hit.model, spec: hit.spec,
+              material: hit.material, size: hit.size, color: hit.color,
+              loadWeight: loadKg,
+              srcWarehouse: hit.warehouse || '鋼捲倉',
+              srcLocation: hit.location || ''
+            }]));
+            setShowCoilModal(false); setCoilInfo(null); setCoilBatchNo('');
+            alert('鋼捲 [' + hit.batchNo + '] 已上架\n上架磅重：' + loadKg + ' kg'
+                  + (hadDispatch ? '' : '\n\n✅ 已建立派工單：' + did + '\n機台：' + machine + '\n作業人員：' + operators.join(', ')));
+          }, function(err){
+            alert('上架失敗：' + (err && err.message || err));
+          });
         });
       }
 
@@ -11375,50 +11431,98 @@ window.addEventListener('DOMContentLoaded', function(){
         });
       }
 
-      // ── Phase D：標籤掃描 ──
+      // ── 依標籤數量(qty)扣訂單未完工量（上板/底板），貪婪分攤到各裁切列 ──
+      function _deductLabelUnfinished(label, deductTop, deductBottom, cb){
+        var orderId = label.orderId || label.orderid || '';
+        var itemNo = label.orderItemNo || label.orderitemno || '0010';
+        var qty = parseInt(label.qty || label.totalQty || 0, 10) || 0;
+        if (!window.API || !window.API.getCuttingDetails || !orderId || qty <= 0 || (!deductTop && !deductBottom)) { if (cb) cb(); return; }
+        var apply = function(rows){
+          var remTop = qty, remBot = qty, records = [];
+          (rows || []).forEach(function(c){
+            var top = parseInt(c.topUnfinish || 0, 10) || 0;
+            var bot = parseInt(c.bottomUnfinish || 0, 10) || 0;
+            var mes = parseInt((c.mesUnfinish != null ? c.mesUnfinish : c.qty) || 0, 10) || 0;
+            var rec = { id:c.id, orderId:orderId, orderItemNo:(c.orderItemNo||itemNo), feet:c.feet };
+            var dT = 0, dB = 0;
+            if (deductTop && remTop > 0 && top > 0){ dT = Math.min(top, remTop); rec.topUnfinish = top - dT; remTop -= dT; if (rec.topUnfinish <= 0) rec.topDone = 1; }
+            if (deductBottom && remBot > 0 && bot > 0){ dB = Math.min(bot, remBot); rec.bottomUnfinish = bot - dB; remBot -= dB; if (rec.bottomUnfinish <= 0) rec.bottomDone = 1; }
+            if (dT > 0 || dB > 0){
+              rec.mesUnfinish = Math.max(0, mes - Math.max(dT, dB));
+              if ((!deductTop || (top - dT) <= 0) && (!deductBottom || (bot - dB) <= 0)) rec.closed = 1;
+              records.push(rec);
+            }
+          });
+          if (!records.length){ if (cb) cb(); return; }
+          window.API.saveCuttingReport(records, function(){ if (cb) cb(); }, function(e){ console.warn('扣未完工量失敗:', e); if (cb) cb(); });
+        };
+        window.API.getCuttingDetails(orderId, itemNo, function(rows){
+          if (rows && rows.length){ apply(rows); return; }
+          window.API.getCuttingDetails(orderId, '', function(r2){ apply(r2 || []); }, function(){ apply([]); });
+        }, function(){ apply([]); });
+      }
+
+      // ── Phase D：標籤掃描＝完工（依製作方式扣上板/底板未完工）──
       function handleScan(){
         var code = String(scanInput || '').trim();
         if (!code) return;
         setScanMsg('');
+        if (!dispatchId) { setScanMsg('✗ 請先上架鋼捲（建立派工單）再刷標籤'); return; }
         if (!window.API || !window.API.findLabelByCode) return alert('後端未連線');
         setScanning(true);
         window.API.findLabelByCode(code, function(label){
           setScanning(false);
           if (!label) { setScanMsg('✗ 找不到標籤: ' + code); setScanInput(''); return; }
           if (scannedLabels.find(function(l){ return l.id === label.id; })) {
-            setScanMsg('⚠ 此標籤已掃過: ' + (label.labelNo || label.id));
+            setScanMsg('⚠ 此標籤本次已掃過: ' + (label.labelNo || label.id));
             setScanInput('');
             return;
           }
+          var digit = (String(label.method || '').match(/^([1-4])/) || [,'3'])[1];
+          var topDone = (parseInt(label.topDone || label.topdone || 0, 10) || 0) >= 1;
+          var bottomDone = (parseInt(label.bottomDone || label.bottomdone || 0, 10) || 0) >= 1;
           var did = label.dispatchId || label.dispatchid || '';
-          if (did && did !== dispatchId) {
+          var deductTop = false, deductBottom = false, isSecondPass = false;
+
+          if (digit === '2') {            // 上板→底板：兩段
+            if (!topDone) { deductTop = true; }                          // 第1次：上板
+            else if (!bottomDone) { deductBottom = true; isSecondPass = true; }  // 第2次：底板
+            else { setScanMsg('✗ 此標籤上板/底板皆已完工'); setScanInput(''); return; }
+          } else if (digit === '1') {     // 上板+底板：一次刷扣兩者
+            if (topDone && bottomDone) { setScanMsg('✗ 此標籤已完工'); setScanInput(''); return; }
+            deductTop = true; deductBottom = true;
+          } else {                        // 3.清板 / 4.清板+彎工：只扣上板
+            if (topDone) { setScanMsg('✗ 此標籤已完工'); setScanInput(''); return; }
+            deductTop = true;
+          }
+
+          // 已被「其他」派工處理的擋阻；method2 第2次刷允許（它原掛在前一張已結案派工）
+          if (!isSecondPass && did && did !== dispatchId) {
             setScanMsg('✗ 此標籤已被派工 [' + did + '] 處理');
             setScanInput('');
             return;
           }
-          // 拒絕「接單報工模式」已完工的標籤（startTime + endTime 都有值表示 stage-1 單段完工，不需 stage-2）
-          var hasSt = !!(label.startTime || label.starttime);
-          var hasEt = !!(label.endTime || label.endtime);
-          if (hasSt && hasEt && !did) {
-            setScanMsg('✗ 此標籤已由「接單報工模式」單段完工，無需條碼標籤報工');
-            setScanInput('');
-            return;
-          }
-          // 寫入後端：labels.dispatchId + startTime + endTime + operator
-          window.API.attachLabelToDispatch(label.id, dispatchId, {
-            operator: operatorString
-          }, function(){
+
+          var now = _nowLocalStr();
+          var finish = function(){
+            var lblPatch = Object.assign({}, label, {
+              dispatchId: dispatchId, operator: operatorString,
+              startTime: (label.startTime || label.starttime || now), endTime: now,
+              topDone: (deductTop ? 1 : (topDone ? 1 : 0)),
+              bottomDone: (deductBottom ? 1 : (bottomDone ? 1 : 0))
+            });
+            if (window.API.saveLabel) window.API.saveLabel(lblPatch, function(){}, function(e){ console.warn('標籤更新警告:', e); });
+            var passMsg = (digit === '2') ? (isSecondPass ? '底板完工' : '上板完工（待完工後再刷第2次扣底板）')
+                        : (digit === '1') ? '上板＋底板完工' : '上板完工';
             setScannedLabels(prev => prev.concat([Object.assign({}, label, {
-              dispatchId: dispatchId,
-              startTime: _nowLocalStr(),
-              endTime: _nowLocalStr(),
-              operator: operatorString
+              dispatchId: dispatchId, startTime: lblPatch.startTime, endTime: now, operator: operatorString, _passMsg: passMsg
             })]));
             setScanInput('');
-            setScanMsg('✓ 已加入: ' + (label.labelNo || label.id) + ' (' + (label.spec || '') + ')');
-          }, function(err){
-            setScanMsg('✗ 寫入失敗: ' + (err && err.message || err));
-          });
+            setScanMsg('✓ ' + (label.labelNo || label.id) + '：' + passMsg);
+          };
+          window.API.attachLabelToDispatch(label.id, dispatchId, { operator: operatorString }, function(){
+            _deductLabelUnfinished(label, deductTop, deductBottom, finish);
+          }, function(err){ setScanMsg('✗ 寫入失敗: ' + (err && err.message || err)); });
         }, function(err){
           setScanning(false);
           setScanMsg('✗ 查詢失敗: ' + (err && err.message || err));
@@ -11583,20 +11687,45 @@ window.addEventListener('DOMContentLoaded', function(){
               )}
             </div>
 
+            {/* 人員工時控制：暫停 / 重新啟動 / 換人（派工單建立後顯示） */}
+            {dispatchId && (
+              <div className="flex items-center gap-2 px-4 py-2 bg-white border-b text-sm">
+                <span className="text-gray-600">人員狀態：
+                  <span className={'font-bold ' + (lrReporterStatus==='active'?'text-green-700':lrReporterStatus==='paused'?'text-orange-600':'text-gray-400')}>
+                    {lrReporterStatus==='active'?'🟢 開工中':lrReporterStatus==='paused'?'🟠 暫停中':'⚪ —'}
+                  </span>
+                </span>
+                <div className="ml-auto flex gap-2">
+                  {lrReporterStatus==='active' ? (
+                    <button onClick={lrPause} className="px-3 py-1 rounded font-bold text-white bg-orange-500 hover:bg-orange-600">⏸ 暫停</button>
+                  ) : (
+                    <button onClick={lrResume} className="px-3 py-1 rounded font-bold text-white bg-green-600 hover:bg-green-700">▶ {lrReporterStatus==='paused'?'重新啟動':'開工'}</button>
+                  )}
+                  <button onClick={lrSwitch} className="px-3 py-1 rounded font-bold text-white bg-blue-600 hover:bg-blue-700">⇄ 換人</button>
+                </div>
+              </div>
+            )}
+
             {/* Phase A：選機台 */}
             {phase === 'A' && (
               <div className="p-6">
                 <div className="text-lg font-bold text-gray-800 mb-4">① 選擇機台</div>
-                <div className="space-y-2 mb-6">
-                  {PRESET_LABEL_MACHINES.map(function(m){
+                <div className="space-y-2 mb-6 max-h-[55vh] overflow-auto">
+                  {machineList.length === 0 && (
+                    <div className="text-center text-gray-400 text-sm py-4">載入機台中…（若持續無資料，請確認機台主檔）</div>
+                  )}
+                  {machineList.map(function(mc){
+                    var mName = mc.name || mc.id;
+                    var label = mc.name ? (mc.id + ' ' + mc.name) : String(mc.id);
                     return (
-                      <label key={m} className={'flex items-center p-3 rounded-lg border-2 cursor-pointer ' +
-                        (machine === m ? 'border-purple-600 bg-purple-50' : 'border-gray-200 hover:bg-gray-50')}>
-                        <input type="radio" name="machine" value={m}
-                               checked={machine === m}
-                               onChange={function(){ setMachine(m); }}
+                      <label key={mc.id} className={'flex items-center p-3 rounded-lg border-2 cursor-pointer ' +
+                        (machine === mName ? 'border-purple-600 bg-purple-50' : 'border-gray-200 hover:bg-gray-50')}>
+                        <input type="radio" name="machine" value={mName}
+                               checked={machine === mName}
+                               onChange={function(){ setMachine(mName); }}
                                className="w-5 h-5 accent-purple-600 mr-3" />
-                        <span className="text-base font-bold text-gray-800">{m}</span>
+                        <span className="text-base font-bold text-gray-800">{label}</span>
+                        {mc.method ? <span className="ml-auto text-xs text-gray-500">{mc.method}</span> : null}
                       </label>
                     );
                   })}
@@ -11689,6 +11818,14 @@ window.addEventListener('DOMContentLoaded', function(){
             {phase === 'D' && (
               <div className="p-6">
                 <div className="text-lg font-bold text-gray-800 mb-4">④ 刷標籤逐張報工</div>
+                {/* 追加上架鋼捲：中途換捲用，重用上架流程，同一派工單可上多捲 */}
+                <div className="flex items-center mb-3 bg-green-50 border border-green-200 rounded px-3 py-2">
+                  <span className="text-sm text-gray-600">已上架鋼捲：<span className="font-bold text-green-700">{loadedCoils.length} 捲</span></span>
+                  <button onClick={function(){ setCoilBatchNo(''); setCoilInfo(null); setShowCoilModal(true); }}
+                          className="ml-auto bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded font-bold text-sm">
+                    🔩 + 追加上架鋼捲
+                  </button>
+                </div>
                 {/* 掃描輸入 */}
                 <div className="flex space-x-2 mb-3">
                   <input type="text" placeholder="請掃描或輸入標籤條碼後按 Enter..."
@@ -14166,103 +14303,7 @@ window.addEventListener('DOMContentLoaded', function(){
               <button onClick={onStartWorkLabel} className="bg-[#7e22ce] border border-purple-700 text-white px-5 py-1 rounded shadow-sm hover:bg-purple-800 font-bold text-sm">
                 標籤報工
               </button>
-              {/* 分隔線 */}
-              <div style={{borderTop:'1px solid #ccc', margin:'2px 0'}}></div>
-              <button onClick={onDispatchStart}
-                      className="px-5 py-1 rounded font-bold text-sm text-white"
-                      style={{background: activeDispatch ? '#388e3c' : '#1565c0'}}>
-                {activeDispatch ? '✓ 派工中' : '▶ 派工開始'}
-              </button>
-              <button onClick={onCoilUpload}
-                      className="px-5 py-1 rounded font-bold text-sm text-white"
-                      style={{background: activeDispatch ? '#f57c00' : '#9e9e9e',
-                              opacity: activeDispatch ? 1 : 0.5,
-                              cursor: activeDispatch ? 'pointer' : 'not-allowed'}}>
-                🔩 鋼捲上架
-              </button>
-              <button onClick={onDispatchEnd}
-                      className="px-5 py-1 rounded font-bold text-sm text-white"
-                      style={{background: activeDispatch ? '#b71c1c' : '#9e9e9e',
-                              opacity: activeDispatch ? 1 : 0.5,
-                              cursor: activeDispatch ? 'pointer' : 'not-allowed'}}>
-                ⏹ 派工結束
-              </button>
-
-              {/* ── 派工狀態 + 上機人員 + 開工時間 ───────────────────── */}
-              {activeDispatch && (
-                <div style={{
-                    margin:'4px 0',
-                    padding:'6px 8px',
-                    borderRadius:'4px',
-                    background: reporterStatus === 'active' ? '#e8f5e9'
-                              : reporterStatus === 'paused' ? '#fff3e0'
-                              : '#eeeeee',
-                    border: '1px solid ' + (
-                              reporterStatus === 'active' ? '#2e7d32'
-                            : reporterStatus === 'paused' ? '#e65100'
-                            : '#9e9e9e'),
-                    fontSize:'12px'
-                  }}>
-                  <div style={{fontWeight:'bold', marginBottom:'2px',
-                               color: reporterStatus === 'active' ? '#1b5e20'
-                                    : reporterStatus === 'paused' ? '#bf360c'
-                                    : '#424242'}}>
-                    {reporterStatus === 'active' ? '🟢 開工中'
-                     : reporterStatus === 'paused' ? '🟠 暫停中'
-                     : '⚪ 尚未開工'}
-                  </div>
-                  {reporterSession ? (
-                    <div style={{color:'#555', lineHeight:'1.4'}}>
-                      <div>👥 上機人員：<b>{reporterSession.reporters}</b></div>
-                      <div>🕐 開工時間：<b style={{fontFamily:'monospace'}}>{reporterSession.startTime}</b></div>
-                      <div>
-                        ⏱ 有效工時：<b style={{fontFamily:'monospace', color:'#1b5e20'}}>{reporterEffectiveHrs}</b>
-                        <span style={{marginLeft:'8px', color:'#bf360c'}}>
-                          ⏸ 暫停 <b style={{fontFamily:'monospace'}}>{reporterPausedHrs}</b>
-                        </span>
-                      </div>
-                    </div>
-                  ) : (
-                    <div style={{color:'#888'}}>請先設定上機人員後按「開工」</div>
-                  )}
-                </div>
-              )}
-
-              {/* ── 開工 / 暫停 / 重新啟動 (同位置不同 label) ───────────── */}
-              {activeDispatch && reporterStatus === 'active' && (
-                <button onClick={onReporterPause}
-                        className="px-4 py-1 rounded font-bold text-sm text-white"
-                        style={{background:'#f57c00'}}
-                        title="把當下時間寫入完工時間並計算工時">
-                  ⏸ 暫停
-                </button>
-              )}
-              {activeDispatch && reporterStatus === 'paused' && (
-                <button onClick={onReporterResume}
-                        className="px-4 py-1 rounded font-bold text-sm text-white"
-                        style={{background:'#388e3c'}}
-                        title="以當下機台人員開立新作業段">
-                  ▶ 重新啟動
-                </button>
-              )}
-              {activeDispatch && reporterStatus === null && (
-                <button onClick={onReporterResume}
-                        className="px-4 py-1 rounded font-bold text-sm text-white"
-                        style={{background:'#388e3c'}}
-                        title="以當下機台人員開工 (要先上機)">
-                  ▶ 開工
-                </button>
-              )}
-
-              {/* ── 換人 (獨立按鈕，有派工就一直顯示) ───────────────────── */}
-              {activeDispatch && (
-                <button onClick={onReporterSwitch}
-                        className="px-4 py-1 rounded font-bold text-sm text-white"
-                        style={{background:'#1976d2'}}
-                        title="結算上一段，自行輸入新接班人員">
-                  ⇄ 換人
-                </button>
-              )}
+              {/* 例外線：移除派工開始/鋼捲上架/派工結束與上機人員/開工流程；接單報工只負責產生標籤，後續到「條碼標籤報工」 */}
             </div>
           </div>
 
@@ -14345,6 +14386,8 @@ window.addEventListener('DOMContentLoaded', function(){
       const [workStarted, setWorkStarted] = useState(false);  // 上方「開工」閘門：按下後才能把左側明細移到右側
       const [isLoadingDetail, setIsLoadingDetail] = useState(true);
       const [showLabelModal, setShowLabelModal] = useState(false);
+      const [labelDoneList, setLabelDoneList] = useState(null);   // 例外線「標籤完工」清單：null=關閉，陣列=開啟
+      const [labelDoneBusy, setLabelDoneBusy] = useState(false);  // 完成處理中，避免重複點
 
       const [savedLabels, setSavedLabels] = useState([]);
       const [showCoilModal, setShowCoilModal] = useState(false);
@@ -14505,7 +14548,6 @@ window.addEventListener('DOMContentLoaded', function(){
 
       const toggleLeftSelection = (id) => setSelectedLeftIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
       const moveRight = () => {
-        if (!workStarted) return setMesNotice({ type:'warn', title:'⚠️ 尚未開工', body:'請先按上方「開工」按鈕，才能將左側明細移到右側。' });
         const itemsToMove = leftList.filter(item => selectedLeftIds.includes(item.id));
         setRightList(prev => [...prev, ...itemsToMove]);
         setLeftList(prev => prev.filter(item => !selectedLeftIds.includes(item.id)));
@@ -14547,6 +14589,78 @@ window.addEventListener('DOMContentLoaded', function(){
              });
          }
          return labels;
+      };
+
+      // 例外線：解析目前訂單 ID / 項次 / 製作方式
+      const _parseOrderRef = function(){
+        var rawId = String(headerData.id || '');
+        var idParts = rawId.split('-');
+        var orderId = headerData.orderId || (idParts.length > 1 ? idParts.slice(0,-1).join('-') : rawId);
+        var itemNo = headerData.itemNo || (idParts.length > 1 ? idParts[idParts.length-1] : '0010');
+        var digit = (String(headerData.manufacturingMethod || '').match(/^([1-4])/) || [,'3'])[1];
+        return { orderId: orderId, itemNo: itemNo, digit: digit };
+      };
+
+      // 例外線：「標籤完工」鈕 → 叫出此訂單已產生的標籤清單
+      const openLabelDone = function(){
+        if (!window.API || typeof window.API.getLabelsByOrder !== 'function')
+          return setMesNotice({ type:'warn', title:'⚠️ 後端未連線', body:'無法載入標籤清單。' });
+        var ref = _parseOrderRef();
+        window.API.getLabelsByOrder(ref.orderId, function(rows){
+          if (!rows || !rows.length)
+            return setMesNotice({ type:'warn', title:'⚠️ 尚無標籤', body:'此訂單尚未產生標籤，請先按「列印標籤」。' });
+          setLabelDoneList(rows);
+        }, function(err){ alert('載入標籤失敗：' + (err && err.message || err)); });
+      };
+
+      // 例外線：點選一張標籤 → 寫開工＝完工時間，並依製作方式扣該張數量的未完工
+      const completeLabelDone = function(label){
+        if (labelDoneBusy) return;
+        setLabelDoneBusy(true);
+        var ref = _parseOrderRef();
+        var now = new Date().toLocaleTimeString('zh-TW', { hour12: false });
+        var qtyToDeduct = parseInt(label.qty || label.totalQty || 0, 10) || 0;
+        var deductTop = true;                 // 1.上板+底板 與 2/3/4 皆扣上板
+        var deductBottom = (ref.digit === '1'); // 僅 1.上板+底板 扣底板
+        var done = function(){
+          setLabelDoneBusy(false);
+          setLabelDoneList(null);
+          setMesNotice({ type:'success', title:'✅ 標籤完工', body:'已寫入完工時間並扣除未完工量。' });
+          try { window.dispatchEvent(new CustomEvent('mes-report-saved', { detail: { type:'finish', orderId:ref.orderId } })); } catch(e){}
+        };
+        // 1) 標籤寫入開工＝完工時間
+        if (window.API && typeof window.API.saveLabel === 'function'){
+          window.API.saveLabel(Object.assign({}, label, { startTime: now, endTime: now }), function(){}, function(e){ console.warn('標籤時間寫入警告:', e); });
+        }
+        // 2) 依製作方式扣該張數量的未完工（貪婪分攤到各裁切列）
+        if (!window.API || typeof window.API.getCuttingDetails !== 'function' || qtyToDeduct <= 0){ done(); return; }
+        var _applyDeduct = function(rows){
+          var remainTop = qtyToDeduct, remainBot = qtyToDeduct;
+          var records = [];
+          (rows || []).forEach(function(c){
+            var top = parseInt(c.topUnfinish || 0, 10) || 0;
+            var bot = parseInt(c.bottomUnfinish || 0, 10) || 0;
+            var mes = parseInt((c.mesUnfinish != null ? c.mesUnfinish : c.qty) || 0, 10) || 0;
+            var rec = { id:c.id, orderId:ref.orderId, orderItemNo:(c.orderItemNo||ref.itemNo), feet:c.feet, startTime:now, finishTime:now };
+            var dT = 0, dB = 0;
+            if (deductTop && remainTop > 0 && top > 0){ dT=Math.min(top,remainTop); rec.topUnfinish=top-dT; remainTop-=dT; if(rec.topUnfinish<=0) rec.topDone=1; }
+            if (deductBottom && remainBot > 0 && bot > 0){ dB=Math.min(bot,remainBot); rec.bottomUnfinish=bot-dB; remainBot-=dB; if(rec.bottomUnfinish<=0) rec.bottomDone=1; }
+            if (dT > 0 || dB > 0){
+              // MES 未完數量同步扣（取本列實際上/底板扣量較大者）
+              rec.mesUnfinish = Math.max(0, mes - Math.max(dT, dB));
+              if ((!deductTop || (top - dT) <= 0) && (!deductBottom || (bot - dB) <= 0)) rec.closed = 1;
+              records.push(rec);
+            }
+          });
+          if (!records.length){ done(); return; }
+          window.API.saveCuttingReport(records, function(){ done(); }, function(err){ setLabelDoneBusy(false); alert('扣未完工量失敗：' + (err && err.message || err)); });
+        };
+        var _onErr = function(err){ setLabelDoneBusy(false); alert('讀取裁切明細失敗：' + (err && err.message || err)); };
+        // 先用項次查，查不到再不帶項次重查（訂單 id 末段可能與 orderItemNo 不一致）
+        window.API.getCuttingDetails(ref.orderId, ref.itemNo, function(rows){
+          if (rows && rows.length) { _applyDeduct(rows); return; }
+          window.API.getCuttingDetails(ref.orderId, '', function(rows2){ _applyDeduct(rows2 || []); }, _onErr);
+        }, _onErr);
       };
 
       return (
@@ -14701,11 +14815,8 @@ window.addEventListener('DOMContentLoaded', function(){
             </div>
 
             <div className="flex flex-col justify-center space-y-4 px-1">
-               {/* 未上架鋼捲前鎖定移轉按鈕 */}
-               {!coilLoaded
-                 ? <div className="p-2 border border-gray-200 bg-gray-100 rounded flex items-center justify-center opacity-40 cursor-not-allowed" title="請先完成鋼捲上架"><Icon name="play" className="text-gray-400" /></div>
-                 : <button onClick={moveRight} className="p-2 border border-gray-300 bg-white rounded shadow hover:bg-gray-100 flex items-center justify-center"><Icon name="play" className="text-green-500" /></button>
-               }
+               {/* 例外線：不需鋼捲上架即可移轉 */}
+               <button onClick={moveRight} className="p-2 border border-gray-300 bg-white rounded shadow hover:bg-gray-100 flex items-center justify-center"><Icon name="play" className="text-green-500" /></button>
                <button className="p-2 border border-gray-300 bg-white rounded shadow hover:bg-gray-100 flex items-center justify-center"><Icon name="play" className="text-red-500 transform rotate-180" /></button>
                <button className="p-2 border border-gray-300 bg-white rounded shadow hover:bg-gray-100 flex items-center justify-center"><Icon name="chevronsLeft" className="text-black" /></button>
             </div>
@@ -14737,148 +14848,16 @@ window.addEventListener('DOMContentLoaded', function(){
             </div>
 
             <div className="w-32 flex flex-col space-y-1">
-               {/* 開工閘門：按下後才能把左側明細移到右側（取代原「派工中」狀態框） */}
-               {!workStarted ? (
-                 <button onClick={() => {
-                   if (!coilLoaded) return setMesNotice({ type:'warn', title:'⚠️ 尚未上架鋼捲', body:'請先回清單頁按「🔩 鋼捲上架」完成上架，才能開工。' });
-                   setWorkStarted(true);
-                 }} className="flex-1 bg-[#00e676] hover:bg-[#00c853] text-black flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm" style={{minHeight:'48px'}}>
-                   <span>▶ 開工</span><span className="text-xs font-normal">mulai</span>
-                 </button>
-               ) : (
-                 <div className="flex-1 flex flex-col items-center justify-center text-xs rounded-sm border"
-                      style={{background:'#e8f5e9', borderColor:'#4caf50', minHeight:'48px'}}>
-                   <span className="text-green-800 font-bold text-center px-1">🟢 已開工{dispatchInfo ? <span className="block font-mono text-[10px]">{dispatchInfo.id}</span> : null}</span>
-                 </div>
-               )}
-
-
-
-               {/* 根據 mode 判斷顯示的按鈕 */}
+               {/* 例外線：接單報工只負責產生標籤；開工/完工/扣量已移到「條碼標籤報工」 */}
                {mode === 'order' && (
                  <button onClick={() => {
-                   // 流程檢查
-                   if (!coilLoaded) return setMesNotice({ type:'warn', title:'⚠️ 尚未上架鋼捲', body:'請先回清單頁按「🔩 鋼捲上架」完成上架，才能開工。' });
-                   if (rightList.length === 0) return setMesNotice({ type:'warn', title:'⚠️ 右側無資料', body:'請先將左側裁切細項移到右側，再按開工。' });
-                   var dispatchId = (headerData && headerData.dispatchId) || window.__currentDispatchId;
-                   if (!dispatchId) return setMesNotice({ type:'warn', title:'⚠️ 尚未建立派工單', body:'請先回清單頁，按「▶ 派工開始」建立派工單後再操作。' });
-
-                   // 畫面更新
-                   var now = new Date().toLocaleTimeString('zh-TW', { hour12: false });
-                   var stamped = rightList.map(function(item){ return Object.assign({}, item, { startTime: item.startTime || now }); });
-                   setRightList(stamped);
-
-                   // 解析訂單 ID（"1150501002-10" → "1150501002"）
-                   var rawId = String(headerData.id || '');
-                   var idParts = rawId.split('-');
-                   var orderId = headerData.orderId || (idParts.length > 1 ? idParts.slice(0,-1).join('-') : rawId);
-                   var itemNo = headerData.itemNo || (idParts.length > 1 ? idParts[idParts.length-1] : '0010');
-
-                   if (!window.API || typeof window.API.saveCuttingReport !== 'function') return;
-                   var records = stamped.map(function(item){
-                     return {
-                       id:          item.id || undefined,
-                       orderId:     orderId,
-                       orderItemNo: itemNo,
-                       dispatchId:  dispatchId,
-                       zone:        item.zone || '',
-                       bundle:      item.bundle || '',
-                       feet:        parseFloat(item.length || 0) || 0,
-                       qty:         parseInt(item.qty || 0, 10) || 0,
-                       totalFeet:   parseFloat(item.totalLen || 0) || 0,
-                       kg:          parseFloat(item.kg || 0) || 0,
-                       mesUnfinish: parseInt(item.unfinish || item.qty || 0, 10) || 0,
-                       startTime:   item.startTime,
-                       operator:    _operator
-                     };
-                   });
-                   window.API.saveCuttingReport(records, function(res){
-                     try { window.dispatchEvent(new CustomEvent('mes-report-saved', { detail: { type:'start', dispatchId:dispatchId, count:(res&&res.saved)||0 } })); } catch(e){}
-                   }, function(err){ alert('開工報工寫入失敗：' + (err && err.message || err)); });
+                   // 例外路線：列印標籤（產生標籤），不記開工時間，可分次產生
+                   if (rightList.length === 0) return setMesNotice({ type:'warn', title:'⚠️ 右側無資料', body:'請先將左側裁切細項移到右側，再列印標籤。' });
+                   setShowLabelModal(true);   // generateReportLabels 依右側明細產生標籤
                  }} className="flex-1 bg-[#00e676] hover:bg-[#00c853] text-black flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm">
-                   <span>機臺開工</span><span className="text-xs font-normal">mulai kerja</span>
+                   <span>列印標籤</span><span className="text-xs font-normal">產生標籤</span>
                  </button>
                )}
-
-
-
-               {mode === 'order' && (
-                 <button onClick={() => {
-                   // 流程檢查
-                   if (!coilLoaded) return setMesNotice({ type:'warn', title:'⚠️ 尚未上架鋼捲', body:'請先回清單頁按「🔩 鋼捲上架」，才能進行完工。' });
-                   if (rightList.length === 0) return setMesNotice({ type:'warn', title:'⚠️ 右側無資料', body:'請先將左側裁切細項移到右側，再按完工。' });
-                   var dispatchId = (headerData && headerData.dispatchId) || window.__currentDispatchId;
-                   if (!dispatchId) return setMesNotice({ type:'warn', title:'⚠️ 尚未建立派工單', body:'請先回清單頁，按「▶ 派工開始」建立派工單後再操作。' });
-
-                   // 畫面更新
-                   var now = new Date().toLocaleTimeString('zh-TW', { hour12: false });
-                   var stamped = rightList.map(function(item){ return Object.assign({}, item, { finishTime: item.finishTime || now }); });
-                   setRightList(stamped);
-
-                   // 解析訂單 ID
-                   var rawId = String(headerData.id || '');
-                   var idParts = rawId.split('-');
-                   var orderId = headerData.orderId || (idParts.length > 1 ? idParts.slice(0,-1).join('-') : rawId);
-                   var itemNo = headerData.itemNo || (idParts.length > 1 ? idParts[idParts.length-1] : '0010');
-
-                   if (!window.API || typeof window.API.saveCuttingReport !== 'function') return;
-                   var records = stamped.map(function(item){
-                     return {
-                       id:          item.id || undefined,
-                       orderId:     orderId,
-                       orderItemNo: itemNo,
-                       dispatchId:  dispatchId,
-                       zone:        item.zone || '',
-                       feet:        parseFloat(item.length || 0) || 0,
-                       qty:         parseInt(item.qty || 0, 10) || 0,
-                       totalFeet:   parseFloat(item.totalLen || 0) || 0,
-                       kg:          parseFloat(item.kg || 0) || 0,
-                       mesUnfinish: 0,
-                       startTime:   item.startTime || '',
-                       finishTime:  item.finishTime,
-                       closed:      1,
-                       operator:    _operator
-                     };
-                   });
-                   window.API.saveCuttingReport(records, function(res){
-                     try { window.dispatchEvent(new CustomEvent('mes-report-saved', { detail: { type:'finish', dispatchId:dispatchId, count:(res&&res.saved)||0, closedDispatches:(res&&res.closedDispatches)||[] } })); } catch(e){}
-                   }, function(err){ alert('完工報工寫入失敗：' + (err && err.message || err)); });
-
-                   // 完工同時自動寫入標籤記錄（供 endDispatch 的入庫明細使用）
-                   if (window.API && typeof window.API.saveLabel === 'function') {
-                     var totalQty = stamped.reduce(function(s,it){ return s+parseInt(it.qty||0,10); }, 0);
-                     var totalLen = stamped.reduce(function(s,it){ return s+parseFloat(it.totalLen||0); }, 0);
-                     var totalKg  = stamped.reduce(function(s,it){ return s+parseFloat(it.kg||0); }, 0);
-                     var labelId = 'L-' + dispatchId + '-' + orderId + '-' + Date.now();
-                     window.API.saveLabel({
-                       id:          labelId,
-                       orderId:     orderId,
-                       orderItemNo: itemNo,
-                       machine:     headerData.machine || '',
-                       model:       headerData.model || '',
-                       spec:        headerData.spec || '',
-                       customer:    headerData.customerShort || '',
-                       qty:         totalQty,
-                       totalLen:    +totalLen.toFixed(2),
-                       totalWeight: +totalKg.toFixed(2),
-                       unit:        headerData.unit || 'KG',
-                       startTime:   (stamped[0] && stamped[0].startTime) || '',
-                       endTime:     now,
-                       operator:    _operator,
-                       remark:      dispatchId
-                     }, function(){}, function(err){ console.warn('標籤寫入警告:', err); });
-                   }
-
-                   // 詢問是否列印標籤
-                   setTimeout(function(){
-                     if (window.confirm('作業已完工！是否列印標籤？')) setShowLabelModal(true);
-                   }, 100);
-                 }} className="flex-1 bg-[#00e5ff] hover:bg-[#00b8d4] text-black flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm">
-                   <span>機臺完工</span><span className="text-xs font-normal">selesai kerja</span>
-                 </button>
-               )}
-
-               {/* 派工結束已移至「鋼捲」modal 頂部操作區 */}
 
                {mode === 'label' && (
                  <button onClick={() => setShowLabelModal(true)} className="flex-1 bg-blue-500 hover:bg-blue-600 text-white flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm">
@@ -14891,6 +14870,57 @@ window.addEventListener('DOMContentLoaded', function(){
                <button onClick={onBack} className="flex-1 bg-black hover:bg-gray-800 text-white flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm"><span>返回</span><span className="text-xs font-normal">kembali</span></button>
             </div>
           </div>
+
+          {/* 例外線：標籤完工清單 Modal — 點選一張標籤即完工（寫時間＋扣未完工） */}
+          {labelDoneList && (
+            <div className="absolute inset-0 bg-black/60 z-50 flex items-center justify-center">
+              <div className="bg-white rounded-lg shadow-2xl border border-gray-300 flex flex-col" style={{ width: '560px', maxHeight: '70vh' }}>
+                <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 bg-[#f1f5f9]">
+                  <h2 className="text-base font-bold text-blue-800">標籤完工 — 點選一張標籤即完成</h2>
+                  <button onClick={() => setLabelDoneList(null)} className="text-gray-500 hover:text-gray-800 text-lg leading-none">✕</button>
+                </div>
+                <div className="px-4 py-1 text-xs text-gray-500 border-b border-gray-100">點選後寫入開工＝完工時間，並依製作方式扣除該張數量的未完工。</div>
+                <div className="flex-1 overflow-auto p-2">
+                  <table className="w-full text-xs border-collapse">
+                    <thead className="bg-gray-50 text-gray-600 sticky top-0">
+                      <tr>
+                        <th className="border border-gray-200 p-1 text-left">標籤單號</th>
+                        <th className="border border-gray-200 p-1 text-right">數量</th>
+                        <th className="border border-gray-200 p-1 text-right">總尺</th>
+                        <th className="border border-gray-200 p-1 text-center">開工</th>
+                        <th className="border border-gray-200 p-1 text-center">完工</th>
+                        <th className="border border-gray-200 p-1 text-center">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {labelDoneList.map(function(lb){
+                        var done = !!((lb.startTime||lb.starttime) && (lb.endTime||lb.endtime));
+                        return (
+                          <tr key={lb.id} className="hover:bg-blue-50">
+                            <td className="border border-gray-200 p-1 font-mono">{lb.labelNo || lb.labelno || lb.id}</td>
+                            <td className="border border-gray-200 p-1 text-right">{lb.qty != null ? lb.qty : (lb.totalQty||'')}</td>
+                            <td className="border border-gray-200 p-1 text-right">{lb.totalLen != null ? lb.totalLen : (lb.totallen||'')}</td>
+                            <td className="border border-gray-200 p-1 text-center text-blue-600">{lb.startTime || lb.starttime || '—'}</td>
+                            <td className="border border-gray-200 p-1 text-center text-green-600">{lb.endTime || lb.endtime || '—'}</td>
+                            <td className="border border-gray-200 p-1 text-center">
+                              {done
+                                ? <span className="text-gray-400">已完工</span>
+                                : <button disabled={labelDoneBusy} onClick={() => completeLabelDone(lb)}
+                                    className="bg-[#00b8d4] hover:bg-[#0097a7] text-white font-bold px-3 py-0.5 rounded disabled:opacity-50">完工</button>
+                              }
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="flex justify-end px-4 py-2 border-t border-gray-200">
+                  <button onClick={() => setLabelDoneList(null)} className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-1 rounded text-sm">關閉</button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* 標籤預覽 Modal (共用於完工列印與手動列印) */}
           {showLabelModal && (
@@ -14958,6 +14988,7 @@ window.addEventListener('DOMContentLoaded', function(){
                               customerShort: headerData.customerShort || '',
                               model:         headerData.model || '',
                               spec:          headerData.spec || '',
+                              method:        headerData.manufacturingMethod || '',
                               qty:           _qtyNum,
                               totalLen:      Math.round(_lenNum*100)/100,
                               totalWeight:   Math.round(_wNum*100)/100,
@@ -14982,6 +15013,20 @@ window.addEventListener('DOMContentLoaded', function(){
                               }
                             });
                           });
+                        }
+
+                        // 產生標籤 → 扣未派工量（分吊）：本批移到右側的裁切列整列轉成標籤，未派工量歸 0
+                        if (window.API && typeof window.API.saveCuttingReport === 'function' && rightList.length) {
+                          var _cutRecords = rightList.map(function(it){
+                            return {
+                              id: it.id,
+                              orderId: _orderIdPure,
+                              orderItemNo: _itemNoPure || '0010',
+                              feet: parseFloat(it.length || 0) || 0,
+                              dispatchUnfinish: 0
+                            };
+                          });
+                          window.API.saveCuttingReport(_cutRecords, function(){}, function(err){ console.warn('未派工量扣除警告:', err); });
                         }
 
                         setShowLabelModal(false);
@@ -15138,147 +15183,4 @@ window.addEventListener('DOMContentLoaded', function(){
                                        // Step 3: 以批號明細的資料寫入派工單鋼捲扣庫明細
                                        window.API.addCoilMove(dispatchId, {
                                          coilNo:       hit.coilNo, rollNo: hit.rollNo, batchNo: hit.batchNo,
-                                         model:        hit.model,  spec:   hit.spec,
-                                         material:     hit.material,
-                                         size:         hit.size,   color:  hit.color,
-                                         srcWarehouse: hit.warehouse || '鋼捲倉',
-                                         srcLocation:  hit.location,
-                                         dstWarehouse: '產線倉',
-                                         dstLocation:  '',
-                                         outKg:        availKg, outPieces: availPcs || 1,
-                                         inKg:         availKg, inPieces:  availPcs || 1,
-                                         loadWeight:   loadKg,   // 上架磅重
-                                         moveType:     '出+入',
-                                         operator:     '',
-                                         remark:       '原批號倉/儲位: ' + (hit.warehouse || '') + '/' + (hit.location || '') +
-                                                       '　上架磅重: ' + loadKg + ' kg'
-                                       }, function(moveRes){
-                                         setCoilLoaded(true);
-                                         setShowCoilModal(false); setCoilInfo(null); setCoilBatchNo('');
-                                         setLoadedCoilInfo({
-                                           model:      hit.model || '',
-                                           factory:    hit.factory || '',
-                                           material:   hit.material || '',
-                                           batchNo:    hit.batchNo || '',
-                                           loadWeight: loadKg,
-                                           moveId:     moveRes && moveRes.id ? moveRes.id : ''
-                                         });
-                                         setMesNotice({
-                                           type: 'success',
-                                           title: '✅ 鋼捲上架完成',
-                                           body: '批號 [' + hit.batchNo + '] 已寫入鋼捲扣庫明細\n' +
-                                                 '料號：' + hit.model + '　廠別：' + (hit.factory||'') + '　材質：' + (hit.material||'') + '\n' +
-                                                 '上架磅重：' + loadKg + ' kg\n\n▶ 現在可挑選裁切細項並開工'
-                                         });
-                                         try { window.dispatchEvent(new CustomEvent('coil-move-added', { detail: { dispatchId: dispatchId, move: moveRes } })); } catch(e) {}
-                                       }, function(err){ alert('上架失敗：' + (err && err.message || err)); });
-                                     };
-                                     var doUpload = function(loadKg){
-                                       if (existingDispatchId) { proceed(existingDispatchId, loadKg); return; }
-                                       window.API.createDispatchFromOrder(orderId, {}, function(res){
-                                         if (!res || !res.id) return alert('建立派工單失敗');
-                                         window.__currentDispatchId = res.id;
-                                         try { setHeaderData(h => Object.assign({}, h, { dispatchId: res.id })); } catch(e){}
-                                         proceed(res.id, loadKg);
-                                       }, function(err){ alert('建立派工單失敗：' + (err && err.message || err)); });
-                                     };
-                                     setWeighInKg(String(availKg));
-                                     setPendingCoilProceed(function(){ return doUpload; });
-                                     setShowWeighInModal(true);
-                                   }, function(err){
-                                     alert('查詢批號明細失敗：' + (err && err.message || err));
-                                   });
-                                }}
-                                className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded font-bold shadow-md flex items-center justify-center text-base tracking-wider transition-all transform active:scale-95"
-                              >
-                                 鋼捲上架
-                              </button>
-                           </div>
-                        </div>
-                      )}
-                  </div>
-               </div>
-            </div>
-          )}
-
-          {showWeighInModal && (
-            <div className="fixed inset-0 z-[9998] flex items-center justify-center" style={{background:'rgba(0,0,0,0.55)'}}>
-              <div className="bg-white rounded-xl shadow-2xl p-6 w-80 border-2 border-orange-400">
-                <div className="text-base font-bold text-orange-700 mb-1">⚖️ 上架磅重</div>
-                <div className="text-xs text-gray-500 mb-3">請輸入鋼捲上磅的實際重量（kg）</div>
-                <div className="flex items-center space-x-2 mb-2">
-                  <input type="number" step="0.01" min="0" value={weighInKg}
-                    onChange={e => setWeighInKg(e.target.value)}
-                    onKeyDown={e => { if(e.key==='Enter'){ var kg=parseFloat(weighInKg)||0; if(kg<=0) return alert('請輸入有效磅重'); setShowWeighInModal(false); if(pendingCoilProceed) pendingCoilProceed()(kg); setPendingCoilProceed(null); }}}
-                    className="flex-1 border-2 border-orange-300 rounded px-3 py-2 text-right text-lg font-bold focus:outline-none focus:border-orange-500" autoFocus />
-                  <span className="text-gray-500 font-semibold">kg</span>
-                </div>
-                <div className="flex space-x-2 mt-3">
-                  <button onClick={() => { setShowWeighInModal(false); setPendingCoilProceed(null); }}
-                          className="flex-1 py-2 rounded border border-gray-300 text-gray-600 hover:bg-gray-100 text-sm">取消</button>
-                  <button onClick={() => { var kg=parseFloat(weighInKg)||0; if(kg<=0) return alert('請輸入有效磅重'); setShowWeighInModal(false); if(pendingCoilProceed) pendingCoilProceed()(kg); setPendingCoilProceed(null); }}
-                          className="flex-1 py-2 rounded bg-orange-500 text-white font-bold hover:bg-orange-600 text-sm">確認上架</button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {showWeighOutModal && (
-            <div className="fixed inset-0 z-[9998] flex items-center justify-center" style={{background:'rgba(0,0,0,0.55)'}}>
-              <div className="bg-white rounded-xl shadow-2xl p-6 w-80 border-2 border-red-400">
-                <div className="text-base font-bold text-red-700 mb-1">⚖️ 下架磅重</div>
-                <div className="text-xs text-gray-500 mb-3">請輸入鋼捲下磅（剩料）的重量（kg）</div>
-                {loadedCoilInfo && (
-                  <div className="bg-gray-50 rounded p-2 mb-3 text-xs text-gray-600">
-                    <div>上架磅重：<span className="font-bold text-orange-600">{loadedCoilInfo.loadWeight} kg</span></div>
-                    {weighOutKg !== '' && !isNaN(parseFloat(weighOutKg)) && (
-                      <div className="mt-1">領用重量：<span className="font-bold text-green-700">{(+(loadedCoilInfo.loadWeight - parseFloat(weighOutKg)).toFixed(2))} kg</span>（上架 − 下架）</div>
-                    )}
-                  </div>
-                )}
-                <div className="flex items-center space-x-2 mb-2">
-                  <input type="number" step="0.01" min="0" value={weighOutKg} placeholder="0.00"
-                    onChange={e => setWeighOutKg(e.target.value)}
-                    onKeyDown={e => { if(e.key==='Enter'){ var kg=parseFloat(weighOutKg); if(isNaN(kg)||kg<0) return alert('請輸入有效磅重'); setShowWeighOutModal(false); if(pendingEndDispatch) pendingEndDispatch()(kg); setPendingEndDispatch(null); }}}
-                    className="flex-1 border-2 border-red-300 rounded px-3 py-2 text-right text-lg font-bold focus:outline-none focus:border-red-500" autoFocus />
-                  <span className="text-gray-500 font-semibold">kg</span>
-                </div>
-                <div className="flex space-x-2 mt-3">
-                  <button onClick={() => { setShowWeighOutModal(false); setPendingEndDispatch(null); }}
-                          className="flex-1 py-2 rounded border border-gray-300 text-gray-600 hover:bg-gray-100 text-sm">取消</button>
-                  <button onClick={() => { var kg=parseFloat(weighOutKg); if(isNaN(kg)||kg<0) return alert('請輸入有效磅重'); setShowWeighOutModal(false); if(pendingEndDispatch) pendingEndDispatch()(kg); setPendingEndDispatch(null); }}
-                          className="flex-1 py-2 rounded bg-red-600 text-white font-bold hover:bg-red-700 text-sm">確認派工結束</button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {mesNotice && (
-            <div className="fixed inset-0 z-[9999] flex items-center justify-center" style={{background:'rgba(0,0,0,0.45)'}}>
-              <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full mx-4 border-2"
-                   style={{borderColor: mesNotice.type === 'success' ? '#16a34a' : '#d97706'}}>
-                <div className="text-lg font-bold mb-3" style={{color: mesNotice.type === 'success' ? '#15803d' : '#b45309'}}>
-                  {mesNotice.title}
-                </div>
-                <div className="text-sm text-gray-700 whitespace-pre-line leading-relaxed mb-5">
-                  {mesNotice.body}
-                </div>
-                <div className="flex justify-center">
-                  <button onClick={closeMesNotice}
-                          className="px-10 py-2 rounded-lg font-bold text-white shadow"
-                          style={{background: mesNotice.type === 'success' ? '#16a34a' : '#d97706'}}>
-                    確定
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-        </div>
-      );
-    }
-
-    window.mountMesApp = function(){ ReactDOM.createRoot(document.getElementById('mes-root')).render(<App />); };
-</script>
-</body>
-</html>
+                        
