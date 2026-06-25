@@ -11276,6 +11276,46 @@ window.addEventListener('DOMContentLoaded', function(){
         return function(){ clearInterval(t); };
       }, [dispatchId]);
 
+      // ── 人員段狀態（active/paused/null）＋暫停/重啟/換人 ──
+      const [lrReporterStatus, setLrReporterStatus] = useState(null);
+      const refreshLrStatus = function(did){
+        did = did || dispatchId;
+        if (!did || !window.API || typeof window.API.getReporterSessionsByDispatch !== 'function'){ setLrReporterStatus(null); return; }
+        window.API.getReporterSessionsByDispatch(did, function(sessions){
+          var arr = sessions || [], active=null, paused=null;
+          for (var i=arr.length-1;i>=0;i--){ if(!active&&arr[i].status==='active')active=arr[i]; if(!paused&&arr[i].status==='paused')paused=arr[i]; if(active)break; }
+          setLrReporterStatus(active ? 'active' : (paused ? 'paused' : null));
+        }, function(){ setLrReporterStatus(null); });
+      };
+      useEffect(function(){ if (dispatchId) refreshLrStatus(dispatchId); }, [dispatchId]);
+      const lrPause = function(){
+        if (!dispatchId) return alert('尚未建立派工單（請先上架鋼捲）');
+        if (!window.confirm('暫停目前作業？\n系統會把當下時間寫入完工時間並計算工時。')) return;
+        window.API.pauseReporterSession(dispatchId, {}, function(res){
+          alert(res ? ('已暫停，本段工時：' + (res.workHours || '—')) : '目前沒有作業中的人員段，無需暫停。');
+          refreshLrStatus(dispatchId);
+        }, function(e){ alert('暫停失敗：' + (e && e.message || e)); });
+      };
+      const lrResume = function(){
+        if (!dispatchId) return alert('尚未建立派工單');
+        var rep = operators.join(';');
+        if (!rep) return alert('沒有作業人員');
+        if (!window.confirm('以人員 ' + rep + ' 重新開工？')) return;
+        window.API.resumeReporterSession(dispatchId, rep, {}, function(){ refreshLrStatus(dispatchId); }, function(e){ alert('開工失敗：' + (e && e.message || e)); });
+      };
+      const lrSwitch = function(){
+        if (!dispatchId) return alert('尚未建立派工單');
+        var rep = window.prompt('輸入接班人員（多人以分號 ; 分隔）\n* 會結算上一段並建立新作業段：', operators.join(';'));
+        if (rep === null) return;
+        rep = String(rep || '').trim();
+        if (!rep) return alert('需至少 1 名人員');
+        window.API.switchReporterSession(dispatchId, rep, {}, function(){
+          var newOps = rep.split(/[;,，]/).map(function(s){ return s.trim(); }).filter(Boolean);
+          if (newOps.length) setOperators(newOps);
+          refreshLrStatus(dispatchId);
+        }, function(e){ alert('換人失敗：' + (e && e.message || e)); });
+      };
+
       // ── Phase A → B：機台選好就進入下一步 ──
       function goPhaseB(){
         if (!machine) return alert('請選擇機台');
@@ -11597,6 +11637,25 @@ window.addEventListener('DOMContentLoaded', function(){
                 <span className="text-gray-600 ml-auto">工時：<span className="font-mono font-bold text-green-700">{workHours}</span></span>
               )}
             </div>
+
+            {/* 人員工時控制：暫停 / 重新啟動 / 換人（派工單建立後顯示） */}
+            {dispatchId && (
+              <div className="flex items-center gap-2 px-4 py-2 bg-white border-b text-sm">
+                <span className="text-gray-600">人員狀態：
+                  <span className={'font-bold ' + (lrReporterStatus==='active'?'text-green-700':lrReporterStatus==='paused'?'text-orange-600':'text-gray-400')}>
+                    {lrReporterStatus==='active'?'🟢 開工中':lrReporterStatus==='paused'?'🟠 暫停中':'⚪ —'}
+                  </span>
+                </span>
+                <div className="ml-auto flex gap-2">
+                  {lrReporterStatus==='active' ? (
+                    <button onClick={lrPause} className="px-3 py-1 rounded font-bold text-white bg-orange-500 hover:bg-orange-600">⏸ 暫停</button>
+                  ) : (
+                    <button onClick={lrResume} className="px-3 py-1 rounded font-bold text-white bg-green-600 hover:bg-green-700">▶ {lrReporterStatus==='paused'?'重新啟動':'開工'}</button>
+                  )}
+                  <button onClick={lrSwitch} className="px-3 py-1 rounded font-bold text-white bg-blue-600 hover:bg-blue-700">⇄ 換人</button>
+                </div>
+              </div>
+            )}
 
             {/* Phase A：選機台 */}
             {phase === 'A' && (
