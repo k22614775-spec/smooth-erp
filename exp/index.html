@@ -14166,103 +14166,7 @@ window.addEventListener('DOMContentLoaded', function(){
               <button onClick={onStartWorkLabel} className="bg-[#7e22ce] border border-purple-700 text-white px-5 py-1 rounded shadow-sm hover:bg-purple-800 font-bold text-sm">
                 標籤報工
               </button>
-              {/* 分隔線 */}
-              <div style={{borderTop:'1px solid #ccc', margin:'2px 0'}}></div>
-              <button onClick={onDispatchStart}
-                      className="px-5 py-1 rounded font-bold text-sm text-white"
-                      style={{background: activeDispatch ? '#388e3c' : '#1565c0'}}>
-                {activeDispatch ? '✓ 派工中' : '▶ 派工開始'}
-              </button>
-              <button onClick={onCoilUpload}
-                      className="px-5 py-1 rounded font-bold text-sm text-white"
-                      style={{background: activeDispatch ? '#f57c00' : '#9e9e9e',
-                              opacity: activeDispatch ? 1 : 0.5,
-                              cursor: activeDispatch ? 'pointer' : 'not-allowed'}}>
-                🔩 鋼捲上架
-              </button>
-              <button onClick={onDispatchEnd}
-                      className="px-5 py-1 rounded font-bold text-sm text-white"
-                      style={{background: activeDispatch ? '#b71c1c' : '#9e9e9e',
-                              opacity: activeDispatch ? 1 : 0.5,
-                              cursor: activeDispatch ? 'pointer' : 'not-allowed'}}>
-                ⏹ 派工結束
-              </button>
-
-              {/* ── 派工狀態 + 上機人員 + 開工時間 ───────────────────── */}
-              {activeDispatch && (
-                <div style={{
-                    margin:'4px 0',
-                    padding:'6px 8px',
-                    borderRadius:'4px',
-                    background: reporterStatus === 'active' ? '#e8f5e9'
-                              : reporterStatus === 'paused' ? '#fff3e0'
-                              : '#eeeeee',
-                    border: '1px solid ' + (
-                              reporterStatus === 'active' ? '#2e7d32'
-                            : reporterStatus === 'paused' ? '#e65100'
-                            : '#9e9e9e'),
-                    fontSize:'12px'
-                  }}>
-                  <div style={{fontWeight:'bold', marginBottom:'2px',
-                               color: reporterStatus === 'active' ? '#1b5e20'
-                                    : reporterStatus === 'paused' ? '#bf360c'
-                                    : '#424242'}}>
-                    {reporterStatus === 'active' ? '🟢 開工中'
-                     : reporterStatus === 'paused' ? '🟠 暫停中'
-                     : '⚪ 尚未開工'}
-                  </div>
-                  {reporterSession ? (
-                    <div style={{color:'#555', lineHeight:'1.4'}}>
-                      <div>👥 上機人員：<b>{reporterSession.reporters}</b></div>
-                      <div>🕐 開工時間：<b style={{fontFamily:'monospace'}}>{reporterSession.startTime}</b></div>
-                      <div>
-                        ⏱ 有效工時：<b style={{fontFamily:'monospace', color:'#1b5e20'}}>{reporterEffectiveHrs}</b>
-                        <span style={{marginLeft:'8px', color:'#bf360c'}}>
-                          ⏸ 暫停 <b style={{fontFamily:'monospace'}}>{reporterPausedHrs}</b>
-                        </span>
-                      </div>
-                    </div>
-                  ) : (
-                    <div style={{color:'#888'}}>請先設定上機人員後按「開工」</div>
-                  )}
-                </div>
-              )}
-
-              {/* ── 開工 / 暫停 / 重新啟動 (同位置不同 label) ───────────── */}
-              {activeDispatch && reporterStatus === 'active' && (
-                <button onClick={onReporterPause}
-                        className="px-4 py-1 rounded font-bold text-sm text-white"
-                        style={{background:'#f57c00'}}
-                        title="把當下時間寫入完工時間並計算工時">
-                  ⏸ 暫停
-                </button>
-              )}
-              {activeDispatch && reporterStatus === 'paused' && (
-                <button onClick={onReporterResume}
-                        className="px-4 py-1 rounded font-bold text-sm text-white"
-                        style={{background:'#388e3c'}}
-                        title="以當下機台人員開立新作業段">
-                  ▶ 重新啟動
-                </button>
-              )}
-              {activeDispatch && reporterStatus === null && (
-                <button onClick={onReporterResume}
-                        className="px-4 py-1 rounded font-bold text-sm text-white"
-                        style={{background:'#388e3c'}}
-                        title="以當下機台人員開工 (要先上機)">
-                  ▶ 開工
-                </button>
-              )}
-
-              {/* ── 換人 (獨立按鈕，有派工就一直顯示) ───────────────────── */}
-              {activeDispatch && (
-                <button onClick={onReporterSwitch}
-                        className="px-4 py-1 rounded font-bold text-sm text-white"
-                        style={{background:'#1976d2'}}
-                        title="結算上一段，自行輸入新接班人員">
-                  ⇄ 換人
-                </button>
-              )}
+              {/* 例外線：移除派工開始/鋼捲上架/派工結束與上機人員/開工流程；接單報工只負責產生標籤，後續到「條碼標籤報工」 */}
             </div>
           </div>
 
@@ -14507,7 +14411,6 @@ window.addEventListener('DOMContentLoaded', function(){
 
       const toggleLeftSelection = (id) => setSelectedLeftIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
       const moveRight = () => {
-        if (!workStarted) return setMesNotice({ type:'warn', title:'⚠️ 尚未開工', body:'請先按上方「開工」按鈕，才能將左側明細移到右側。' });
         const itemsToMove = leftList.filter(item => selectedLeftIds.includes(item.id));
         setRightList(prev => [...prev, ...itemsToMove]);
         setLeftList(prev => prev.filter(item => !selectedLeftIds.includes(item.id)));
@@ -14811,44 +14714,16 @@ window.addEventListener('DOMContentLoaded', function(){
             </div>
 
             <div className="w-32 flex flex-col space-y-1">
-               {/* 開工閘門：按下後才能把左側明細移到右側（取代原「派工中」狀態框） */}
-               {!workStarted ? (
-                 <button onClick={() => {
-                   if (!coilLoaded) return setMesNotice({ type:'warn', title:'⚠️ 尚未上架鋼捲', body:'請先回清單頁按「🔩 鋼捲上架」完成上架，才能開工。' });
-                   setWorkStarted(true);
-                 }} className="flex-1 bg-[#00e676] hover:bg-[#00c853] text-black flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm" style={{minHeight:'48px'}}>
-                   <span>▶ 開工</span><span className="text-xs font-normal">mulai</span>
-                 </button>
-               ) : (
-                 <div className="flex-1 flex flex-col items-center justify-center text-xs rounded-sm border"
-                      style={{background:'#e8f5e9', borderColor:'#4caf50', minHeight:'48px'}}>
-                   <span className="text-green-800 font-bold text-center px-1">🟢 已開工{dispatchInfo ? <span className="block font-mono text-[10px]">{dispatchInfo.id}</span> : null}</span>
-                 </div>
-               )}
-
-
-
-               {/* 根據 mode 判斷顯示的按鈕 */}
+               {/* 例外線：接單報工只負責產生標籤；開工/完工/扣量已移到「條碼標籤報工」 */}
                {mode === 'order' && (
                  <button onClick={() => {
-                   // 例外路線：列印標籤（產生標籤），不記開工時間
+                   // 例外路線：列印標籤（產生標籤），不記開工時間，可分次產生
                    if (rightList.length === 0) return setMesNotice({ type:'warn', title:'⚠️ 右側無資料', body:'請先將左側裁切細項移到右側，再列印標籤。' });
                    setShowLabelModal(true);   // generateReportLabels 依右側明細產生標籤
                  }} className="flex-1 bg-[#00e676] hover:bg-[#00c853] text-black flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm">
                    <span>列印標籤</span><span className="text-xs font-normal">產生標籤</span>
                  </button>
                )}
-
-
-
-               {mode === 'order' && (
-                 <button onClick={openLabelDone}
-                   className="flex-1 bg-[#00e5ff] hover:bg-[#00b8d4] text-black flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm">
-                   <span>標籤完工</span><span className="text-xs font-normal">顯示此訂單完成標籤</span>
-                 </button>
-               )}
-
-               {/* 派工結束已移至「鋼捲」modal 頂部操作區 */}
 
                {mode === 'label' && (
                  <button onClick={() => setShowLabelModal(true)} className="flex-1 bg-blue-500 hover:bg-blue-600 text-white flex flex-col items-center justify-center font-bold text-sm shadow-sm rounded-sm">
@@ -14979,6 +14854,7 @@ window.addEventListener('DOMContentLoaded', function(){
                               customerShort: headerData.customerShort || '',
                               model:         headerData.model || '',
                               spec:          headerData.spec || '',
+                              method:        headerData.manufacturingMethod || '',
                               qty:           _qtyNum,
                               totalLen:      Math.round(_lenNum*100)/100,
                               totalWeight:   Math.round(_wNum*100)/100,
