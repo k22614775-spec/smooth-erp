@@ -11769,6 +11769,14 @@ window.addEventListener('DOMContentLoaded', function(){
             {phase === 'D' && (
               <div className="p-6">
                 <div className="text-lg font-bold text-gray-800 mb-4">④ 刷標籤逐張報工</div>
+                {/* 追加上架鋼捲：中途換捲用，重用上架流程，同一派工單可上多捲 */}
+                <div className="flex items-center mb-3 bg-green-50 border border-green-200 rounded px-3 py-2">
+                  <span className="text-sm text-gray-600">已上架鋼捲：<span className="font-bold text-green-700">{loadedCoils.length} 捲</span></span>
+                  <button onClick={function(){ setCoilBatchNo(''); setCoilInfo(null); setShowCoilModal(true); }}
+                          className="ml-auto bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded font-bold text-sm">
+                    🔩 + 追加上架鋼捲
+                  </button>
+                </div>
                 {/* 掃描輸入 */}
                 <div className="flex space-x-2 mb-3">
                   <input type="text" placeholder="請掃描或輸入標籤條碼後按 Enter..."
