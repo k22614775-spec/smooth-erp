@@ -1549,6 +1549,7 @@ function switchTopMode(mode) {
     totalamt:'totalAmt',grandtotal:'grandTotal',qtysum:'qtySum',totalsum:'totalSum',
     weighno:'weighNo',dispatchid:'dispatchId',createdat:'createdAt',updatedat:'updatedAt',
     orderitemno:'orderItemNo',lengthmm:'lengthMm',topunfinish:'topUnfinish',
+    dispatchunfinish:'dispatchUnfinish',
     topdone:'topDone',bottomunfinish:'bottomUnfinish',bottomdone:'bottomDone',
     mesunfinish:'mesUnfinish',theoreticallenm:'theoreticalLenM',
     starttime:'startTime',finishtime:'finishTime',reportedat:'reportedAt',
@@ -1977,7 +1978,7 @@ function switchTopMode(mode) {
           // 只更新有意義的報工欄位
           const patch={};
           for(const f of ['startTime','finishTime','reporter','reportedAt','dispatchId',
-                          'topDone','bottomDone','mesUnfinish','topUnfinish','bottomUnfinish',
+                          'topDone','bottomDone','mesUnfinish','topUnfinish','bottomUnfinish','dispatchUnfinish',
                           'closed','processNo','inboundNo','inLocation','inBatchNo']){
             if(r[f]!==undefined&&r[f]!==null&&r[f]!=='') patch[f]=r[f];
           }
@@ -3018,7 +3019,7 @@ function switchTopMode(mode) {
             var q = parseInt(c.qty!=null?c.qty:0,10)||0;
             var oid = c.orderId||c.orderid||'';
             return { id:c.id, orderId:oid, orderItemNo:(c.orderItemNo||c.orderitemno||''),
-                     topUnfinish:q, bottomUnfinish:q, mesUnfinish:q };
+                     topUnfinish:q, bottomUnfinish:q, mesUnfinish:q, dispatchUnfinish:q };
           }).filter(function(r){ return r.id && r.orderId; });
           if (_restoreUnf.length){
             await _upsert('cutting_details', _restoreUnf);   // 失敗會 throw，於下方 catch 記錄
@@ -11430,50 +11431,98 @@ window.addEventListener('DOMContentLoaded', function(){
         });
       }
 
-      // ── Phase D：標籤掃描 ──
+      // ── 依標籤數量(qty)扣訂單未完工量（上板/底板），貪婪分攤到各裁切列 ──
+      function _deductLabelUnfinished(label, deductTop, deductBottom, cb){
+        var orderId = label.orderId || label.orderid || '';
+        var itemNo = label.orderItemNo || label.orderitemno || '0010';
+        var qty = parseInt(label.qty || label.totalQty || 0, 10) || 0;
+        if (!window.API || !window.API.getCuttingDetails || !orderId || qty <= 0 || (!deductTop && !deductBottom)) { if (cb) cb(); return; }
+        var apply = function(rows){
+          var remTop = qty, remBot = qty, records = [];
+          (rows || []).forEach(function(c){
+            var top = parseInt(c.topUnfinish || 0, 10) || 0;
+            var bot = parseInt(c.bottomUnfinish || 0, 10) || 0;
+            var mes = parseInt((c.mesUnfinish != null ? c.mesUnfinish : c.qty) || 0, 10) || 0;
+            var rec = { id:c.id, orderId:orderId, orderItemNo:(c.orderItemNo||itemNo), feet:c.feet };
+            var dT = 0, dB = 0;
+            if (deductTop && remTop > 0 && top > 0){ dT = Math.min(top, remTop); rec.topUnfinish = top - dT; remTop -= dT; if (rec.topUnfinish <= 0) rec.topDone = 1; }
+            if (deductBottom && remBot > 0 && bot > 0){ dB = Math.min(bot, remBot); rec.bottomUnfinish = bot - dB; remBot -= dB; if (rec.bottomUnfinish <= 0) rec.bottomDone = 1; }
+            if (dT > 0 || dB > 0){
+              rec.mesUnfinish = Math.max(0, mes - Math.max(dT, dB));
+              if ((!deductTop || (top - dT) <= 0) && (!deductBottom || (bot - dB) <= 0)) rec.closed = 1;
+              records.push(rec);
+            }
+          });
+          if (!records.length){ if (cb) cb(); return; }
+          window.API.saveCuttingReport(records, function(){ if (cb) cb(); }, function(e){ console.warn('扣未完工量失敗:', e); if (cb) cb(); });
+        };
+        window.API.getCuttingDetails(orderId, itemNo, function(rows){
+          if (rows && rows.length){ apply(rows); return; }
+          window.API.getCuttingDetails(orderId, '', function(r2){ apply(r2 || []); }, function(){ apply([]); });
+        }, function(){ apply([]); });
+      }
+
+      // ── Phase D：標籤掃描＝完工（依製作方式扣上板/底板未完工）──
       function handleScan(){
         var code = String(scanInput || '').trim();
         if (!code) return;
         setScanMsg('');
+        if (!dispatchId) { setScanMsg('✗ 請先上架鋼捲（建立派工單）再刷標籤'); return; }
         if (!window.API || !window.API.findLabelByCode) return alert('後端未連線');
         setScanning(true);
         window.API.findLabelByCode(code, function(label){
           setScanning(false);
           if (!label) { setScanMsg('✗ 找不到標籤: ' + code); setScanInput(''); return; }
           if (scannedLabels.find(function(l){ return l.id === label.id; })) {
-            setScanMsg('⚠ 此標籤已掃過: ' + (label.labelNo || label.id));
+            setScanMsg('⚠ 此標籤本次已掃過: ' + (label.labelNo || label.id));
             setScanInput('');
             return;
           }
+          var digit = (String(label.method || '').match(/^([1-4])/) || [,'3'])[1];
+          var topDone = (parseInt(label.topDone || label.topdone || 0, 10) || 0) >= 1;
+          var bottomDone = (parseInt(label.bottomDone || label.bottomdone || 0, 10) || 0) >= 1;
           var did = label.dispatchId || label.dispatchid || '';
-          if (did && did !== dispatchId) {
+          var deductTop = false, deductBottom = false, isSecondPass = false;
+
+          if (digit === '2') {            // 上板→底板：兩段
+            if (!topDone) { deductTop = true; }                          // 第1次：上板
+            else if (!bottomDone) { deductBottom = true; isSecondPass = true; }  // 第2次：底板
+            else { setScanMsg('✗ 此標籤上板/底板皆已完工'); setScanInput(''); return; }
+          } else if (digit === '1') {     // 上板+底板：一次刷扣兩者
+            if (topDone && bottomDone) { setScanMsg('✗ 此標籤已完工'); setScanInput(''); return; }
+            deductTop = true; deductBottom = true;
+          } else {                        // 3.清板 / 4.清板+彎工：只扣上板
+            if (topDone) { setScanMsg('✗ 此標籤已完工'); setScanInput(''); return; }
+            deductTop = true;
+          }
+
+          // 已被「其他」派工處理的擋阻；method2 第2次刷允許（它原掛在前一張已結案派工）
+          if (!isSecondPass && did && did !== dispatchId) {
             setScanMsg('✗ 此標籤已被派工 [' + did + '] 處理');
             setScanInput('');
             return;
           }
-          // 拒絕「接單報工模式」已完工的標籤（startTime + endTime 都有值表示 stage-1 單段完工，不需 stage-2）
-          var hasSt = !!(label.startTime || label.starttime);
-          var hasEt = !!(label.endTime || label.endtime);
-          if (hasSt && hasEt && !did) {
-            setScanMsg('✗ 此標籤已由「接單報工模式」單段完工，無需條碼標籤報工');
-            setScanInput('');
-            return;
-          }
-          // 寫入後端：labels.dispatchId + startTime + endTime + operator
-          window.API.attachLabelToDispatch(label.id, dispatchId, {
-            operator: operatorString
-          }, function(){
+
+          var now = _nowLocalStr();
+          var finish = function(){
+            var lblPatch = Object.assign({}, label, {
+              dispatchId: dispatchId, operator: operatorString,
+              startTime: (label.startTime || label.starttime || now), endTime: now,
+              topDone: (deductTop ? 1 : (topDone ? 1 : 0)),
+              bottomDone: (deductBottom ? 1 : (bottomDone ? 1 : 0))
+            });
+            if (window.API.saveLabel) window.API.saveLabel(lblPatch, function(){}, function(e){ console.warn('標籤更新警告:', e); });
+            var passMsg = (digit === '2') ? (isSecondPass ? '底板完工' : '上板完工（待完工後再刷第2次扣底板）')
+                        : (digit === '1') ? '上板＋底板完工' : '上板完工';
             setScannedLabels(prev => prev.concat([Object.assign({}, label, {
-              dispatchId: dispatchId,
-              startTime: _nowLocalStr(),
-              endTime: _nowLocalStr(),
-              operator: operatorString
+              dispatchId: dispatchId, startTime: lblPatch.startTime, endTime: now, operator: operatorString, _passMsg: passMsg
             })]));
             setScanInput('');
-            setScanMsg('✓ 已加入: ' + (label.labelNo || label.id) + ' (' + (label.spec || '') + ')');
-          }, function(err){
-            setScanMsg('✗ 寫入失敗: ' + (err && err.message || err));
-          });
+            setScanMsg('✓ ' + (label.labelNo || label.id) + '：' + passMsg);
+          };
+          window.API.attachLabelToDispatch(label.id, dispatchId, { operator: operatorString }, function(){
+            _deductLabelUnfinished(label, deductTop, deductBottom, finish);
+          }, function(err){ setScanMsg('✗ 寫入失敗: ' + (err && err.message || err)); });
         }, function(err){
           setScanning(false);
           setScanMsg('✗ 查詢失敗: ' + (err && err.message || err));
@@ -14964,6 +15013,20 @@ window.addEventListener('DOMContentLoaded', function(){
                               }
                             });
                           });
+                        }
+
+                        // 產生標籤 → 扣未派工量（分吊）：本批移到右側的裁切列整列轉成標籤，未派工量歸 0
+                        if (window.API && typeof window.API.saveCuttingReport === 'function' && rightList.length) {
+                          var _cutRecords = rightList.map(function(it){
+                            return {
+                              id: it.id,
+                              orderId: _orderIdPure,
+                              orderItemNo: _itemNoPure || '0010',
+                              feet: parseFloat(it.length || 0) || 0,
+                              dispatchUnfinish: 0
+                            };
+                          });
+                          window.API.saveCuttingReport(_cutRecords, function(){}, function(err){ console.warn('未派工量扣除警告:', err); });
                         }
 
                         setShowLabelModal(false);
