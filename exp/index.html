@@ -14678,11 +14678,8 @@ window.addEventListener('DOMContentLoaded', function(){
             </div>
 
             <div className="flex flex-col justify-center space-y-4 px-1">
-               {/* 未上架鋼捲前鎖定移轉按鈕 */}
-               {!coilLoaded
-                 ? <div className="p-2 border border-gray-200 bg-gray-100 rounded flex items-center justify-center opacity-40 cursor-not-allowed" title="請先完成鋼捲上架"><Icon name="play" className="text-gray-400" /></div>
-                 : <button onClick={moveRight} className="p-2 border border-gray-300 bg-white rounded shadow hover:bg-gray-100 flex items-center justify-center"><Icon name="play" className="text-green-500" /></button>
-               }
+               {/* 例外線：不需鋼捲上架即可移轉 */}
+               <button onClick={moveRight} className="p-2 border border-gray-300 bg-white rounded shadow hover:bg-gray-100 flex items-center justify-center"><Icon name="play" className="text-green-500" /></button>
                <button className="p-2 border border-gray-300 bg-white rounded shadow hover:bg-gray-100 flex items-center justify-center"><Icon name="play" className="text-red-500 transform rotate-180" /></button>
                <button className="p-2 border border-gray-300 bg-white rounded shadow hover:bg-gray-100 flex items-center justify-center"><Icon name="chevronsLeft" className="text-black" /></button>
             </div>
