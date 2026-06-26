@@ -12225,6 +12225,19 @@ window.addEventListener('DOMContentLoaded', function(){
 
       // Calculations for the header
       const itemsList = currentLabel.items || [];
+      // 製作方式由訂單帶入（標籤本身可能無 method）
+      const [orderMethod, setOrderMethod] = useState('');
+      React.useEffect(function(){
+        var oid = currentLabel.orderId;
+        if (!oid || !window.API || typeof window.API.getOrderItems !== 'function') { setOrderMethod(''); return; }
+        window.API.getOrderItems(oid, function(items){
+          var arr = items || [];
+          var ino = currentLabel.orderItemNo || currentLabel.orderitemno;
+          var hit = ino ? arr.find(function(x){ return String(x.itemNo||x.itemno)===String(ino); }) : null;
+          setOrderMethod((hit && (hit.method||hit.manufacturingMethod)) || (arr[0] && (arr[0].method||arr[0].manufacturingMethod)) || '');
+        }, function(){ setOrderMethod(''); });
+      }, [currentLabel.orderId, currentLabel.id]);
+      const _md = (String(orderMethod||'').match(/^([1-4])/) || [,''])[1];
       const totalKg = itemsList.reduce((sum, item) => sum + parseFloat(item.kg || 0), 0);
 
       // Extract date from createTime
@@ -12325,6 +12338,8 @@ window.addEventListener('DOMContentLoaded', function(){
                    <th className="border border-[#a0a0a0] px-1 font-normal text-left w-20">製作方式</th>
                    <th className="border border-[#a0a0a0] px-1 font-normal text-left">品名規格</th>
                    <th className="border border-[#a0a0a0] px-1 font-normal text-right w-16">完工數量</th>
+                   <th className="border border-[#a0a0a0] px-1 font-normal text-right w-16">上板完工量</th>
+                   <th className="border border-[#a0a0a0] px-1 font-normal text-right w-16">底板完工量</th>
                    <th className="border border-[#a0a0a0] px-1 font-normal text-right w-16">單片尺</th>
                    <th className="border border-[#a0a0a0] px-1 font-normal text-right w-16">完工總尺</th>
                    <th className="border border-[#a0a0a0] px-1 font-normal text-right w-16">完工KG</th>
@@ -12335,16 +12350,18 @@ window.addEventListener('DOMContentLoaded', function(){
               </thead>
               <tbody>
                  {labels.length === 0 && (
-                    <tr className="border border-[#c0c0c0]"><td colSpan="12" className="p-4 text-center text-gray-500">目前尚無標籤紀錄，請先列印標籤。</td></tr>
+                    <tr className="border border-[#c0c0c0]"><td colSpan="14" className="p-4 text-center text-gray-500">目前尚無標籤紀錄，請先列印標籤。</td></tr>
                  )}
                  {itemsList.map((item, idx) => (
                    <tr key={idx} className={idx === 0 ? "bg-[#0066cc] text-white" : "border-b border-[#e0e0e0]"}>
                      <td className="border-r border-[#c0c0c0] px-1 text-center">{(idx + 1) * 10}</td>
                      <td className="border-r border-[#c0c0c0] px-1">{currentLabel.orderId}</td>
                      <td className="border-r border-[#c0c0c0] px-1">B3241-05</td> {/* 模擬型號資料 */}
-                     <td className="border-r border-[#c0c0c0] px-1">{currentLabel.method || ''}</td>
+                     <td className="border-r border-[#c0c0c0] px-1">{orderMethod || currentLabel.method || ''}</td>
                      <td className="border-r border-[#c0c0c0] px-1 truncate max-w-[200px]">{currentLabel.spec}</td>
                      <td className="border-r border-[#c0c0c0] px-1 text-right">{item.qty}</td>
+                     <td className="border-r border-[#c0c0c0] px-1 text-right">{_md==='2' ? ((currentLabel.topDone||currentLabel.topdone) ? item.qty : 0) : item.qty}</td>
+                     <td className="border-r border-[#c0c0c0] px-1 text-right">{_md==='1' ? item.qty : (_md==='2' ? ((currentLabel.bottomDone||currentLabel.bottomdone) ? item.qty : 0) : '')}</td>
                      <td className="border-r border-[#c0c0c0] px-1 text-right">{item.length}</td>
                      <td className="border-r border-[#c0c0c0] px-1 text-right">{item.totalLen}</td>
                      <td className="border-r border-[#c0c0c0] px-1 text-right">{item.kg}</td>
@@ -12359,7 +12376,8 @@ window.addEventListener('DOMContentLoaded', function(){
                      <td className="border-r border-[#c0c0c0]"></td><td className="border-r border-[#c0c0c0]"></td><td className="border-r border-[#c0c0c0]"></td>
                      <td className="border-r border-[#c0c0c0]"></td><td className="border-r border-[#c0c0c0]"></td><td className="border-r border-[#c0c0c0]"></td>
                      <td className="border-r border-[#c0c0c0]"></td><td className="border-r border-[#c0c0c0]"></td><td className="border-r border-[#c0c0c0]"></td>
-                     <td className="border-r border-[#c0c0c0]"></td><td className="border-r border-[#c0c0c0]"></td><td></td>
+                     <td className="border-r border-[#c0c0c0]"></td><td className="border-r border-[#c0c0c0]"></td><td className="border-r border-[#c0c0c0]"></td>
+                     <td className="border-r border-[#c0c0c0]"></td><td></td>
                    </tr>
                  ))}
               </tbody>
