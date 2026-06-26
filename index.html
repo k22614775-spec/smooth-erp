@@ -14548,10 +14548,23 @@ window.addEventListener('DOMContentLoaded', function(){
 
       const toggleLeftSelection = (id) => setSelectedLeftIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
       const moveRight = () => {
-        const itemsToMove = leftList.filter(item => selectedLeftIds.includes(item.id));
+        const itemsToMove = leftList.filter(item => selectedLeftIds.includes(item.id))
+          .map(it => Object.assign({}, it, { fullQty: parseInt(it.qty, 10) || 0 }));
         setRightList(prev => [...prev, ...itemsToMove]);
         setLeftList(prev => prev.filter(item => !selectedLeftIds.includes(item.id)));
         setSelectedLeftIds([]);
+      };
+
+      const updateRightQty = (idx, val) => {
+        setRightList(prev => prev.map(function(it, i){
+          if (i !== idx) return it;
+          var full = parseInt(it.fullQty != null ? it.fullQty : it.qty, 10) || 0;
+          var q = parseInt(val, 10); if (isNaN(q) || q < 0) q = 0; if (q > full) q = full;
+          var per = parseFloat(it.length || 0) || 0;
+          var kgPerFt = (parseFloat(it.totalLen) > 0) ? (parseFloat(it.kg || 0) / parseFloat(it.totalLen)) : 0;
+          var newLen = +(per * q).toFixed(2);
+          return Object.assign({}, it, { qty: q, totalLen: newLen.toFixed(2), kg: (newLen * kgPerFt).toFixed(2) });
+        }));
       };
 
       const groupedLeftList = leftList.reduce((acc, item) => {
@@ -14828,7 +14841,7 @@ window.addEventListener('DOMContentLoaded', function(){
                <div className="flex-1 overflow-auto p-1">
                   {rightList.map((item, idx) => (
                     <div key={idx} className="flex text-xs border-b border-gray-200 py-1 items-center justify-around hover:bg-blue-50">
-                       <span className="w-8 text-center">{item.qty}</span><span className="w-24 truncate">{item.zone}</span><span className="w-8 text-center">{item.bundle}</span>
+                       <input type="number" min="0" max={item.fullQty != null ? item.fullQty : item.qty} value={item.qty} onChange={(e) => updateRightQty(idx, e.target.value)} className="w-10 text-center border border-blue-300 rounded bg-yellow-50" /><span className="w-24 truncate">{item.zone}</span><span className="w-8 text-center">{item.bundle}</span>
                        <span className="w-12 text-right">{item.length}</span><span className="w-12 text-right">{item.totalLen}</span><span className="w-12 text-right">{item.kg}</span>
                        <span className="w-16 text-center text-blue-600">{item.startTime || '...'}</span>
                        <span className="w-16 text-center text-green-600">{item.finishTime || '...'}</span>
@@ -15015,22 +15028,25 @@ window.addEventListener('DOMContentLoaded', function(){
                           });
                         }
 
-                        // 產生標籤 → 扣未派工量（分吊）：本批移到右側的裁切列整列轉成標籤，未派工量歸 0
-                        if (window.API && typeof window.API.saveCuttingReport === 'function' && rightList.length) {
-                          var _cutRecords = rightList.map(function(it){
-                            return {
-                              id: it.id,
-                              orderId: _orderIdPure,
-                              orderItemNo: _itemNoPure || '0010',
-                              feet: parseFloat(it.length || 0) || 0,
-                              dispatchUnfinish: 0
-                            };
-                          });
-                          window.API.saveCuttingReport(_cutRecords, function(){}, function(err){ console.warn('未派工量扣除警告:', err); });
+                        // 分次列印：本批印 item.qty 片，整列剩餘 = fullQty - 已印；剩餘>0 留右側續印，=0 才整列消化
+                        var _consumed = [], _remaining = [];
+                        rightList.forEach(function(it){
+                          var full = parseInt(it.fullQty != null ? it.fullQty : it.qty, 10) || 0;
+                          var printed = parseInt(it.qty, 10) || 0;
+                          var rem = full - printed;
+                          if (rem > 0) {
+                            var per = parseFloat(it.length || 0) || 0;
+                            var kgPerFt = (parseFloat(it.totalLen) > 0) ? (parseFloat(it.kg || 0) / parseFloat(it.totalLen)) : 0;
+                            var remLen = +(per * rem).toFixed(2);
+                            _remaining.push(Object.assign({}, it, { qty: rem, fullQty: rem, totalLen: remLen.toFixed(2), kg: (remLen * kgPerFt).toFixed(2) }));
+                          } else { _consumed.push(it); }
+                        });
+                        if (window.API && typeof window.API.saveCuttingReport === 'function' && _consumed.length) {
+                          var _cutRecords = _consumed.map(function(it){ return { id: it.id, orderId: _orderIdPure, orderItemNo: _itemNoPure || '0010', feet: parseFloat(it.length || 0) || 0, dispatchUnfinish: 0 }; });
+                          window.API.saveCuttingReport(_cutRecords, function(){}, function(err){ console.warn('cut warn:', err); });
                         }
-
                         setShowLabelModal(false);
-                        setRightList([]); // 列印完成後清除右側資料
+                        setRightList(_remaining);
                      }} className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded text-sm flex items-center">
                         <Icon name="printer" className="mr-1" size={14} /> 模擬列印並清除
                      </button>
