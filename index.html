@@ -15038,7 +15038,7 @@ window.addEventListener('DOMContentLoaded', function(){
                             var per = parseFloat(it.length || 0) || 0;
                             var kgPerFt = (parseFloat(it.totalLen) > 0) ? (parseFloat(it.kg || 0) / parseFloat(it.totalLen)) : 0;
                             var remLen = +(per * rem).toFixed(2);
-                            _remaining.push(Object.assign({}, it, { qty: rem, fullQty: rem, totalLen: remLen.toFixed(2), kg: (remLen * kgPerFt).toFixed(2) }));
+                            _remaining.push(Object.assign({}, it, { qty: rem, fullQty: rem, totalLen: remLen.toFixed(2), kg: (remLen * kgPerFt).toFixed(2), unfinish: rem }));
                           } else { _consumed.push(it); }
                         });
                         if (window.API && typeof window.API.saveCuttingReport === 'function' && _consumed.length) {
@@ -15046,7 +15046,8 @@ window.addEventListener('DOMContentLoaded', function(){
                           window.API.saveCuttingReport(_cutRecords, function(){}, function(err){ console.warn('cut warn:', err); });
                         }
                         setShowLabelModal(false);
-                        setRightList(_remaining);
+                        setRightList([]);
+                        if (_remaining.length) setLeftList(prev => prev.concat(_remaining));  // 剩餘量退回左側
                      }} className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded text-sm flex items-center">
                         <Icon name="printer" className="mr-1" size={14} /> 模擬列印並清除
                      </button>
