@@ -12322,6 +12322,7 @@ window.addEventListener('DOMContentLoaded', function(){
                    <th className="border border-[#a0a0a0] px-1 font-normal text-left w-10">項次</th>
                    <th className="border border-[#a0a0a0] px-1 font-normal text-left w-24">訂單單號</th>
                    <th className="border border-[#a0a0a0] px-1 font-normal text-left w-24">型號</th>
+                   <th className="border border-[#a0a0a0] px-1 font-normal text-left w-20">製作方式</th>
                    <th className="border border-[#a0a0a0] px-1 font-normal text-left">品名規格</th>
                    <th className="border border-[#a0a0a0] px-1 font-normal text-right w-16">完工數量</th>
                    <th className="border border-[#a0a0a0] px-1 font-normal text-right w-16">單片尺</th>
@@ -12334,13 +12335,14 @@ window.addEventListener('DOMContentLoaded', function(){
               </thead>
               <tbody>
                  {labels.length === 0 && (
-                    <tr className="border border-[#c0c0c0]"><td colSpan="11" className="p-4 text-center text-gray-500">目前尚無標籤紀錄，請先列印標籤。</td></tr>
+                    <tr className="border border-[#c0c0c0]"><td colSpan="12" className="p-4 text-center text-gray-500">目前尚無標籤紀錄，請先列印標籤。</td></tr>
                  )}
                  {itemsList.map((item, idx) => (
                    <tr key={idx} className={idx === 0 ? "bg-[#0066cc] text-white" : "border-b border-[#e0e0e0]"}>
                      <td className="border-r border-[#c0c0c0] px-1 text-center">{(idx + 1) * 10}</td>
                      <td className="border-r border-[#c0c0c0] px-1">{currentLabel.orderId}</td>
                      <td className="border-r border-[#c0c0c0] px-1">B3241-05</td> {/* 模擬型號資料 */}
+                     <td className="border-r border-[#c0c0c0] px-1">{currentLabel.method || ''}</td>
                      <td className="border-r border-[#c0c0c0] px-1 truncate max-w-[200px]">{currentLabel.spec}</td>
                      <td className="border-r border-[#c0c0c0] px-1 text-right">{item.qty}</td>
                      <td className="border-r border-[#c0c0c0] px-1 text-right">{item.length}</td>
@@ -12357,7 +12359,7 @@ window.addEventListener('DOMContentLoaded', function(){
                      <td className="border-r border-[#c0c0c0]"></td><td className="border-r border-[#c0c0c0]"></td><td className="border-r border-[#c0c0c0]"></td>
                      <td className="border-r border-[#c0c0c0]"></td><td className="border-r border-[#c0c0c0]"></td><td className="border-r border-[#c0c0c0]"></td>
                      <td className="border-r border-[#c0c0c0]"></td><td className="border-r border-[#c0c0c0]"></td><td className="border-r border-[#c0c0c0]"></td>
-                     <td className="border-r border-[#c0c0c0]"></td><td></td>
+                     <td className="border-r border-[#c0c0c0]"></td><td className="border-r border-[#c0c0c0]"></td><td></td>
                    </tr>
                  ))}
               </tbody>
