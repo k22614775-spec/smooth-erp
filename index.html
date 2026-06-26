@@ -12228,7 +12228,9 @@ window.addEventListener('DOMContentLoaded', function(){
       // 製作方式由訂單帶入（標籤本身可能無 method）
       const [orderMethod, setOrderMethod] = useState('');
       React.useEffect(function(){
-        var oid = currentLabel.orderId;
+        var _raw = String(currentLabel.orderId || '');
+        var _parts = _raw.split('-');
+        var oid = _parts.length > 1 ? _parts.slice(0, -1).join('-') : _raw;  // 去掉項次後綴，取純訂單號
         if (!oid || !window.API || typeof window.API.getOrderItems !== 'function') { setOrderMethod(''); return; }
         window.API.getOrderItems(oid, function(items){
           var arr = items || [];
