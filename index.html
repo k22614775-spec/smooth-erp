@@ -485,7 +485,7 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
                     </div>
                     <table style="border-left: 2px solid blue;">
                         <thead>
-                            <tr><th style="width:50px">項次</th><th style="width:40px">區</th><th style="width:80px; color:blue">長度mm</th><th style="width:80px; color:blue">單片台尺</th><th style="width:60px; color:blue">數量</th><th style="width:80px">總尺</th><th style="width:140px">備註</th><th style="width:100px">上板未完工數量</th><th style="width:80px" title="勾選後此裁件視為完成、不再出現於下一次派工">上板完結</th><th style="width:100px">底板未完工數量</th><th style="width:80px" title="部分完工，下次派工仍會顯示">底板完結</th></tr>
+                            <tr><th style="width:50px">項次</th><th style="width:40px">區</th><th style="width:80px; color:blue">長度mm</th><th style="width:80px; color:blue">單片台尺</th><th style="width:60px; color:blue">數量</th><th style="width:80px">總尺</th><th style="width:140px">備註</th><th style="width:100px">上板未完工數量</th><th style="width:80px" title="勾選後此裁件視為完成、不再出現於下一次派工">上板完結</th><th style="width:100px">底板未完工數量</th><th style="width:80px" title="部分完工，下次派工仍會顯示">底板完結</th><th style="width:90px">A</th><th style="width:90px">B</th><th style="width:90px">C</th><th style="width:90px">D</th></tr>
                         </thead>
                         <tbody id="cutting-body">
                             <tr class="selected-row" data-order-item-no="0010" onclick="selectCuttingRow(this)">
@@ -500,6 +500,10 @@ html, body { margin:0; padding:0; height:100%; overflow:hidden; }
                                 <td><label style="display:flex;justify-content:center;align-items:center;height:100%;cursor:pointer;"><input type="checkbox" class="cut-top-done" title="勾選=上板完結(完成、不再出現於派工)"></label></td>
                                 <td><input type="number" class="text-right" value="0" onkeydown="handleCuttingKeydown(event, this)"></td>
                                 <td><label style="display:flex;justify-content:center;align-items:center;height:100%;cursor:pointer;"><input type="checkbox" class="cut-bottom-done" title="勾選=底板完結(部分完工，下次派工仍會顯示)"></label></td>
+                                <td><input type="text" maxlength="20" value="" onkeydown="handleCuttingKeydown(event, this)"></td>
+                                <td><input type="text" maxlength="20" value="" onkeydown="handleCuttingKeydown(event, this)"></td>
+                                <td><input type="text" maxlength="20" value="" onkeydown="handleCuttingKeydown(event, this)"></td>
+                                <td><input type="text" maxlength="20" value="" onkeydown="handleCuttingKeydown(event, this)"></td>
                             </tr>
                         </tbody>
                     </table>
@@ -1550,6 +1554,7 @@ function switchTopMode(mode) {
     weighno:'weighNo',dispatchid:'dispatchId',createdat:'createdAt',updatedat:'updatedAt',
     orderitemno:'orderItemNo',lengthmm:'lengthMm',topunfinish:'topUnfinish',
     dispatchunfinish:'dispatchUnfinish',
+    cola:'colA',colb:'colB',colc:'colC',cold:'colD',
     topdone:'topDone',bottomunfinish:'bottomUnfinish',bottomdone:'bottomDone',
     mesunfinish:'mesUnfinish',theoreticallenm:'theoreticalLenM',
     starttime:'startTime',finishtime:'finishTime',reportedat:'reportedAt',
@@ -1801,7 +1806,7 @@ function switchTopMode(mode) {
           feet,lengthMm:parseFloat(String(c.lengthMm||feet*303))||0,
           qty:0,totalFeet:0,kg:0,topUnfinish:0,topDone:0,bottomUnfinish:0,bottomDone:0,
           mesUnfinish:0,remark:c.remark||'',startTime:'',finishTime:'',
-          reporter:'',closed:0,dispatchId:c.dispatchId||''};
+          reporter:'',closed:0,dispatchId:c.dispatchId||'',colA:'',colB:'',colC:'',colD:''};
         order.push(k);
       }
       const m=map[k];
@@ -1820,6 +1825,10 @@ function switchTopMode(mode) {
       if(c.reporter&&!m.reporter) m.reporter=c.reporter;
       if(c.closed) m.closed=1;
       if(c.dispatchId&&!m.dispatchId) m.dispatchId=c.dispatchId;
+      if(c.colA&&!m.colA) m.colA=c.colA;
+      if(c.colB&&!m.colB) m.colB=c.colB;
+      if(c.colC&&!m.colC) m.colC=c.colC;
+      if(c.colD&&!m.colD) m.colD=c.colD;
     });
     return order.map(function(k){
       const m=map[k];
@@ -2014,6 +2023,11 @@ function switchTopMode(mode) {
     },
     getLabelsByOrder: function(orderId, cb, errCb){
       _cb(_get('labels',{'orderId':'eq.'+orderId}), cb, errCb);
+    },
+    getLabelDailyMaxSeq: function(rocDate, cb, errCb){
+      _cb(_get('labels',{'labelNo':'like.'+rocDate+'*','select':'labelNo'}).then(function(rows){
+        var mx=0; (rows||[]).forEach(function(r){ var sv=String(r.labelNo||r.labelno||''); if(sv.indexOf(rocDate)===0){ var n=parseInt(sv.slice(rocDate.length),10)||0; if(n>mx) mx=n; } }); return mx;
+      }), cb, errCb);
     },
     getOrderHeader: function(orderId, cb, errCb){
       _cb(_get('orders',{'id':'eq.'+orderId,'limit':'1'}).then(function(r){ return r[0]||null; }), cb, errCb);
@@ -6701,6 +6715,10 @@ window.addEventListener('DOMContentLoaded', function(){
                     <td><label style="display:flex;justify-content:center;align-items:center;height:100%;cursor:pointer;"><input type="checkbox" class="cut-top-done" title="勾選=上板完結(完成、不再出現於派工)"></label></td>
                     <td><input type="number" class="text-right" value="0" onkeydown="handleCuttingKeydown(event, this)"></td>
                     <td><label style="display:flex;justify-content:center;align-items:center;height:100%;cursor:pointer;"><input type="checkbox" class="cut-bottom-done" title="勾選=底板完結(部分完工，下次派工仍會顯示)"></label></td>
+                    <td><input type="text" maxlength="20" value="" onkeydown="handleCuttingKeydown(event, this)"></td>
+                    <td><input type="text" maxlength="20" value="" onkeydown="handleCuttingKeydown(event, this)"></td>
+                    <td><input type="text" maxlength="20" value="" onkeydown="handleCuttingKeydown(event, this)"></td>
+                    <td><input type="text" maxlength="20" value="" onkeydown="handleCuttingKeydown(event, this)"></td>
                 `;
                 tbody.appendChild(tr);
             });
@@ -8038,6 +8056,10 @@ window.addEventListener('DOMContentLoaded', function(){
     // 底板完結：部分完工，下次派工仍會顯示
     var bottomChecked = (parseInt(c.bottomDone || 0, 10) > 0) ? 'checked' : '';
     tr.appendChild(td('<label style="display:flex;justify-content:center;align-items:center;height:100%;cursor:pointer;"><input type="checkbox" class="cut-bottom-done" '+bottomChecked+' title="勾選=底板完結(部分完工，下次派工仍會顯示)"></label>'));
+    tr.appendChild(td('<input type="text" maxlength="20" value="'+(c.colA||'')+'">'));
+    tr.appendChild(td('<input type="text" maxlength="20" value="'+(c.colB||'')+'">'));
+    tr.appendChild(td('<input type="text" maxlength="20" value="'+(c.colC||'')+'">'));
+    tr.appendChild(td('<input type="text" maxlength="20" value="'+(c.colD||'')+'">'));
     return tr;
   }
 
@@ -8321,7 +8343,8 @@ window.addEventListener('DOMContentLoaded', function(){
         orderId: id, orderItemNo: ordItemNo, zone: v(1), lengthMm: v(2), feet: v(3),
         qty: v(4), totalFeet: v(5), remark: v(6),
         topUnfinish: v(7),    topDone:    chk(8),
-        bottomUnfinish: v(9), bottomDone: chk(10)
+        bottomUnfinish: v(9), bottomDone: chk(10),
+        colA: v(11), colB: v(12), colC: v(13), colD: v(14)
       });
     });
     return out;
@@ -14238,6 +14261,9 @@ window.addEventListener('DOMContentLoaded', function(){
       // 進場必填機台：未輸入過才強制彈窗
       const [showMachineModal, setShowMachineModal] = useState(!window.__mesMachine);
       const [machineInput, setMachineInput] = useState(window.__mesMachine || '');
+      const [filterOrderNo, setFilterOrderNo] = useState('');
+      const [filterSite, setFilterSite] = useState('');
+      const [filterPriority, setFilterPriority] = useState('');
       const confirmMachine = function(){
         var m = String(machineInput || '').trim();
         if (!m) return;            // 必填，空白不可確定
@@ -14245,9 +14271,15 @@ window.addEventListener('DOMContentLoaded', function(){
         setFilterMachine(m);       // 觸發 filteredOrders 自動篩選
         setShowMachineModal(false);
       };
-      const filteredOrders = filterMachine
-        ? orders.filter(function(o){ return String(o.machine || '').toLowerCase().indexOf(filterMachine.toLowerCase()) !== -1; })
-        : orders;
+      const filteredOrders = orders.filter(function(o){
+        if (filterMachine && String(o.machine || '').toLowerCase().indexOf(filterMachine.toLowerCase()) === -1) return false;
+        if (filterOrderNo && String(o.id || o.orderId || '').toLowerCase().indexOf(filterOrderNo.toLowerCase()) === -1) return false;
+        if (filterSite && String(o.site || '').toLowerCase().indexOf(filterSite.toLowerCase()) === -1) return false;
+        var pr = String(o.priority || o.prior || '');
+        if (filterPriority === 'Y' && pr !== 'Y') return false;
+        if (filterPriority === 'N' && pr === 'Y') return false;
+        return true;
+      });
 
       const updateLocalOrder = (id, field, value) => {
         setOrders(orders.map(o => o.id === id ? { ...o, [field]: value } : o));
@@ -14302,6 +14334,22 @@ window.addEventListener('DOMContentLoaded', function(){
 
               <FormField label="完工" value="未完工" type="select" />
               <FormField label="型號" value="" />
+              <div className="flex items-center space-x-2 text-sm">
+                <label className="w-20 text-right text-gray-700 shrink-0">訂單單號</label>
+                <input type="text" value={filterOrderNo} onChange={function(e){ setFilterOrderNo(e.target.value); }} placeholder="輸入訂單單號篩選…" className="flex-1 bg-white border border-blue-300 rounded py-1 px-2 outline-none focus:border-blue-600 focus:border-2" />
+              </div>
+              <div className="flex items-center space-x-2 text-sm">
+                <label className="w-20 text-right text-gray-700 shrink-0">案名</label>
+                <input type="text" value={filterSite} onChange={function(e){ setFilterSite(e.target.value); }} placeholder="輸入案名/工地篩選…" className="flex-1 bg-white border border-blue-300 rounded py-1 px-2 outline-none focus:border-blue-600 focus:border-2" />
+              </div>
+              <div className="flex items-center space-x-2 text-sm">
+                <label className="w-20 text-right text-gray-700 shrink-0">優先生產</label>
+                <select value={filterPriority} onChange={function(e){ setFilterPriority(e.target.value); }} className="flex-1 bg-white border border-blue-300 rounded py-1 px-2 outline-none focus:border-blue-600 focus:border-2">
+                  <option value="">全部</option>
+                  <option value="Y">優先</option>
+                  <option value="N">一般</option>
+                </select>
+              </div>
               <div className="flex items-center space-x-2 text-sm">
                 <label className="w-20 text-right text-gray-700 shrink-0">訂單日期</label>
                 <div className="flex-1 flex space-x-2 items-center">
@@ -14600,6 +14648,16 @@ window.addEventListener('DOMContentLoaded', function(){
       const overallKg = leftList.reduce((sum, item) => sum + parseFloat(item.kg || 0), 0);
       const overallUnfinish = leftList.reduce((sum, item) => sum + parseFloat(item.unfinish || 0), 0);
 
+      // 標籤單號：民國年月日(7碼) + 每日重置三碼流水（例 1150701001）
+      const _rocToday = (function(){ var d=new Date(); return String(d.getFullYear()-1911)+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0'); })();
+      const [labelSeqBase, setLabelSeqBase] = useState(0);
+      React.useEffect(function(){
+        if (window.API && typeof window.API.getLabelDailyMaxSeq === 'function') {
+          window.API.getLabelDailyMaxSeq(_rocToday, function(mx){ setLabelSeqBase(mx||0); }, function(){});
+        }
+      }, [_rocToday, savedLabels.length]);
+      const labelNoAt = function(k){ return _rocToday + String(labelSeqBase + k).padStart(3,'0'); };
+
       const generateReportLabels = (startIndex = 0) => {
          if (rightList.length === 0) return [];
          const labels = [];
@@ -14613,7 +14671,7 @@ window.addEventListener('DOMContentLoaded', function(){
              const chunkFinishTime = chunk[0] && chunk[0].finishTime ? chunk[0].finishTime : '';
 
              labels.push({
-                id: `${headerData.id}${String(startIndex + labels.length + 1).padStart(2, '0')}`,
+                id: labelNoAt(startIndex + labels.length + 1),
                 qty: `${qtySum} 片`,
                 totalLen: `${lenSum.toFixed(2)} 尺`,
                 items: chunk,
@@ -14878,7 +14936,7 @@ window.addEventListener('DOMContentLoaded', function(){
                   <span>打包 Kg : </span><input className="w-16 border border-gray-300 px-1 text-right bg-white" readOnly value={rightList.reduce((sum, item) => sum + parseFloat(item.kg||0), 0).toFixed(2)} />
                </div>
                <div className="bg-[#fdfde8] p-1 flex items-center text-xs border-t border-blue-200">
-                 <span className="w-20 text-right pr-2">標籤單號</span><input className="flex-1 border border-yellow-200 bg-yellow-50 px-2 py-0.5" value={`${headerData.id}${String(savedLabels.length + 1).padStart(2, '0')}`} readOnly />
+                 <span className="w-20 text-right pr-2">標籤單號</span><input className="flex-1 border border-yellow-200 bg-yellow-50 px-2 py-0.5" value={labelNoAt(savedLabels.length + 1)} readOnly />
                </div>
             </div>
 
@@ -14964,7 +15022,7 @@ window.addEventListener('DOMContentLoaded', function(){
                   <h2 className="text-center font-bold text-lg border-b-2 border-black pb-1 mb-2">出貨標籤</h2>
 
                   <div className="flex flex-col space-y-1 flex-1 text-[13px] text-black">
-                     <div className="flex"><span className="font-bold w-16">標籤單號:</span><span className="flex-1 font-mono font-bold text-lg">{headerData.id}{String(savedLabels.length + 1).padStart(2, '0')}</span></div>
+                     <div className="flex"><span className="font-bold w-16">標籤單號:</span><span className="flex-1 font-mono font-bold text-lg">{labelNoAt(savedLabels.length + 1)}</span></div>
                      <div className="flex"><span className="font-bold w-16">客戶名稱:</span><span className="flex-1 truncate">{headerData.customerShort || '未填寫'}</span></div>
                      <div className="flex"><span className="font-bold w-16">品名:</span><span className="flex-1 truncate">{headerData.spec}</span></div>
 
